@@ -69,13 +69,13 @@ func TestI_ConsensusRewards(t *testing.T) {
 			cooldownChecks = 50
 		}
 		for i := 0; i < cooldownChecks; i++ {
-			waitBlocks(t, 1)
 			curHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
 			if curHeight >= deadline.Uint64() {
 				break
 			}
 			info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
 			if info.AccumulatedRewards.Sign() == 0 {
+				waitBlocks(t, 1)
 				continue
 			}
 
@@ -110,6 +110,10 @@ func waitForRewardIncrease(t *testing.T, minerAddr common.Address, before *big.I
 	start, err := ctx.Clients[0].BlockNumber(context.Background())
 	if err != nil {
 		t.Fatalf("failed to read block number: %v", err)
+	}
+	infoNow, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
+	if infoNow.AccumulatedRewards.Cmp(before) > 0 {
+		return true
 	}
 	nextStart := start
 	for i := 0; i < maxBlocks; i++ {

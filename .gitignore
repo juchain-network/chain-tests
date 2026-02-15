@@ -5,3 +5,4 @@ data/
 reports/
 docker/juchain
 .chain-tests-run.lock
+.chain-tests-precheck.stamp

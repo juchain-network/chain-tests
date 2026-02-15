@@ -18,6 +18,7 @@ import (
 
 	"juchain.org/chain/tools/ci/internal/config"
 	testctx "juchain.org/chain/tools/ci/internal/context"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -353,46 +354,11 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 // Robust Staking Helpers
 
 func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amount *big.Int) {
-	var lastErr error
-	for retry := 0; retry < 10; retry++ {
-		opts, errG := ctx.GetTransactor(key)
-		if errG != nil {
-			lastErr = errG
-			time.Sleep(250 * time.Millisecond)
-			continue
-		}
-		opts.Value = amount
-		tx, err := ctx.Staking.Delegate(opts, val)
-		if err == nil {
-			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
-				return
-			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(250 * time.Millisecond)
-					continue
-				}
-				lastErr = errW
-				time.Sleep(250 * time.Millisecond)
-				continue
-			}
-		}
-		lastErr = err
-		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(250 * time.Millisecond)
-			continue
-		}
-		if t != nil {
-			t.Fatalf("delegate call failed: %v", err)
-		} else {
-			return
-		}
-	}
-	if t != nil {
-		if lastErr != nil {
-			t.Fatalf("delegate tx failed: %v", lastErr)
-		}
-		t.Fatalf("delegate retries exhausted without successful tx")
-	}
+	testkit.RobustDelegate(t, key, val, amount, testkit.DelegateOps{
+		GetTransactor: ctx.GetTransactor,
+		Delegate:      ctx.Staking.Delegate,
+		WaitMined:     ctx.WaitMined,
+	})
 }
 
 func robustUndelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amount *big.Int) {

@@ -355,6 +355,7 @@ func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
+			lastErr = errG
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
@@ -373,6 +374,7 @@ func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 				continue
 			}
 		}
+		lastErr = err
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
 			time.Sleep(250 * time.Millisecond)
 			continue
@@ -383,8 +385,11 @@ func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 			return
 		}
 	}
-	if t != nil && lastErr != nil {
-		t.Fatalf("delegate tx failed: %v", lastErr)
+	if t != nil {
+		if lastErr != nil {
+			t.Fatalf("delegate tx failed: %v", lastErr)
+		}
+		t.Fatalf("delegate retries exhausted without successful tx")
 	}
 }
 

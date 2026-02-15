@@ -47,13 +47,13 @@ func TestA_SystemConfigSetup(t *testing.T) {
 		val  *big.Int
 	}{
 		{"ProposalCooldown", ConfigID_ProposalCooldown, big.NewInt(1)},
-		{"UnbondingPeriod", ConfigID_UnbondingPeriod, big.NewInt(10)},
-		{"ValidatorUnjailPeriod", ConfigID_ValidatorUnjailPeriod, big.NewInt(10)},
-		{"WithdrawProfitPeriod", ConfigID_WithdrawProfitPeriod, big.NewInt(5)},
+		{"UnbondingPeriod", ConfigID_UnbondingPeriod, big.NewInt(3)},
+		{"ValidatorUnjailPeriod", ConfigID_ValidatorUnjailPeriod, big.NewInt(3)},
+		{"WithdrawProfitPeriod", ConfigID_WithdrawProfitPeriod, big.NewInt(2)},
 		{"MinValidatorStake", ConfigID_MinValidatorStake, utils.ToWei(1)},
 		{"MinDelegation", ConfigID_MinDelegation, utils.ToWei(1)},
-		{"CommissionUpdateCooldown", ConfigID_CommissionUpdateCooldown, big.NewInt(5)},
-		{"ProposalLastingPeriod", ConfigID_ProposalLastingPeriod, big.NewInt(100)},
+		{"CommissionUpdateCooldown", ConfigID_CommissionUpdateCooldown, big.NewInt(1)},
+		{"ProposalLastingPeriod", ConfigID_ProposalLastingPeriod, big.NewInt(30)},
 	}
 
 	for _, target := range targets {

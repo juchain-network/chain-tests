@@ -295,7 +295,7 @@ func changeConfig(t *testing.T, pIndex *int, cid uint256, val int64, name string
 func setupGovConfig(t *testing.T, pIndex *int) {
 	t.Helper()
 	changeConfig(t, pIndex, 19, 1, "ProposalCooldown -> 1")
-	changeConfig(t, pIndex, 0, 100, "ProposalLastingPeriod -> 100")
+	changeConfig(t, pIndex, 0, 30, "ProposalLastingPeriod -> 30")
 }
 
 // Test 1: Invalid Voting Logic

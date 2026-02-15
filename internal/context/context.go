@@ -43,6 +43,15 @@ func (c *CIContext) configuredEpoch() uint64 {
 	return 30
 }
 
+const (
+	defaultProposalCooldownBlocks    int64 = 1
+	defaultUnbondingPeriodBlocks     int64 = 3
+	defaultValidatorUnjailBlocks     int64 = 3
+	defaultWithdrawProfitPeriodBlock int64 = 2
+	defaultCommissionCooldownBlocks  int64 = 1
+	defaultProposalLastingBlocks     int64 = 30
+)
+
 type CIContext struct {
 	Config  *config.Config
 	Clients []*ethclient.Client
@@ -300,16 +309,16 @@ func (c *CIContext) autoInitialize() error {
 
 	// Fetch current values to skip if already set
 	pCool, _ := c.GetConfigValue(19)
-	_ = c.EnsureConfig(19, big.NewInt(1), pCool)
+	_ = c.EnsureConfig(19, big.NewInt(defaultProposalCooldownBlocks), pCool)
 
 	unbond, _ := c.GetConfigValue(6)
-	_ = c.EnsureConfig(6, big.NewInt(10), unbond)
+	_ = c.EnsureConfig(6, big.NewInt(defaultUnbondingPeriodBlocks), unbond)
 
 	unjail, _ := c.GetConfigValue(7)
-	_ = c.EnsureConfig(7, big.NewInt(10), unjail)
+	_ = c.EnsureConfig(7, big.NewInt(defaultValidatorUnjailBlocks), unjail)
 
 	withdraw, _ := c.GetConfigValue(4)
-	_ = c.EnsureConfig(4, big.NewInt(5), withdraw)
+	_ = c.EnsureConfig(4, big.NewInt(defaultWithdrawProfitPeriodBlock), withdraw)
 
 	minStakeVal, _ := c.GetConfigValue(8)
 	_ = c.EnsureConfig(8, big.NewInt(1000000000000000000), minStakeVal)
@@ -318,10 +327,10 @@ func (c *CIContext) autoInitialize() error {
 	_ = c.EnsureConfig(10, big.NewInt(1000000000000000000), minDel)
 
 	commCool, _ := c.GetConfigValue(16)
-	_ = c.EnsureConfig(16, big.NewInt(5), commCool)
+	_ = c.EnsureConfig(16, big.NewInt(defaultCommissionCooldownBlocks), commCool)
 
 	propLast, _ := c.GetConfigValue(0)
-	_ = c.EnsureConfig(0, big.NewInt(100), propLast)
+	_ = c.EnsureConfig(0, big.NewInt(defaultProposalLastingBlocks), propLast)
 
 	fmt.Printf("✅ Auto-initialization complete.\n")
 	return nil

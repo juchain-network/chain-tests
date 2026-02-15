@@ -31,9 +31,9 @@ func TestE_Delegation(t *testing.T) {
 	mud, _ := ctx.Proposal.MinUndelegation(nil)
 	ctx.EnsureConfig(11, utils.ToWei(1), mud)
 	unb, _ := ctx.Proposal.UnbondingPeriod(nil)
-	ctx.EnsureConfig(6, big.NewInt(10), unb)
+	ctx.EnsureConfig(6, big.NewInt(3), unb)
 	unj, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
-	ctx.EnsureConfig(7, big.NewInt(10), unj)
+	ctx.EnsureConfig(7, big.NewInt(3), unj)
 
 	t.Run("D-01_FullFlow", func(t *testing.T) {
 		userKey, userAddr, err := ctx.CreateAndFundAccount(utils.ToWei(200))

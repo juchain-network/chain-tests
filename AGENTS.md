@@ -99,6 +99,8 @@ chain-tests/
 - `paths.chain_contract_root: ../chain-contract`
 - `paths.chain_contract_out: ../chain-contract/out`
 
+Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` / `60`），并在生成 `genesis.json` 时生效。
+
 ### 4.1 本地网络编排（4 节点）
 
 - 使用 Docker Compose 启动 4 节点（3 验证节点 + 1 同步节点）。

@@ -14,5 +14,8 @@ validators:
   - address: "0x..."
     private_key: "..."
 
+network:
+  epoch: 60
+
 test:
   funding_amount: "100000000000000000000" # 100 ETH

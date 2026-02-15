@@ -19,7 +19,7 @@
     "posaTime": 0,
     "congress": {
       "period": 1,
-      "epoch": 100
+      "epoch": 60
     }
   },
   "nonce": "0x0",

@@ -36,6 +36,13 @@ func debugEnabled() bool {
 	return v == "1" || v == "true" || v == "yes"
 }
 
+func (c *CIContext) configuredEpoch() uint64 {
+	if c != nil && c.Config != nil && c.Config.Network.Epoch > 0 {
+		return c.Config.Network.Epoch
+	}
+	return 60
+}
+
 type CIContext struct {
 	Config  *config.Config
 	Clients []*ethclient.Client
@@ -264,7 +271,7 @@ func (c *CIContext) autoInitialize() error {
 		opts, _ := c.GetTransactor(c.GenesisValidators[0])
 		opts.GasLimit = 1000000
 		fmt.Printf("  > Initializing Proposal...\n")
-		tx, err := c.Proposal.Initialize(opts, valAddrs, ValidatorsAddr, big.NewInt(60))
+		tx, err := c.Proposal.Initialize(opts, valAddrs, ValidatorsAddr, new(big.Int).SetUint64(c.configuredEpoch()))
 		if err == nil {
 			c.WaitMined(tx.Hash())
 		}
@@ -697,7 +704,7 @@ func (c *CIContext) waitBlocks(n uint64) {
 
 func (c *CIContext) WaitIfEpochBlock() {
 	epochVal, err := c.Validators.Epoch(nil)
-	epoch := uint64(100) // Default
+	epoch := c.configuredEpoch()
 	if err == nil && epochVal.Uint64() > 0 {
 		epoch = epochVal.Uint64()
 	}

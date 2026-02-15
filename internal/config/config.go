@@ -11,7 +11,11 @@ type Config struct {
 	RPCs []string `yaml:"rpcs"` // List of RPC endpoints (e.g., node 1, node 2...)
 	// Optional: Per-validator RPCs aligned with Validators order.
 	ValidatorRPCs []string `yaml:"validator_rpcs"`
-	
+
+	Network struct {
+		Epoch uint64 `yaml:"epoch"`
+	} `yaml:"network"`
+
 	// The rich account that funds test accounts
 	Funder struct {
 		PrivateKey string `yaml:"private_key"`

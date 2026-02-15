@@ -9,6 +9,7 @@ CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEMPLATE_GENESIS="$(to_abs_path "./templates/genesis.tpl.json")"
 PRIMARY_RPC="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
+NETWORK_EPOCH="$(cfg_get "$CONFIG_FILE" "network.epoch" "60")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V2_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_http" "18547")"
@@ -31,6 +32,10 @@ if [ ! -d "$CONTRACT_OUT_DIR" ]; then
     echo "Provide CHAIN_CONTRACT_OUT env or configure paths.chain_contract_out / paths.chain_contract_root."
     echo "Only compiled artifacts are required (no source build in this repo)."
     exit 1
+fi
+
+if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
+    die "network.epoch must be a positive integer, got: $NETWORK_EPOCH"
 fi
 
 # Clean up data directory (handle root-owned files from Docker)
@@ -211,8 +216,8 @@ EXTRA_DATA="0x${VANITY}${VALIDATORS_HEX}${SUFFIX}"
 # Replace placeholders
 echo "$ALLOC_JSON" > "$DATA_DIR/alloc.json"
 
-jq --slurpfile allocList "$DATA_DIR/alloc.json" --arg extra "$EXTRA_DATA" \
-   '.alloc = $allocList[0] | .extraData = $extra' "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
+jq --slurpfile allocList "$DATA_DIR/alloc.json" --arg extra "$EXTRA_DATA" --arg epoch "$NETWORK_EPOCH" \
+   '.alloc = $allocList[0] | .extraData = $extra | .config.congress.epoch = ($epoch | tonumber)' "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
 
 # 3. Generate test_config.yaml
 echo "Generating test_config.yaml..."
@@ -243,6 +248,10 @@ echo "  - \"http://localhost:${V2_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
 echo "  - \"http://localhost:${V3_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
 
 cat >> "$DATA_DIR/test_config.yaml" <<EOF
+
+network:
+  epoch: $NETWORK_EPOCH
+
 test:
   funding_amount: "100000000000000000000" # 100 ETH
 EOF

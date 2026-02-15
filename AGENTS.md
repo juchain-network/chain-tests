@@ -100,6 +100,7 @@ chain-tests/
 - `paths.chain_contract_out: ../chain-contract/out`
 
 Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` / `60`），并在生成 `genesis.json` 时生效。
+也可在初始化时临时覆盖：`make init EPOCH=60`（仅影响本次生成）。
 
 ### 4.1 本地网络编排（4 节点）
 

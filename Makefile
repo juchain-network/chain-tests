@@ -26,6 +26,7 @@ TIMEOUT ?=
 CI_LOG ?=
 PKGS ?=
 ARGS ?=
+EPOCH ?=
 
 CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),)
 
@@ -69,6 +70,7 @@ help:
 	@echo "Variables:"
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
+	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
 
 init-config:
@@ -90,7 +92,7 @@ image:
 
 init:
 	@echo "⚙️  Generating network config/genesis..."
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash $(SCRIPTS_DIR)/gen_network_config.sh
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" TEST_NETWORK_EPOCH="$(EPOCH)" bash $(SCRIPTS_DIR)/gen_network_config.sh
 
 run:
 	@set -e; \

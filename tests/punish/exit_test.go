@@ -4,9 +4,11 @@ import (
 	"context"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -99,14 +101,27 @@ func TestF2_QuickReEntry(t *testing.T) {
 	info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
 	current, _ := ctx.Clients[0].BlockNumber(context.Background())
 	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-		jailUntil := info.JailUntilBlock.Uint64()
-		if current < jailUntil {
-			waitBlocks(t, int(jailUntil-current+1))
+		targetHeight := info.JailUntilBlock.Uint64() + 1
+		maxAttempts := 2
+		if targetHeight > current {
+			maxAttempts = int(targetHeight-current) + 2
 		}
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxAttempts,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			h, err := ctx.Clients[0].BlockNumber(context.Background())
+			if err != nil {
+				return false, err
+			}
+			return h >= targetHeight, nil
+		})
 	}
 	// Ensure we are in a new epoch and not on an epoch block before unjailing
 	waitForNextEpochBlock(t)
-	waitBlocks(t, 1)
 	robustUnjailValidator(t, valKey, valAddr)
 }
 
@@ -219,7 +234,6 @@ func TestF5_RoleChange(t *testing.T) {
 	ctx.WaitMined(txR.Hash())
 	// Wait for next epoch boundary so validator is out of active set
 	waitForNextEpochBlock(t)
-	waitBlocks(t, 1)
 	robustExitValidator(t, key)
 
 	// 3. Delegate to another validator
@@ -275,20 +289,44 @@ func TestF7_PunishedRedemption(t *testing.T) {
 	info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 	current, _ := ctx.Clients[0].BlockNumber(context.Background())
 	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-		jailUntil := info.JailUntilBlock.Uint64()
-		if current < jailUntil {
-			waitBlocks(t, int(jailUntil-current+1))
+		targetHeight := info.JailUntilBlock.Uint64() + 1
+		maxAttempts := 2
+		if targetHeight > current {
+			maxAttempts = int(targetHeight-current) + 2
 		}
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxAttempts,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			h, err := ctx.Clients[0].BlockNumber(context.Background())
+			if err != nil {
+				return false, err
+			}
+			return h >= targetHeight, nil
+		})
 	}
 
 	// 5. Unjail
 	waitForNextEpochBlock(t)
-	waitBlocks(t, 1)
 	robustUnjailValidator(t, key, addr)
 
 	// 6. Wait for next epoch to be active in currentValidatorSet
-	waitForNextEpochBlock(t)
-	waitBlocks(t, 1)
+	_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 2,
+		Interval:    100 * time.Millisecond,
+		OnRetry: func(int) {
+			waitForNextEpochBlock(t)
+		},
+	}, func() (bool, error) {
+		status, err := ctx.Validators.IsValidatorActive(nil, addr)
+		if err != nil {
+			return false, err
+		}
+		return status, nil
+	})
 
 	// 7. Verify Active
 	status, _ := ctx.Validators.IsValidatorActive(nil, addr)

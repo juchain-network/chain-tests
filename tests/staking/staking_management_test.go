@@ -4,9 +4,11 @@ import (
 	"context"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -165,12 +167,26 @@ func TestD_StakingManagement(t *testing.T) {
 		current, errHeight := ctx.Clients[0].BlockNumber(context.Background())
 		utils.AssertNoError(t, errHeight, "read current block failed")
 		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-			jailUntil := info.JailUntilBlock.Uint64()
-			if current < jailUntil {
-				remaining := int(jailUntil - current + 1)
-				t.Logf("Waiting %d blocks until jail period ends...", remaining)
-				waitBlocks(t, remaining)
+			targetHeight := info.JailUntilBlock.Uint64() + 1
+			maxAttempts := 2
+			if targetHeight > current {
+				remaining := int(targetHeight - current)
+				t.Logf("Waiting up to %d blocks until jail period ends...", remaining)
+				maxAttempts = remaining + 2
 			}
+			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+				MaxAttempts: maxAttempts,
+				Interval:    100 * time.Millisecond,
+				OnRetry: func(int) {
+					waitBlocks(t, 1)
+				},
+			}, func() (bool, error) {
+				h, err := ctx.Clients[0].BlockNumber(context.Background())
+				if err != nil {
+					return false, err
+				}
+				return h >= targetHeight, nil
+			})
 		}
 
 		ctx.WaitIfEpochBlock()
@@ -226,7 +242,19 @@ func TestD_StakingManagement(t *testing.T) {
 			robustVote(t, vk, propID, true)
 		}
 
-		waitBlocks(t, 1)
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 3,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			pass, err := ctx.Proposal.Pass(nil, addr)
+			if err != nil {
+				return false, err
+			}
+			return !pass, nil
+		})
 		opts, _ := ctx.GetTransactor(key)
 		opts.Value = utils.ToWei(100000)
 		_, err = ctx.Staking.RegisterValidator(opts, big.NewInt(1000))

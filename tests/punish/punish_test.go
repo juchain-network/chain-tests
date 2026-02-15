@@ -200,16 +200,33 @@ func TestG_DoubleSign(t *testing.T) {
 		ctx.WaitMined(txR.Hash())
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		current, _ := ctx.Clients[0].BlockNumber(context.Background())
+		targetHeight := uint64(0)
 		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-			jailUntil := info.JailUntilBlock.Uint64()
-			if current < jailUntil {
-				waitBlocks(t, int(jailUntil-current+1))
-			}
+			targetHeight = info.JailUntilBlock.Uint64() + 1
 		} else {
 			unjailPeriod, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
 			if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
-				waitBlocks(t, int(new(big.Int).Add(unjailPeriod, big.NewInt(1)).Int64()))
+				targetHeight = current + unjailPeriod.Uint64() + 1
 			}
+		}
+		if targetHeight > 0 {
+			maxAttempts := 2
+			if targetHeight > current {
+				maxAttempts = int(targetHeight-current) + 2
+			}
+			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+				MaxAttempts: maxAttempts,
+				Interval:    100 * time.Millisecond,
+				OnRetry: func(int) {
+					waitBlocks(t, 1)
+				},
+			}, func() (bool, error) {
+				h, err := ctx.Clients[0].BlockNumber(context.Background())
+				if err != nil {
+					return false, err
+				}
+				return h >= targetHeight, nil
+			})
 		}
 		robustExitValidator(t, key)
 

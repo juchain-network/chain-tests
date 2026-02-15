@@ -1,0 +1,7 @@
+config.yaml
+tests.test
+data/
+.gocache/
+reports/
+docker/juchain
+.chain-tests-run.lock

@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  node0:
+    image: ubuntu:24.04
+    container_name: juchain-node0
+    environment:
+      - MIN_PEERS=3
+      - MINER_START_DELAY=1
+    command: ["bash","-lc","/bin/bash /usr/local/bin/start.sh"]
+    cpus: 1.5
+    mem_limit: 3096m
+    mem_reservation: 1024m
+    deploy:
+          resources:
+            limits:
+              cpus: '1.5'
+              memory: 3096M
+            reservations:
+              cpus: '1.0'
+              memory: 1024M          
+    volumes:
+      - ../data/node0:/data
+      - ../data/genesis.json:/genesis.json
+      - ./juchain:/usr/local/bin/juchain:ro
+      - ./start.sh:/usr/local/bin/start.sh:ro
+    networks:
+      juchain-net:
+        ipv4_address: 172.28.0.10
+
+  node1:
+    image: ubuntu:24.04
+    container_name: juchain-node1
+    environment:
+      - MIN_PEERS=3
+      - MINER_START_DELAY=6
+    command: ["bash","-lc","/bin/bash /usr/local/bin/start.sh"]
+    cpus: 1.5
+    mem_limit: 3096m
+    mem_reservation: 1024m      
+    deploy:
+          resources:
+            limits:
+              cpus: '1.5'
+              memory: 3096M
+            reservations:
+              cpus: '1.0'
+              memory: 1024M          
+    volumes:
+      - ../data/node1:/data
+      - ../data/genesis.json:/genesis.json
+      - ./juchain:/usr/local/bin/juchain:ro
+      - ./start.sh:/usr/local/bin/start.sh:ro
+    networks:
+      juchain-net:
+        ipv4_address: 172.28.0.11
+
+  node2:
+    image: ubuntu:24.04
+    container_name: juchain-node2
+    environment:
+      - MIN_PEERS=3
+      - MINER_START_DELAY=11
+    command: ["bash","-lc","/bin/bash /usr/local/bin/start.sh"]
+    cpus: 1.5
+    mem_limit: 3096m
+    mem_reservation: 1024m      
+    deploy:
+          resources:
+            limits:
+              cpus: '1.5'
+              memory: 3096M
+            reservations:
+              cpus: '1.0'
+              memory: 1024M          
+    volumes:
+      - ../data/node2:/data
+      - ../data/genesis.json:/genesis.json
+      - ./juchain:/usr/local/bin/juchain:ro
+      - ./start.sh:/usr/local/bin/start.sh:ro
+    networks:
+      juchain-net:
+        ipv4_address: 172.28.0.12
+
+  node3:
+    image: ubuntu:24.04
+    container_name: juchain-node3
+    environment:
+      - MIN_PEERS=3
+      - SYNC_NODE=true
+    command: ["bash","-lc","/bin/bash /usr/local/bin/start.sh"]
+    cpus: 3
+    mem_limit: 6800m
+    mem_reservation: 1024m      
+    deploy:
+          resources:
+            limits:
+              cpus: '3'
+              memory: 6800M
+            reservations:
+              cpus: '1.0'
+              memory: 1024M       
+    ports:
+      - "18545:8545"
+      - "18546:8546" # WS
+      - "30301:30303" # P2P
+    volumes:
+      - ../data/node3:/data
+      - ../data/genesis.json:/genesis.json
+      - ./juchain:/usr/local/bin/juchain:ro
+      - ./start.sh:/usr/local/bin/start.sh:ro
+    networks:
+      juchain-net:
+        ipv4_address: 172.28.0.13
+
+networks:
+  juchain-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

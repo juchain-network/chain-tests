@@ -1,0 +1,63 @@
+# Runtime backend selector for chain-tests
+runtime:
+  # Options: docker | native
+  backend: native
+
+paths:
+  # Supports relative paths, resolved from chain-tests repo root.
+  chain_root: "../chain"
+  chain_contract_root: "../chain-contract"
+  # Prefer compiled artifacts only.
+  chain_contract_out: "../chain-contract/out"
+  # Optional prebuilt linux geth for docker runtime.
+  chain_docker_binary: ""
+
+# Shared settings for both backends
+network:
+  node_count: 4
+  validator_count: 3
+  external_rpc: "http://localhost:18545"
+  chain_id: 666666
+  data_dir: "./data"
+  reports_dir: "./reports"
+
+# Docker backend settings
+docker:
+  compose_file: "./docker/docker-compose.yml"
+  runtime_compose_file: "./data/docker-compose.runtime.yml"
+  project_name: "juchain-it"
+  external_rpc: "http://localhost:18545"
+
+# Native backend settings (recommended for local dev speed)
+native:
+  manager: pm2
+  init_script: "./scripts/native/pm2_init.sh"
+  ecosystem_file: "./native/ecosystem.config.js"
+  env_file: "./data/native/.env"
+  geth_binary: "../chain/build/bin/geth"
+  network_id: 666666
+  external_rpc: "http://localhost:18545"
+  pm2_namespace: "ju-chain"
+  log_dir: "./data/native-logs"
+  ports:
+    validator1_http: 18545
+    validator1_ws: 18546
+    validator1_engine: 18550
+    validator1_p2p: 30301
+    validator2_http: 18547
+    validator2_ws: 18548
+    validator2_engine: 18552
+    validator2_p2p: 30303
+    validator3_http: 18549
+    validator3_ws: 18553
+    validator3_engine: 18554
+    validator3_p2p: 30305
+    sync_http: 18551
+    sync_ws: 18555
+    sync_engine: 18556
+    sync_p2p: 30307
+
+# Test runner settings
+tests:
+  timeout: "30m"
+  reset_before_each_case: true

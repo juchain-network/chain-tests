@@ -1,0 +1,18 @@
+rpcs:
+  - "http://localhost:8545"
+  - "http://localhost:8547"
+  - "http://localhost:8549"
+  - "http://localhost:8551"
+
+funder:
+  address: "0x..."
+  private_key: "..." # Hex private key without 0x prefix
+
+validators:
+  - address: "0x..."
+    private_key: "..."
+  - address: "0x..."
+    private_key: "..."
+
+test:
+  funding_amount: "100000000000000000000" # 100 ETH

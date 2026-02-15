@@ -538,8 +538,8 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 	if votingCountAfter >= votingCount {
 		// Wait for epoch boundary to trigger validator set update.
 		waitForNextEpochBlock(t)
-		t.Log("Wait 5 extra blocks for safety...")
-		waitBlocks(t, 5)
+		t.Log("Wait 1 extra block for state propagation...")
+		waitBlocks(t, 1)
 
 		// Poll for voting count decrease for up to 20 blocks.
 		for i := 0; i < 20; i++ {
@@ -579,7 +579,7 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 
 	if agree >= newThreshold {
 		if !passV5 {
-			waitBlocks(t, 2)
+			waitBlocks(t, 1)
 			passV5, _ = ctx.Proposal.Pass(nil, v5Addr)
 		}
 		utils.AssertTrue(t, passV5, "V5 should pass automatically after threshold reduction")

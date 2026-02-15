@@ -70,7 +70,7 @@ func TestH_Robustness(t *testing.T) {
 		}
 
 		t.Log("Waiting for blocks. If V2 mines, rewards should redistribute.")
-		waitBlocks(t, 5)
+		waitBlocks(t, 2)
 
 		for i := 0; i < 3; i++ {
 			info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
@@ -88,7 +88,7 @@ func TestH_Robustness(t *testing.T) {
 		key, addr, err := createAndRegisterValidator(t, "ZeroDelegation")
 		utils.AssertNoError(t, err, "failed to setup validator")
 
-		waitBlocks(t, 5)
+		waitBlocks(t, 2)
 
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		t.Logf("Validator %s accumulated: %s", addr.Hex(), info.AccumulatedRewards.String())

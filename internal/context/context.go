@@ -17,8 +17,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 
-	"juchain.org/chain/tools/ci/internal/config"
 	"juchain.org/chain/tools/ci/contracts"
+	"juchain.org/chain/tools/ci/internal/config"
 )
 
 // Addresses of system contracts
@@ -123,7 +123,7 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 		nonces:            make(map[common.Address]uint64),
 	}
 
-	if err := c.WaitForBlockProgress(5, 300*time.Second); err != nil {
+	if err := c.WaitForBlockProgress(2, 120*time.Second); err != nil {
 		return nil, fmt.Errorf("chain not producing blocks: %w", err)
 	}
 
@@ -160,7 +160,7 @@ func (c *CIContext) WaitForBlockProgress(minIncrements int, timeout time.Duratio
 			c.sendDummyTx()
 			lastPoke = time.Now()
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("block height did not progress (min increments=%d)", minIncrements)
 }
@@ -264,7 +264,7 @@ func (c *CIContext) autoInitialize() error {
 		opts, _ := c.GetTransactor(c.GenesisValidators[0])
 		opts.GasLimit = 1000000
 		fmt.Printf("  > Initializing Proposal...\n")
-		tx, err := c.Proposal.Initialize(opts, valAddrs, ValidatorsAddr, big.NewInt(100))
+		tx, err := c.Proposal.Initialize(opts, valAddrs, ValidatorsAddr, big.NewInt(60))
 		if err == nil {
 			c.WaitMined(tx.Hash())
 		}
@@ -296,13 +296,13 @@ func (c *CIContext) autoInitialize() error {
 	_ = c.EnsureConfig(19, big.NewInt(1), pCool)
 
 	unbond, _ := c.GetConfigValue(6)
-	_ = c.EnsureConfig(6, big.NewInt(100), unbond)
+	_ = c.EnsureConfig(6, big.NewInt(10), unbond)
 
 	unjail, _ := c.GetConfigValue(7)
-	_ = c.EnsureConfig(7, big.NewInt(50), unjail)
+	_ = c.EnsureConfig(7, big.NewInt(10), unjail)
 
 	withdraw, _ := c.GetConfigValue(4)
-	_ = c.EnsureConfig(4, big.NewInt(20), withdraw)
+	_ = c.EnsureConfig(4, big.NewInt(5), withdraw)
 
 	minStakeVal, _ := c.GetConfigValue(8)
 	_ = c.EnsureConfig(8, big.NewInt(1000000000000000000), minStakeVal)
@@ -311,10 +311,10 @@ func (c *CIContext) autoInitialize() error {
 	_ = c.EnsureConfig(10, big.NewInt(1000000000000000000), minDel)
 
 	commCool, _ := c.GetConfigValue(16)
-	_ = c.EnsureConfig(16, big.NewInt(50), commCool)
+	_ = c.EnsureConfig(16, big.NewInt(5), commCool)
 
 	propLast, _ := c.GetConfigValue(0)
-	_ = c.EnsureConfig(0, big.NewInt(200), propLast)
+	_ = c.EnsureConfig(0, big.NewInt(100), propLast)
 
 	fmt.Printf("✅ Auto-initialization complete.\n")
 	return nil
@@ -494,7 +494,7 @@ func (c *CIContext) WaitMined(txHash common.Hash) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	defer cancel()
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
 	startTime := time.Now()
@@ -677,21 +677,21 @@ func (c *CIContext) waitBlocks(n uint64) {
 	}
 	start, err := c.Clients[0].BlockNumber(context.Background())
 	if err != nil {
-		time.Sleep(1 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 		start, _ = c.Clients[0].BlockNumber(context.Background())
 	}
 	target := start + n
 	for {
 		cur, err := c.Clients[0].BlockNumber(context.Background())
 		if err != nil {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		if cur >= target {
 			return
 		}
 		c.sendDummyTx()
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -722,6 +722,6 @@ func (c *CIContext) WaitIfEpochBlock() {
 			c.sendDummyTx()
 			lastPoke = time.Now()
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }

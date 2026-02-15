@@ -35,8 +35,8 @@ func TestI_ConsensusRewards(t *testing.T) {
 		}
 
 		maxAccrual := int(withdrawPeriod.Int64())
-		if maxAccrual < 20 {
-			maxAccrual = 20
+		if maxAccrual < 5 {
+			maxAccrual = 5
 		}
 		if maxAccrual > 200 {
 			maxAccrual = 200
@@ -60,7 +60,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 		lastClaim := new(big.Int).Set(infoAfterClaim.LastClaimBlock)
 
 		// Allow a couple blocks for post-claim accrual before checking cooldown.
-		waitBlocks(t, 2)
+		waitBlocks(t, 1)
 
 		// Try to claim again within cooldown after rewards accumulate.
 		deadline := new(big.Int).Add(lastClaim, withdrawPeriod)

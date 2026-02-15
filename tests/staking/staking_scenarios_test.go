@@ -29,7 +29,7 @@ func TestD_StakingScenarios(t *testing.T) {
 		ctx.WaitMined(tx1.Hash())
 
 		// 3. Wait blocks to accumulate rewards
-		waitBlocks(t, 2)
+		waitBlocks(t, 1)
 
 		// 4. Decrease Stake
 		decAmt := utils.ToWei(50)

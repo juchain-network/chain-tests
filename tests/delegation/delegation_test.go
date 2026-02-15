@@ -47,7 +47,7 @@ func TestE_Delegation(t *testing.T) {
 		utils.AssertBigIntEq(t, info.Amount, delegateAmount, "delegation amount mismatch")
 
 		t.Log("Waiting for some blocks to accumulate rewards...")
-		waitBlocks(t, 5)
+		waitBlocks(t, 2)
 
 		info, _ = ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 		t.Logf("Accumulated rewards: %s", info.PendingRewards.String())
@@ -86,7 +86,7 @@ func TestE_Delegation(t *testing.T) {
 		t.Logf("Initial accumulated rewards: %s", infoBefore.AccumulatedRewards.String())
 		claimedBefore := infoBefore.TotalClaimedRewards
 
-		waitBlocks(t, 5)
+		waitBlocks(t, 2)
 		robustClaimValidatorRewards(t, valKey)
 
 		infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
@@ -131,7 +131,7 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, keyA, valAddr, utils.ToWei(10))
 		robustDelegate(t, keyB, valAddr, utils.ToWei(20))
 
-		waitBlocks(t, 2)
+		waitBlocks(t, 1)
 		infoA, _ := ctx.Staking.GetDelegationInfo(nil, crypto.PubkeyToAddress(keyA.PublicKey), valAddr)
 		infoB, _ := ctx.Staking.GetDelegationInfo(nil, crypto.PubkeyToAddress(keyB.PublicKey), valAddr)
 		utils.AssertBigIntEq(t, infoA.Amount, utils.ToWei(10), "User A amount mismatch")
@@ -153,7 +153,7 @@ func TestE_Delegation(t *testing.T) {
 		userKey, userAddr, err := ctx.CreateAndFundAccount(utils.ToWei(100))
 		utils.AssertNoError(t, err, "failed delegator setup")
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
-		waitBlocks(t, 2)
+		waitBlocks(t, 1)
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
 		info, _ := ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 		utils.AssertBigIntEq(t, info.Amount, utils.ToWei(20), "total amount mismatch")
@@ -174,13 +174,13 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
 		err = passProposalFor(t, userAddr, "D-15 Propose")
 		utils.AssertNoError(t, err, "proposal failed")
-		waitBlocks(t, 25)
+		waitBlocks(t, 1)
 
 		var lastErr error
 		for retry := 0; retry < 10; retry++ {
 			opts, errG := ctx.GetTransactor(userKey)
 			if errG != nil {
-				time.Sleep(1 * time.Second)
+				time.Sleep(250 * time.Millisecond)
 				continue
 			}
 			opts.Value = utils.ToWei(100000)
@@ -270,14 +270,24 @@ func TestE_Delegation(t *testing.T) {
 		opts, _ := ctx.GetTransactor(key)
 		ctx.Staking.ResignValidator(opts)
 		unjailPeriod, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
-		// Wait for unjail AND epoch transition (Epoch is 20)
-		waitBlocks(t, int(new(big.Int).Add(unjailPeriod, big.NewInt(30)).Int64()))
+		// Wait until jail period is fully passed, then cross epoch for set update.
+		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
+		current, _ := ctx.Clients[0].BlockNumber(context.Background())
+		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+			jailUntil := info.JailUntilBlock.Uint64()
+			if current < jailUntil {
+				waitBlocks(t, int(jailUntil-current+1))
+			}
+		} else if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
+			waitBlocks(t, int(new(big.Int).Add(unjailPeriod, big.NewInt(1)).Int64()))
+		}
+		waitForNextEpochBlock(t)
 		robustExitValidator(t, key)
 		t.Logf("Ex-validator %s delegating to %s", addr.Hex(), valAddr.Hex())
 		robustDelegate(t, key, valAddr, utils.ToWei(10))
 		waitBlocks(t, 1)
-		info, _ := ctx.Staking.GetDelegationInfo(nil, addr, valAddr)
-		utils.AssertBigIntEq(t, info.Amount, utils.ToWei(10), "Delegation check failed")
+		delegationInfo, _ := ctx.Staking.GetDelegationInfo(nil, addr, valAddr)
+		utils.AssertBigIntEq(t, delegationInfo.Amount, utils.ToWei(10), "Delegation check failed")
 	})
 
 	t.Run("D-06_EarlyWithdraw", func(t *testing.T) {
@@ -379,7 +389,7 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, userKey, valAddr, utils.ToWei(25))
 		for i := 0; i < 20; i++ {
 			robustUndelegate(t, userKey, valAddr, utils.ToWei(1))
-			waitBlocks(t, 2)
+			waitBlocks(t, 1)
 		}
 		opts, _ := ctx.GetTransactor(userKey)
 		_, err = ctx.Staking.Undelegate(opts, valAddr, utils.ToWei(1))

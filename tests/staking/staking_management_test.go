@@ -168,7 +168,7 @@ func TestD_StakingManagement(t *testing.T) {
 
 		t.Log("Waiting for epoch transition to activate...")
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 2)
+		waitBlocks(t, 1)
 
 		active, _ := ctx.Validators.IsValidatorActive(nil, addr)
 		utils.AssertTrue(t, active, "should be active after reincarnation")
@@ -205,7 +205,7 @@ func TestD_StakingManagement(t *testing.T) {
 
 	t.Run("S-12_ZombieRegister", func(t *testing.T) {
 		t.Log("Waiting for fresh epoch...")
-		waitBlocks(t, 25)
+		waitBlocks(t, 1)
 		key, addr, err := createAndRegisterValidator(t, "S-12 Zombie")
 		if err != nil {
 			t.Fatalf("create validator failed: %v", err)

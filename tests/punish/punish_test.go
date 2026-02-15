@@ -147,7 +147,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	time.Sleep(2 * time.Second)
+	waitBlocks(t, 1)
 
 	// [P-21] Resign + Double Sign
 	t.Run("P-21_ResignThenDoubleSign", func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestG_DoubleSign(t *testing.T) {
 		ctx.WaitMined(txDS.Hash())
 	})
 
-	time.Sleep(2 * time.Second)
+	waitBlocks(t, 1)
 
 	// [P-22] Exit + Double Sign
 	t.Run("P-22_ExitThenDoubleSign", func(t *testing.T) {
@@ -186,7 +186,19 @@ func TestG_DoubleSign(t *testing.T) {
 
 		txR, _ := ctx.Staking.ResignValidator(opts)
 		ctx.WaitMined(txR.Hash())
-		waitBlocks(t, 55)
+		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
+		current, _ := ctx.Clients[0].BlockNumber(context.Background())
+		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+			jailUntil := info.JailUntilBlock.Uint64()
+			if current < jailUntil {
+				waitBlocks(t, int(jailUntil-current+1))
+			}
+		} else {
+			unjailPeriod, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
+			if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
+				waitBlocks(t, int(new(big.Int).Add(unjailPeriod, big.NewInt(1)).Int64()))
+			}
+		}
 		robustExitValidator(t, key)
 
 		header, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
@@ -201,7 +213,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	time.Sleep(2 * time.Second)
+	waitBlocks(t, 1)
 
 	// [P-10~P-14] Double Sign Exceptions
 	t.Run("P-10-14_DoubleSignExceptions", func(t *testing.T) {
@@ -259,7 +271,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	time.Sleep(2 * time.Second)
+	waitBlocks(t, 1)
 
 	// [P-23] Multi-Validator Double Sign (same epoch)
 	t.Run("P-23_MultiValidatorDoubleSign", func(t *testing.T) {

@@ -88,7 +88,7 @@ func waitForNextEpochBlock(t *testing.T) uint64 {
 		if header.Number.Uint64() >= nextEpochBlock {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// Trigger the validator set update.
@@ -130,7 +130,7 @@ func waitForNextEpochBlock(t *testing.T) uint64 {
 				}
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 Done:
 

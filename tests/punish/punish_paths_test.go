@@ -43,7 +43,7 @@ func TestG_PunishPaths(t *testing.T) {
 		for retry := 0; retry < 10; retry++ {
 			opts, errG := ctx.GetTransactor(ctx.GenesisValidators[0])
 			if errG != nil {
-				time.Sleep(1 * time.Second)
+				time.Sleep(250 * time.Millisecond)
 				continue
 			}
 
@@ -55,7 +55,7 @@ func TestG_PunishPaths(t *testing.T) {
 			}
 			err = errCall
 			if strings.Contains(err.Error(), "Epoch block forbidden") {
-				time.Sleep(1 * time.Second)
+				time.Sleep(250 * time.Millisecond)
 				continue
 			}
 			break

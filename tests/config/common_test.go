@@ -113,7 +113,7 @@ func waitBlocks(t *testing.T, n int) {
 
 	// Send dummy transactions to force block production if needed
 	// (Some PoA networks only seal blocks when there are transactions)
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -154,7 +154,7 @@ func getPropID(tx *types.Transaction) [32]byte {
 		if err == nil && receipt != nil {
 			break
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(250 * time.Millisecond)
 	}
 	if receipt == nil {
 		return [32]byte{}
@@ -190,7 +190,7 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 
 		opts, errG := ctx.GetTransactor(voterKey)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 
@@ -201,7 +201,7 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				if strings.Contains(errW.Error(), "Validator only") || strings.Contains(errW.Error(), "Validator is jailed") {
@@ -214,7 +214,7 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if strings.Contains(err.Error(), "Validator only") || strings.Contains(err.Error(), "Validator is jailed") {
@@ -249,7 +249,7 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 
 		opts, errG := ctx.GetTransactor(proposerKey)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 
@@ -257,7 +257,7 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 		if err == nil {
 			if errW := ctx.WaitMined(tx.Hash()); errW != nil {
 				if strings.Contains(errW.Error(), "timeout waiting for tx") {
-					time.Sleep(2 * time.Second)
+					waitBlocks(t, 1)
 					continue
 				}
 				return errW
@@ -266,7 +266,7 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 			break
 		}
 		if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
-			time.Sleep(2 * time.Second)
+			waitBlocks(t, 1)
 			continue
 		}
 		return err
@@ -317,7 +317,7 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		opts.Value = utils.ToWei(100000)
@@ -355,7 +355,7 @@ func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		opts.Value = amount
@@ -365,16 +365,16 @@ func robustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				lastErr = errW
-				time.Sleep(1 * time.Second)
+				time.Sleep(250 * time.Millisecond)
 				continue
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if t != nil {
@@ -393,7 +393,7 @@ func robustUndelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, a
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.Undelegate(opts, val, amount)
@@ -402,16 +402,16 @@ func robustUndelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, a
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				lastErr = errW
-				time.Sleep(1 * time.Second)
+				time.Sleep(250 * time.Millisecond)
 				continue
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if t != nil {
@@ -429,7 +429,7 @@ func robustClaimRewards(t *testing.T, key *ecdsa.PrivateKey, val common.Address)
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.ClaimRewards(opts, val)
@@ -438,7 +438,7 @@ func robustClaimRewards(t *testing.T, key *ecdsa.PrivateKey, val common.Address)
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				if t != nil {
@@ -449,7 +449,7 @@ func robustClaimRewards(t *testing.T, key *ecdsa.PrivateKey, val common.Address)
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if t != nil {
@@ -464,7 +464,7 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.WithdrawUnbonded(opts, val, big.NewInt(maxEntries))
@@ -473,7 +473,7 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				if t != nil {
@@ -484,7 +484,7 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if t != nil {
@@ -499,7 +499,7 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.ExitValidator(opts)
@@ -508,7 +508,7 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				if t != nil {
@@ -519,7 +519,7 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if strings.Contains(err.Error(), "active set") || strings.Contains(err.Error(), "wait until next epoch") {
@@ -539,7 +539,7 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.ClaimValidatorRewards(opts)
@@ -548,7 +548,7 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(1 * time.Second)
+					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 				if t != nil {
@@ -559,7 +559,7 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 			}
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		if t != nil {
@@ -574,7 +574,7 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		tx, err := ctx.Staking.UnjailValidator(opts, addr)

@@ -47,13 +47,13 @@ func TestA_SystemConfigSetup(t *testing.T) {
 		val  *big.Int
 	}{
 		{"ProposalCooldown", ConfigID_ProposalCooldown, big.NewInt(1)},
-		{"UnbondingPeriod", ConfigID_UnbondingPeriod, big.NewInt(100)},
-		{"ValidatorUnjailPeriod", ConfigID_ValidatorUnjailPeriod, big.NewInt(50)},
-		{"WithdrawProfitPeriod", ConfigID_WithdrawProfitPeriod, big.NewInt(20)},
+		{"UnbondingPeriod", ConfigID_UnbondingPeriod, big.NewInt(10)},
+		{"ValidatorUnjailPeriod", ConfigID_ValidatorUnjailPeriod, big.NewInt(10)},
+		{"WithdrawProfitPeriod", ConfigID_WithdrawProfitPeriod, big.NewInt(5)},
 		{"MinValidatorStake", ConfigID_MinValidatorStake, utils.ToWei(1)},
 		{"MinDelegation", ConfigID_MinDelegation, utils.ToWei(1)},
-		{"CommissionUpdateCooldown", ConfigID_CommissionUpdateCooldown, big.NewInt(50)},
-		{"ProposalLastingPeriod", ConfigID_ProposalLastingPeriod, big.NewInt(200)},
+		{"CommissionUpdateCooldown", ConfigID_CommissionUpdateCooldown, big.NewInt(5)},
+		{"ProposalLastingPeriod", ConfigID_ProposalLastingPeriod, big.NewInt(100)},
 	}
 
 	for _, target := range targets {
@@ -83,7 +83,7 @@ func TestB_ConfigBoundaryChecks(t *testing.T) {
 
 	// Wait for any previous cooldown to expire
 	t.Log("Waiting for potential proposal cooldown...")
-	waitBlocks(t, 5)
+	waitBlocks(t, 1)
 
 	proposerCounter := 0
 	runRevertTest := func(name string, cid uint256, val *big.Int, expectedErr string) {
@@ -114,12 +114,7 @@ func TestB_ConfigBoundaryChecks(t *testing.T) {
 				t.Errorf("expected error %q, got %q", expectedErr, err.Error())
 			}
 
-			if proposerCounter%2 == 0 {
-				t.Log("Clearing cooldowns via epoch wait...")
-				waitForNextEpochBlock(t)
-			} else {
-				waitBlocks(t, 1)
-			}
+			waitBlocks(t, 1)
 		})
 	}
 

@@ -28,7 +28,7 @@ func TestC_StakingFlow(t *testing.T) {
 
 	// 3. Register Validator (Candidate executes this)
 	t.Log("Waiting for fresh epoch to register...")
-	waitBlocks(t, 25)
+	waitBlocks(t, 1)
 	t.Log("Registering validator...")
 	// Check if passed?
 	pass, err := ctx.Proposal.Pass(nil, valAddr)

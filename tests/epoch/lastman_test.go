@@ -52,7 +52,7 @@ func TestZ_LastManStanding(t *testing.T) {
 				}
 				return receipt, nil
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(250 * time.Millisecond)
 		}
 		return nil, fmt.Errorf("timeout waiting for tx %s", txHash.Hex())
 	}

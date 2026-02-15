@@ -12,8 +12,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	testctx "juchain.org/chain/tools/ci/internal/context"
 	"juchain.org/chain/tools/ci/contracts"
+	testctx "juchain.org/chain/tools/ci/internal/context"
 )
 
 func TestZ_SystemInitSecurityGuards(t *testing.T) {

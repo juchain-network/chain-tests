@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,7 @@ func main() {
 	groups := flag.String("groups", "config,governance,staking,delegation,punish,rewards,epoch", "Comma-separated group list")
 	tests := flag.String("tests", "", "Comma-separated test names (e.g. TestB_Governance,TestZ_LastManStanding)")
 	runPattern := flag.String("run", "", "go test -run pattern (used when -tests is empty)")
+	pkgs := flag.String("pkgs", "./tests/...", "go test package pattern/path")
 	timeout := flag.String("timeout", "30m", "go test timeout (tests mode only)")
 	configPath := flag.String("config", "", "Path to test_config.yaml (default: test-integration/data/test_config.yaml)")
 	reportDir := flag.String("report-dir", "reports", "Report output directory")
@@ -112,7 +114,7 @@ func main() {
 
 		if len(testList) > 0 {
 			for _, testName := range testList {
-				res := runSingleTest(runDir, testName, *timeout, *configPath, env, rootDir)
+				res := runSingleTest(runDir, testName, *pkgs, *timeout, *configPath, env, rootDir)
 				results = append(results, res)
 				if res.Status != "PASS" {
 					hadFailure = true
@@ -120,7 +122,7 @@ func main() {
 				}
 			}
 		} else {
-			res := runPatternTest(runDir, *runPattern, *timeout, *configPath, env, rootDir, *skipSetup)
+			res := runPatternTest(runDir, *runPattern, *pkgs, *timeout, *configPath, env, rootDir, *skipSetup)
 			results = append(results, res)
 			if res.Status != "PASS" {
 				hadFailure = true
@@ -137,7 +139,7 @@ func main() {
 			os.Exit(1)
 		}
 		for _, testName := range testList {
-			res := runSingleTest(runDir, testName, *timeout, *configPath, env, rootDir)
+			res := runSingleTest(runDir, testName, *pkgs, *timeout, *configPath, env, rootDir)
 			results = append(results, res)
 			if res.Status != "PASS" {
 				hadFailure = true
@@ -201,7 +203,19 @@ func splitList(value string) []string {
 
 func discoverTests(rootDir string) ([]string, error) {
 	testDir := filepath.Join(rootDir, "tests")
-	files, err := filepath.Glob(filepath.Join(testDir, "*.go"))
+	var files []string
+	err := filepath.WalkDir(testDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), "_test.go") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +256,7 @@ func discoverTests(rootDir string) ([]string, error) {
 	return out, nil
 }
 
-func runSingleTest(runDir, testName, timeout, configPath string, env []string, workdir string) stepResult {
+func runSingleTest(runDir, testName, packagePattern, timeout, configPath string, env []string, workdir string) stepResult {
 	name := "test_" + testName
 	logPath := filepath.Join(runDir, name+".log")
 	start := time.Now()
@@ -262,7 +276,7 @@ func runSingleTest(runDir, testName, timeout, configPath string, env []string, w
 		{"make", "init"},
 		{"make", "run"},
 		{"make", "ready"},
-		{"go", "test", "./tests/...", "-v", "-run", "^" + testName + "$", "-count=1", "-parallel=1", "-p", "1", "-timeout", timeout, "-config", configPath},
+		{"go", "test", packagePattern, "-v", "-run", "^" + testName + "$", "-count=1", "-parallel=1", "-p", "1", "-timeout", timeout, "-config", configPath},
 		{"make", "stop"},
 	}
 
@@ -292,7 +306,7 @@ func runSingleTest(runDir, testName, timeout, configPath string, env []string, w
 	return res
 }
 
-func runPatternTest(runDir, pattern, timeout, configPath string, env []string, workdir string, skipSetup bool) stepResult {
+func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string, env []string, workdir string, skipSetup bool) stepResult {
 	name := "test_run_pattern"
 	logPath := filepath.Join(runDir, name+".log")
 	start := time.Now()
@@ -307,7 +321,7 @@ func runPatternTest(runDir, pattern, timeout, configPath string, env []string, w
 	defer logFile.Close()
 
 	steps := [][]string{
-		{"go", "test", "./tests/...", "-v", "-run", pattern, "-count=1", "-parallel=1", "-p", "1", "-timeout", timeout, "-config", configPath},
+		{"go", "test", packagePattern, "-v", "-run", pattern, "-count=1", "-parallel=1", "-p", "1", "-timeout", timeout, "-config", configPath},
 	}
 	if !skipSetup {
 		steps = [][]string{

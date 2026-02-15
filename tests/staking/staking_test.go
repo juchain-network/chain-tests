@@ -33,21 +33,21 @@ func TestC_StakingFlow(t *testing.T) {
 	// Check if passed?
 	pass, err := ctx.Proposal.Pass(nil, valAddr)
 	utils.AssertNoError(t, err, "failed to check pass status")
-	
+
 	if !pass {
 		t.Log("Proposal has not passed yet (not enough votes?). Skipping registration.")
 		// In a 4-node cluster, we need >50% (3 votes). If we have keys for all 4, it should pass.
 		// If we only configured 1 key, it might fail.
-		return 
+		return
 	}
 
 	registerOpts, _ := ctx.GetTransactor(valKey)
 	registerOpts.Value = utils.ToWei(100000) // Min stake
-	commission := big.NewInt(1000) // 10%
-	
+	commission := big.NewInt(1000)           // 10%
+
 	txReg, err := ctx.Staking.RegisterValidator(registerOpts, commission)
 	utils.AssertNoError(t, err, "failed to register validator")
-	
+
 	err = ctx.WaitMined(txReg.Hash())
 	utils.AssertNoError(t, err, "register tx failed")
 
@@ -55,6 +55,6 @@ func TestC_StakingFlow(t *testing.T) {
 	isRegistered, err := ctx.Validators.IsValidatorExist(nil, valAddr)
 	utils.AssertNoError(t, err, "failed to check validator existence")
 	utils.AssertTrue(t, isRegistered, "Validator should be registered")
-	
+
 	t.Logf("Validator %s successfully registered!", valAddr.Hex())
 }

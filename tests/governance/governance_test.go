@@ -534,7 +534,3 @@ func TestB_Governance(t *testing.T) {
 		t.Logf("Smooth expansion check: initial=%d current=%d", initialCount, len(topValidators))
 	})
 }
-
-func waitNextBlock() {
-	waitBlocks(nil, 1)
-}

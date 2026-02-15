@@ -16,8 +16,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	testctx "juchain.org/chain/tools/ci/internal/context"
 	"juchain.org/chain/tools/ci/contracts"
+	testctx "juchain.org/chain/tools/ci/internal/context"
 )
 
 func TestZ_UpgradesAndInitGuards(t *testing.T) {

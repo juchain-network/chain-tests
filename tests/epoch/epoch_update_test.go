@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	ethereum "github.com/ethereum/go-ethereum"
+	"juchain.org/chain/tools/ci/contracts"
 	testctx "juchain.org/chain/tools/ci/internal/context"
 	"juchain.org/chain/tools/ci/internal/utils"
-	"juchain.org/chain/tools/ci/contracts"
 )
 
 func TestY_UpdateActiveValidatorSet(t *testing.T) {

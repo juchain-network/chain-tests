@@ -23,9 +23,11 @@ import (
 
 var (
 	ctx             *testctx.CIContext
-	configPath      = flag.String("config", "../config.yaml", "Path to test configuration file")
+	configPath      = flag.String("config", "../../config.yaml", "Path to test configuration file")
 	proposerCounter int
 )
+
+type uint256 = uint64
 
 func TestMain(m *testing.M) {
 	// Parse flags

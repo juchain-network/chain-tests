@@ -24,6 +24,7 @@ TESTS ?=
 RUN ?=
 TIMEOUT ?=
 CI_LOG ?=
+PKGS ?=
 ARGS ?=
 
 CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),)
@@ -153,29 +154,29 @@ net-ready:
 # Punish tests are split with resets to avoid chain stall
 test-punish:
 	@echo "🧪 Running Punishment Test Group..."
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -tests TestF1_ExitFlow,TestF2_QuickReEntry,TestF3_WithdrawProfits,TestF4_MiscExit,TestF5_RoleChange,TestF6_DoubleSignWindow,TestF7_PunishedRedemption,TestG_DoubleSign,TestG_PunishPaths
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -tests TestF1_ExitFlow,TestF2_QuickReEntry,TestF3_WithdrawProfits,TestF4_MiscExit,TestF5_RoleChange,TestF6_DoubleSignWindow,TestF7_PunishedRedemption,TestG_DoubleSign,TestG_PunishPaths
 
 test-config:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
 
 test-governance:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestB_Governance.*"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/governance -run "TestB_Governance.*"
 
 test-staking:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestC_Staking.*|TestD_Staking.*"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/staking -run "TestC_Staking.*|TestD_Staking.*"
 
 test-delegation:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestE_Delegation.*"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"
 
 test-rewards:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestH_Robustness"
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
 
 test-epoch:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestY_UpdateActiveValidatorSet"
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestZ_LastManStanding"
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestZ_UpgradesAndInitGuards"
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "TestZ_SystemInitSecurityGuards"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_LastManStanding"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_UpgradesAndInitGuards"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_SystemInitSecurityGuards"
 
 test-all:
 	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)
@@ -197,4 +198,4 @@ ci-groups:
 
 ci-tests:
 	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(TESTS),-tests $(TESTS),) $(if $(RUN),-run $(RUN),) $(if $(TIMEOUT),-timeout $(TIMEOUT),)
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(PKGS),-pkgs $(PKGS),) $(if $(TESTS),-tests $(TESTS),) $(if $(RUN),-run $(RUN),) $(if $(TIMEOUT),-timeout $(TIMEOUT),)

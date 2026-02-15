@@ -240,3 +240,7 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 	}
 	return key, addr
 }
+
+func waitNextBlock() {
+	waitBlocks(nil, 1)
+}

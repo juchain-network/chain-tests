@@ -5,9 +5,11 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 func TestI_ConsensusRewards(t *testing.T) {
@@ -50,12 +52,37 @@ func TestI_ConsensusRewards(t *testing.T) {
 		if infoBefore.AccumulatedRewards.Sign() == 0 {
 			t.Fatalf("no rewards accrued for validator in time")
 		}
+		lastClaimBefore := big.NewInt(0)
+		if infoBefore.LastClaimBlock != nil {
+			lastClaimBefore = new(big.Int).Set(infoBefore.LastClaimBlock)
+		}
 
 		robustClaimValidatorRewards(t, minerKey)
 
-		infoAfterClaim, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
-		if infoAfterClaim.LastClaimBlock.Sign() == 0 {
-			t.Fatalf("claim did not update lastClaimBlock")
+		var infoAfterClaim struct {
+			LastClaimBlock     *big.Int
+			AccumulatedRewards *big.Int
+		}
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err := ctx.Staking.GetValidatorInfo(nil, minerAddr)
+			if err != nil {
+				return false, err
+			}
+			infoAfterClaim.LastClaimBlock = info.LastClaimBlock
+			infoAfterClaim.AccumulatedRewards = info.AccumulatedRewards
+			if info.LastClaimBlock == nil {
+				return false, nil
+			}
+			return info.LastClaimBlock.Cmp(lastClaimBefore) > 0, nil
+		})
+		if err != nil {
+			t.Fatalf("claim did not advance lastClaimBlock: before=%s after=%v rewards=%v err=%v", lastClaimBefore.String(), infoAfterClaim.LastClaimBlock, infoAfterClaim.AccumulatedRewards, err)
 		}
 		lastClaim := new(big.Int).Set(infoAfterClaim.LastClaimBlock)
 
@@ -69,13 +96,13 @@ func TestI_ConsensusRewards(t *testing.T) {
 			cooldownChecks = 50
 		}
 		for i := 0; i < cooldownChecks; i++ {
+			waitBlocks(t, 1)
 			curHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
 			if curHeight >= deadline.Uint64() {
 				break
 			}
 			info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
 			if info.AccumulatedRewards.Sign() == 0 {
-				waitBlocks(t, 1)
 				continue
 			}
 

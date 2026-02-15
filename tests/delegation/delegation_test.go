@@ -128,22 +128,37 @@ func TestE_Delegation(t *testing.T) {
 		t.Logf("Initial accumulated rewards: %s", infoBefore.AccumulatedRewards.String())
 		claimedBefore := new(big.Int).Set(infoBefore.TotalClaimedRewards)
 
-		success := false
-		for i := 0; i < 20; i++ {
-			infoNow, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-			if infoNow.AccumulatedRewards.Sign() == 0 {
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 20,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
 				waitBlocks(t, 1)
-				continue
+			},
+		}, func() (bool, error) {
+			infoNow, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			if err != nil {
+				return false, err
 			}
+			return infoNow.AccumulatedRewards.Sign() > 0, nil
+		})
+		utils.AssertNoError(t, err, "validator rewards should accrue before claim")
 
-			robustClaimValidatorRewards(t, valKey)
-			infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-			if infoAfter.TotalClaimedRewards.Cmp(claimedBefore) > 0 {
-				success = true
-				break
+		robustClaimValidatorRewards(t, valKey)
+
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 3,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			infoAfter, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			if err != nil {
+				return false, err
 			}
-		}
-		utils.AssertTrue(t, success, "total claimed rewards should increase")
+			return infoAfter.TotalClaimedRewards.Cmp(claimedBefore) > 0, nil
+		})
+		utils.AssertNoError(t, err, "total claimed rewards should increase")
 	})
 
 	t.Run("D-02b_ClaimNoDelegation", func(t *testing.T) {
@@ -233,7 +248,8 @@ func TestE_Delegation(t *testing.T) {
 		for retry := 0; retry < 10; retry++ {
 			opts, errG := ctx.GetTransactor(userKey)
 			if errG != nil {
-				time.Sleep(250 * time.Millisecond)
+				lastErr = errG
+				ctx.RefreshNonce(userAddr)
 				continue
 			}
 			opts.Value = utils.ToWei(100000)
@@ -272,8 +288,20 @@ func TestE_Delegation(t *testing.T) {
 				continue
 			}
 
-			isVal, _ := ctx.Validators.IsValidatorExist(nil, userAddr)
-			utils.AssertTrue(t, isVal, "should be validator")
+			err = testkit.WaitUntil(testkit.WaitUntilOptions{
+				MaxAttempts: 3,
+				Interval:    100 * time.Millisecond,
+				OnRetry: func(int) {
+					waitBlocks(t, 1)
+				},
+			}, func() (bool, error) {
+				isVal, err := ctx.Validators.IsValidatorExist(nil, userAddr)
+				if err != nil {
+					return false, err
+				}
+				return isVal, nil
+			})
+			utils.AssertNoError(t, err, "should be validator")
 			return
 		}
 		if lastErr != nil {
@@ -326,14 +354,42 @@ func TestE_Delegation(t *testing.T) {
 		// Wait until jail period is fully passed, then cross epoch for set update.
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		current, _ := ctx.Clients[0].BlockNumber(context.Background())
+		targetHeight := uint64(0)
 		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-			jailUntil := info.JailUntilBlock.Uint64()
-			if current < jailUntil {
-				waitBlocks(t, int(jailUntil-current+1))
-			}
+			targetHeight = info.JailUntilBlock.Uint64() + 1
 		} else if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
-			waitBlocks(t, int(new(big.Int).Add(unjailPeriod, big.NewInt(1)).Int64()))
+			targetHeight = current + unjailPeriod.Uint64() + 1
 		}
+		maxAttempts := 2
+		if targetHeight > current {
+			maxAttempts = int(targetHeight-current) + 2
+		}
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxAttempts,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			curInfo, err := ctx.Staking.GetValidatorInfo(nil, addr)
+			if err != nil {
+				return false, err
+			}
+			if !curInfo.IsJailed {
+				return true, nil
+			}
+			h, err := ctx.Clients[0].BlockNumber(context.Background())
+			if err != nil {
+				return false, err
+			}
+			if curInfo.JailUntilBlock != nil && curInfo.JailUntilBlock.Sign() > 0 {
+				return h >= curInfo.JailUntilBlock.Uint64(), nil
+			}
+			if targetHeight == 0 {
+				return true, nil
+			}
+			return h >= targetHeight, nil
+		})
 		waitForNextEpochBlock(t)
 		robustExitValidator(t, key)
 		t.Logf("Ex-validator %s delegating to %s", addr.Hex(), valAddr.Hex())
@@ -447,11 +503,23 @@ func TestE_Delegation(t *testing.T) {
 			robustUndelegate(t, userKey, valAddr, utils.ToWei(1))
 			curCnt, _ := ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
 			if curCnt == nil || curCnt.Cmp(prevCnt) <= 0 {
-				waitBlocks(t, 1)
-				curCnt, _ = ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
+				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+					MaxAttempts: 3,
+					Interval:    100 * time.Millisecond,
+					OnRetry: func(int) {
+						waitBlocks(t, 1)
+					},
+				}, func() (bool, error) {
+					var err error
+					curCnt, err = ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
+					if err != nil {
+						return false, err
+					}
+					return curCnt != nil && curCnt.Cmp(prevCnt) > 0, nil
+				})
 			}
 			if curCnt != nil {
-				prevCnt = curCnt
+				prevCnt = new(big.Int).Set(curCnt)
 			}
 		}
 		opts, _ := ctx.GetTransactor(userKey)

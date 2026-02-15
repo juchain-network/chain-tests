@@ -2,11 +2,14 @@ package tests
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
@@ -19,7 +22,7 @@ func TestH_Robustness(t *testing.T) {
 
 	// [V-01] Jailed Validator Redistribution
 	t.Run("V-01_JailedRedistribution", func(t *testing.T) {
-		valKey, valAddr, err := createAndRegisterValidator(t, "V-01 Resign")
+		valKey, valAddr, err := createAndRegisterValidatorStable(t, "V-01 Resign", 3)
 		utils.AssertNoError(t, err, "setup validator failed")
 		// Ensure doubleSignWindow is small enough for test.
 		curWindow, _ := ctx.Proposal.DoubleSignWindow(nil)
@@ -45,8 +48,12 @@ func TestH_Robustness(t *testing.T) {
 			opts, _ := ctx.GetTransactor(valKey)
 			tx, err := ctx.Staking.ResignValidator(opts)
 			if err != nil {
-				if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "active set") {
+				if strings.Contains(err.Error(), "Epoch block forbidden") {
 					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(err.Error(), "active set") {
+					waitForNextEpochBlock(t)
 					continue
 				}
 				t.Fatalf("resign failed: %v", err)
@@ -59,7 +66,6 @@ func TestH_Robustness(t *testing.T) {
 				}
 				if strings.Contains(errW.Error(), "transaction") && strings.Contains(errW.Error(), "reverted") {
 					waitForNextEpochBlock(t)
-					waitBlocks(t, 1)
 					continue
 				}
 				t.Fatalf("resign tx failed: %v", errW)
@@ -93,7 +99,7 @@ func TestH_Robustness(t *testing.T) {
 
 	// [S-16] Zero Delegated Rewards
 	t.Run("S-16_ZeroDelegatedRewards", func(t *testing.T) {
-		key, addr, err := createAndRegisterValidator(t, "ZeroDelegation")
+		key, addr, err := createAndRegisterValidatorStable(t, "ZeroDelegation", 3)
 		utils.AssertNoError(t, err, "failed to setup validator")
 
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
@@ -130,16 +136,73 @@ func TestH_Robustness(t *testing.T) {
 		utils.AssertNoError(t, err, "create proposal failed")
 		ctx.WaitMined(tx.Hash())
 
-		propID := getPropID(tx)
-		if propID == ([32]byte{}) {
-			t.Fatal("propID missing")
-		}
+		propID := [32]byte{}
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			propID = getPropID(tx)
+			return propID != ([32]byte{}), nil
+		})
+		utils.AssertNoError(t, err, "propID missing")
 
-		p, _ := ctx.Proposal.Proposals(nil, propID)
 		proposerAddr := crypto.PubkeyToAddress(proposerKey.PublicKey)
-		utils.AssertTrue(t, p.Proposer == proposerAddr, "Proposal not found")
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 3,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			p, err := ctx.Proposal.Proposals(nil, propID)
+			if err != nil {
+				return false, err
+			}
+			return p.Proposer == proposerAddr, nil
+		})
+		utils.AssertNoError(t, err, "Proposal not found")
 
 		// Ensure no direct side-effects from user key
 		ctx.RefreshNonce(crypto.PubkeyToAddress(userKey.PublicKey))
 	})
+}
+
+func createAndRegisterValidatorStable(t *testing.T, baseName string, attempts int) (*ecdsa.PrivateKey, common.Address, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var (
+		key  *ecdsa.PrivateKey
+		addr common.Address
+		err  error
+	)
+	for i := 0; i < attempts; i++ {
+		name := baseName
+		if i > 0 {
+			name = fmt.Sprintf("%s retry-%d", baseName, i)
+		}
+		key, addr, err = createAndRegisterValidator(t, name)
+		if err == nil {
+			return key, addr, nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "revert") ||
+			strings.Contains(msg, "Epoch block forbidden") ||
+			strings.Contains(msg, "Too many new validators") ||
+			strings.Contains(msg, "already") ||
+			strings.Contains(msg, "top validator set") {
+			waitForNextEpochBlock(t)
+			continue
+		}
+		break
+	}
+
+	return key, addr, err
 }

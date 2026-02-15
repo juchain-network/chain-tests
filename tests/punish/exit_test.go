@@ -33,9 +33,11 @@ func TestF1_ExitFlow(t *testing.T) {
 	utils.AssertNoError(t, err, "resign failed")
 	ctx.WaitMined(txResign.Hash())
 
-	// Verify jailed status
-	info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-	utils.AssertTrue(t, info.IsJailed, "should be jailed after resign")
+	// Verify jailed status (state update may lag by a few blocks).
+	if !waitForValidatorJailed(t, valAddr, 5) {
+		info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
+		t.Fatalf("should be jailed after resign (isJailed=%v)", info.IsJailed)
+	}
 
 	// 2. Try immediate exit (should fail if in active set)
 	t.Log("Attempting immediate exit (expecting failure if in active set)...")

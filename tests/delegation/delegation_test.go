@@ -84,13 +84,24 @@ func TestE_Delegation(t *testing.T) {
 	t.Run("D-02_ClaimCommission", func(t *testing.T) {
 		infoBefore, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
 		t.Logf("Initial accumulated rewards: %s", infoBefore.AccumulatedRewards.String())
-		claimedBefore := infoBefore.TotalClaimedRewards
+		claimedBefore := new(big.Int).Set(infoBefore.TotalClaimedRewards)
 
-		waitBlocks(t, 2)
-		robustClaimValidatorRewards(t, valKey)
+		success := false
+		for i := 0; i < 20; i++ {
+			waitBlocks(t, 1)
+			infoNow, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			if infoNow.AccumulatedRewards.Sign() == 0 {
+				continue
+			}
 
-		infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-		utils.AssertTrue(t, infoAfter.TotalClaimedRewards.Cmp(claimedBefore) > 0, "total claimed rewards should increase")
+			robustClaimValidatorRewards(t, valKey)
+			infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			if infoAfter.TotalClaimedRewards.Cmp(claimedBefore) > 0 {
+				success = true
+				break
+			}
+		}
+		utils.AssertTrue(t, success, "total claimed rewards should increase")
 	})
 
 	t.Run("D-02b_ClaimNoDelegation", func(t *testing.T) {
@@ -106,7 +117,7 @@ func TestE_Delegation(t *testing.T) {
 	t.Run("D-04a_ValidatorResignImpact", func(t *testing.T) {
 		key, addr, err := createAndRegisterValidator(t, "D-04a Val")
 		utils.AssertNoError(t, err, "setup validator failed")
-		userKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(50))
+		userKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(500))
 		utils.AssertNoError(t, err, "setup user failed")
 		robustDelegate(t, userKey, addr, utils.ToWei(10))
 

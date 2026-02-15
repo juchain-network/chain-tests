@@ -162,6 +162,23 @@ func waitForValidatorActive(t *testing.T, addr common.Address, maxEpochs int) bo
 	return false
 }
 
+func waitForValidatorJailed(t *testing.T, addr common.Address, maxBlocks int) bool {
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if maxBlocks < 1 {
+		maxBlocks = 1
+	}
+	for i := 0; i < maxBlocks; i++ {
+		info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+		if err == nil && info.IsJailed {
+			return true
+		}
+		waitBlocks(t, 1)
+	}
+	return false
+}
+
 func ensureMinActiveValidators(t *testing.T, min int, maxEpochs int) {
 	if ctx == nil {
 		t.Fatalf("Context not initialized")

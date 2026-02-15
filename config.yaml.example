@@ -15,7 +15,7 @@ validators:
     private_key: "..."
 
 network:
-  epoch: 60
+  epoch: 30
 
 test:
   funding_amount: "100000000000000000000" # 100 ETH

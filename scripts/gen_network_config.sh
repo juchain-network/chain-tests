@@ -9,7 +9,7 @@ CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEMPLATE_GENESIS="$(to_abs_path "./templates/genesis.tpl.json")"
 PRIMARY_RPC="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
-NETWORK_EPOCH="$(cfg_get "$CONFIG_FILE" "network.epoch" "60")"
+NETWORK_EPOCH="$(cfg_get "$CONFIG_FILE" "network.epoch" "30")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V2_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_http" "18547")"

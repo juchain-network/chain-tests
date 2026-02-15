@@ -536,9 +536,11 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 }
 
 func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
-	for retry := 0; retry < 10; retry++ {
+	var lastErr error
+	for retry := 0; retry < 20; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
+			lastErr = errG
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
@@ -547,8 +549,17 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
 				return
 			} else {
+				lastErr = errW
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
 					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+				if strings.Contains(errW.Error(), "withdrawProfitPeriod") || strings.Contains(strings.ToLower(errW.Error()), "no rewards") {
+					if t != nil {
+						waitBlocks(t, 1)
+					} else {
+						time.Sleep(250 * time.Millisecond)
+					}
 					continue
 				}
 				if t != nil {
@@ -558,8 +569,17 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 				}
 			}
 		}
+		lastErr = err
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
 			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		if strings.Contains(err.Error(), "withdrawProfitPeriod") || strings.Contains(strings.ToLower(err.Error()), "no rewards") {
+			if t != nil {
+				waitBlocks(t, 1)
+			} else {
+				time.Sleep(250 * time.Millisecond)
+			}
 			continue
 		}
 		if t != nil {
@@ -567,6 +587,9 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 		} else {
 			return
 		}
+	}
+	if t != nil && lastErr != nil {
+		t.Fatalf("claimValidatorRewards retries exhausted: %v", lastErr)
 	}
 }
 

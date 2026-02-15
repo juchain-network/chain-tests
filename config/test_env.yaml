@@ -10,7 +10,7 @@ paths:
 network:
   node_count: 4
   validator_count: 3
-  epoch: 60
+  epoch: 30
   external_rpc: "http://localhost:18545"
   chain_id: 666666
   data_dir: "./data"

@@ -40,7 +40,7 @@ func (c *CIContext) configuredEpoch() uint64 {
 	if c != nil && c.Config != nil && c.Config.Network.Epoch > 0 {
 		return c.Config.Network.Epoch
 	}
-	return 60
+	return 30
 }
 
 type CIContext struct {

@@ -51,5 +51,31 @@ native:
     sync_p2p: 30307
 
 tests:
+  profile: fast
   timeout: "30m"
   reset_before_each_case: true
+  profiles:
+    fast:
+      epoch: 30
+      proposal_cooldown: 1
+      unbonding_period: 3
+      validator_unjail_period: 3
+      withdraw_profit_period: 2
+      commission_update_cooldown: 1
+      proposal_lasting_period: 30
+    default:
+      epoch: 60
+      proposal_cooldown: 1
+      unbonding_period: 10
+      validator_unjail_period: 10
+      withdraw_profit_period: 5
+      commission_update_cooldown: 5
+      proposal_lasting_period: 100
+    edge:
+      epoch: 60
+      proposal_cooldown: 60
+      unbonding_period: 60
+      validator_unjail_period: 60
+      withdraw_profit_period: 30
+      commission_update_cooldown: 30
+      proposal_lasting_period: 300

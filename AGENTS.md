@@ -101,6 +101,7 @@ chain-tests/
 
 Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` / `60`），并在生成 `genesis.json` 时生效。
 也可在初始化时临时覆盖：`make init EPOCH=60`（仅影响本次生成）。
+建议通过 `tests.profile`（`fast/default/edge`）统一管理测试参数窗口（cooldown/lasting/unbonding 等），减少散落硬编码。
 
 ### 4.1 本地网络编排（4 节点）
 

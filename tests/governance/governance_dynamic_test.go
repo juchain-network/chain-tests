@@ -8,11 +8,13 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"juchain.org/chain/tools/ci/contracts"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -240,6 +242,32 @@ func voteProposalToPass(t *testing.T, propID [32]byte, name string) {
 	}
 }
 
+func proposalExpired(id [32]byte) (bool, error) {
+	period, err := ctx.Proposal.ProposalLastingPeriod(nil)
+	if err != nil {
+		return false, err
+	}
+	if period == nil || period.Sign() <= 0 {
+		return false, nil
+	}
+
+	p, err := ctx.Proposal.Proposals(nil, id)
+	if err != nil {
+		return false, err
+	}
+	if p.CreateBlock == nil || p.CreateBlock.Sign() <= 0 {
+		return false, nil
+	}
+
+	height, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		return false, err
+	}
+	cur := new(big.Int).SetUint64(height)
+	elapsed := new(big.Int).Sub(cur, p.CreateBlock)
+	return elapsed.Cmp(period) > 0, nil
+}
+
 func changeConfig(t *testing.T, pIndex *int, cid uint256, val int64, name string) {
 	currentVal, errInit := ctx.GetConfigValue(int64(cid))
 	if errInit == nil && currentVal.Cmp(big.NewInt(val)) == 0 {
@@ -393,8 +421,23 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 	}
 	period, _ := ctx.Proposal.ProposalLastingPeriod(nil)
 	if period.Sign() > 0 {
-		t.Logf("Waiting %s blocks for expiry...", period)
-		waitBlocks(t, int(new(big.Int).Add(period, big.NewInt(1)).Int64()))
+		t.Logf("Waiting for expiry condition (period=%s)...", period.String())
+		maxAttempts := int(period.Int64()) + 6
+		if maxAttempts < 6 {
+			maxAttempts = 6
+		}
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxAttempts,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			return proposalExpired(propID2)
+		})
+		if err != nil {
+			t.Fatalf("wait proposal expiry failed: %v", err)
+		}
 		optsV, _ := ctx.GetTransactor(ctx.GenesisValidators[0])
 		_, err = ctx.Proposal.VoteProposal(optsV, propID2, true)
 		if err == nil {
@@ -454,24 +497,6 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 			t.Fatalf("proposal %s id missing", details)
 		}
 		return id
-	}
-
-	isProposalExpired := func(id [32]byte) bool {
-		period, err := ctx.Proposal.ProposalLastingPeriod(nil)
-		if err != nil || period == nil || period.Sign() <= 0 {
-			return false
-		}
-		p, err := ctx.Proposal.Proposals(nil, id)
-		if err != nil || p.CreateBlock == nil || p.CreateBlock.Sign() <= 0 {
-			return false
-		}
-		height, err := ctx.Clients[0].BlockNumber(context.Background())
-		if err != nil {
-			return false
-		}
-		cur := new(big.Int).SetUint64(height)
-		elapsed := new(big.Int).Sub(cur, p.CreateBlock)
-		return elapsed.Cmp(period) > 0
 	}
 
 	propID := createAddProposal("G-15 Add V5")
@@ -592,7 +617,9 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 	}
 
 	t.Log("Threshold did not drop enough to auto-pass (expected for 3 validators). Casting additional votes...")
-	if isProposalExpired(propID) {
+	if expired, err := proposalExpired(propID); err != nil {
+		t.Logf("skip expiry check due to query error: %v", err)
+	} else if expired {
 		t.Log("Original add-validator proposal expired during threshold transition, recreating proposal...")
 		propID = createAddProposal("G-15 Add V5 retry")
 	}

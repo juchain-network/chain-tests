@@ -31,6 +31,15 @@ type Config struct {
 	// Test settings
 	Test struct {
 		FundingAmount string `yaml:"funding_amount"` // Amount to fund each test account (in Wei)
+		Profile       string `yaml:"profile"`        // Test profile name: fast/default/edge
+		Params        struct {
+			ProposalCooldown   int64 `yaml:"proposal_cooldown"`
+			UnbondingPeriod    int64 `yaml:"unbonding_period"`
+			ValidatorUnjail    int64 `yaml:"validator_unjail_period"`
+			WithdrawProfit     int64 `yaml:"withdraw_profit_period"`
+			CommissionCooldown int64 `yaml:"commission_update_cooldown"`
+			ProposalLasting    int64 `yaml:"proposal_lasting_period"`
+		} `yaml:"params"`
 	} `yaml:"test"`
 }
 

@@ -44,13 +44,79 @@ func (c *CIContext) configuredEpoch() uint64 {
 }
 
 const (
-	defaultProposalCooldownBlocks    int64 = 1
-	defaultUnbondingPeriodBlocks     int64 = 3
-	defaultValidatorUnjailBlocks     int64 = 3
-	defaultWithdrawProfitPeriodBlock int64 = 2
-	defaultCommissionCooldownBlocks  int64 = 1
-	defaultProposalLastingBlocks     int64 = 30
+	defaultProfileName = "fast"
 )
+
+type testParams struct {
+	ProposalCooldown   int64
+	UnbondingPeriod    int64
+	ValidatorUnjail    int64
+	WithdrawProfit     int64
+	CommissionCooldown int64
+	ProposalLasting    int64
+}
+
+func profileDefaults(profile string) testParams {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "", "fast":
+		return testParams{
+			ProposalCooldown:   1,
+			UnbondingPeriod:    3,
+			ValidatorUnjail:    3,
+			WithdrawProfit:     2,
+			CommissionCooldown: 1,
+			ProposalLasting:    30,
+		}
+	case "default":
+		return testParams{
+			ProposalCooldown:   1,
+			UnbondingPeriod:    10,
+			ValidatorUnjail:    10,
+			WithdrawProfit:     5,
+			CommissionCooldown: 5,
+			ProposalLasting:    100,
+		}
+	case "edge":
+		return testParams{
+			ProposalCooldown:   60,
+			UnbondingPeriod:    60,
+			ValidatorUnjail:    60,
+			WithdrawProfit:     30,
+			CommissionCooldown: 30,
+			ProposalLasting:    300,
+		}
+	default:
+		return profileDefaults(defaultProfileName)
+	}
+}
+
+func (c *CIContext) configuredTestParams() testParams {
+	if c == nil || c.Config == nil {
+		return profileDefaults(defaultProfileName)
+	}
+
+	params := profileDefaults(c.Config.Test.Profile)
+	overrides := c.Config.Test.Params
+	if overrides.ProposalCooldown > 0 {
+		params.ProposalCooldown = overrides.ProposalCooldown
+	}
+	if overrides.UnbondingPeriod > 0 {
+		params.UnbondingPeriod = overrides.UnbondingPeriod
+	}
+	if overrides.ValidatorUnjail > 0 {
+		params.ValidatorUnjail = overrides.ValidatorUnjail
+	}
+	if overrides.WithdrawProfit > 0 {
+		params.WithdrawProfit = overrides.WithdrawProfit
+	}
+	if overrides.CommissionCooldown > 0 {
+		params.CommissionCooldown = overrides.CommissionCooldown
+	}
+	if overrides.ProposalLasting > 0 {
+		params.ProposalLasting = overrides.ProposalLasting
+	}
+	return params
+}
 
 type CIContext struct {
 	Config  *config.Config
@@ -306,19 +372,20 @@ func (c *CIContext) autoInitialize() error {
 
 	// 4. Always ensure test-friendly parameters if they are not set
 	fmt.Printf("  > Configuring system parameters...\n")
+	params := c.configuredTestParams()
 
 	// Fetch current values to skip if already set
 	pCool, _ := c.GetConfigValue(19)
-	_ = c.EnsureConfig(19, big.NewInt(defaultProposalCooldownBlocks), pCool)
+	_ = c.EnsureConfig(19, big.NewInt(params.ProposalCooldown), pCool)
 
 	unbond, _ := c.GetConfigValue(6)
-	_ = c.EnsureConfig(6, big.NewInt(defaultUnbondingPeriodBlocks), unbond)
+	_ = c.EnsureConfig(6, big.NewInt(params.UnbondingPeriod), unbond)
 
 	unjail, _ := c.GetConfigValue(7)
-	_ = c.EnsureConfig(7, big.NewInt(defaultValidatorUnjailBlocks), unjail)
+	_ = c.EnsureConfig(7, big.NewInt(params.ValidatorUnjail), unjail)
 
 	withdraw, _ := c.GetConfigValue(4)
-	_ = c.EnsureConfig(4, big.NewInt(defaultWithdrawProfitPeriodBlock), withdraw)
+	_ = c.EnsureConfig(4, big.NewInt(params.WithdrawProfit), withdraw)
 
 	minStakeVal, _ := c.GetConfigValue(8)
 	_ = c.EnsureConfig(8, big.NewInt(1000000000000000000), minStakeVal)
@@ -327,10 +394,10 @@ func (c *CIContext) autoInitialize() error {
 	_ = c.EnsureConfig(10, big.NewInt(1000000000000000000), minDel)
 
 	commCool, _ := c.GetConfigValue(16)
-	_ = c.EnsureConfig(16, big.NewInt(defaultCommissionCooldownBlocks), commCool)
+	_ = c.EnsureConfig(16, big.NewInt(params.CommissionCooldown), commCool)
 
 	propLast, _ := c.GetConfigValue(0)
-	_ = c.EnsureConfig(0, big.NewInt(defaultProposalLastingBlocks), propLast)
+	_ = c.EnsureConfig(0, big.NewInt(params.ProposalLasting), propLast)
 
 	fmt.Printf("✅ Auto-initialization complete.\n")
 	return nil

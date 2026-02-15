@@ -9,7 +9,29 @@ CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEMPLATE_GENESIS="$(to_abs_path "./templates/genesis.tpl.json")"
 PRIMARY_RPC="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
-NETWORK_EPOCH="${TEST_NETWORK_EPOCH:-$(cfg_get "$CONFIG_FILE" "network.epoch" "30")}"
+
+TEST_PROFILE="${TEST_PROFILE:-$(cfg_get "$CONFIG_FILE" "tests.profile" "fast")}"
+profile_get() {
+    local key="$1"
+    local default_value="$2"
+    cfg_get "$CONFIG_FILE" "tests.profiles.${TEST_PROFILE}.${key}" "$default_value"
+}
+
+PROFILE_EPOCH="$(profile_get "epoch" "")"
+if [ -n "${TEST_NETWORK_EPOCH:-}" ]; then
+    NETWORK_EPOCH="$TEST_NETWORK_EPOCH"
+elif [ -n "$PROFILE_EPOCH" ]; then
+    NETWORK_EPOCH="$PROFILE_EPOCH"
+else
+    NETWORK_EPOCH="$(cfg_get "$CONFIG_FILE" "network.epoch" "30")"
+fi
+
+PROFILE_PROPOSAL_COOLDOWN="$(profile_get "proposal_cooldown" "1")"
+PROFILE_UNBONDING_PERIOD="$(profile_get "unbonding_period" "3")"
+PROFILE_VALIDATOR_UNJAIL_PERIOD="$(profile_get "validator_unjail_period" "3")"
+PROFILE_WITHDRAW_PROFIT_PERIOD="$(profile_get "withdraw_profit_period" "2")"
+PROFILE_COMMISSION_UPDATE_COOLDOWN="$(profile_get "commission_update_cooldown" "1")"
+PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V2_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_http" "18547")"
@@ -38,6 +60,18 @@ if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
     die "network.epoch must be a positive integer, got: $NETWORK_EPOCH"
 fi
 
+for v in \
+    "$PROFILE_PROPOSAL_COOLDOWN" \
+    "$PROFILE_UNBONDING_PERIOD" \
+    "$PROFILE_VALIDATOR_UNJAIL_PERIOD" \
+    "$PROFILE_WITHDRAW_PROFIT_PERIOD" \
+    "$PROFILE_COMMISSION_UPDATE_COOLDOWN" \
+    "$PROFILE_PROPOSAL_LASTING_PERIOD"; do
+    if ! [[ "$v" =~ ^[0-9]+$ ]] || [ "$v" -le 0 ]; then
+        die "test profile values must be positive integers, got: $v"
+    fi
+done
+
 # Clean up data directory (handle root-owned files from Docker)
 if [ -d "$DATA_DIR" ]; then
     rm -rf "$DATA_DIR" 2>/dev/null || true
@@ -49,6 +83,7 @@ mkdir -p "$DATA_DIR"
 
 echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
+echo "Using test profile: $TEST_PROFILE"
 
 # 1. Generate Keys helper (using a temporary Go program)
 cat > "$DATA_DIR/genkeys.go" <<EOF
@@ -254,7 +289,15 @@ network:
   epoch: $NETWORK_EPOCH
 
 test:
+  profile: "$TEST_PROFILE"
   funding_amount: "100000000000000000000" # 100 ETH
+  params:
+    proposal_cooldown: $PROFILE_PROPOSAL_COOLDOWN
+    unbonding_period: $PROFILE_UNBONDING_PERIOD
+    validator_unjail_period: $PROFILE_VALIDATOR_UNJAIL_PERIOD
+    withdraw_profit_period: $PROFILE_WITHDRAW_PROFIT_PERIOD
+    commission_update_cooldown: $PROFILE_COMMISSION_UPDATE_COOLDOWN
+    proposal_lasting_period: $PROFILE_PROPOSAL_LASTING_PERIOD
 EOF
 
 awk '

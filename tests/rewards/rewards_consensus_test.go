@@ -59,9 +59,6 @@ func TestI_ConsensusRewards(t *testing.T) {
 		}
 		lastClaim := new(big.Int).Set(infoAfterClaim.LastClaimBlock)
 
-		// Allow a couple blocks for post-claim accrual before checking cooldown.
-		waitBlocks(t, 1)
-
 		// Try to claim again within cooldown after rewards accumulate.
 		deadline := new(big.Int).Add(lastClaim, withdrawPeriod)
 		cooldownChecks := int(withdrawPeriod.Int64()) - 1

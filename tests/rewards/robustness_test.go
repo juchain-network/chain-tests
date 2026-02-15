@@ -5,8 +5,10 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -69,18 +71,24 @@ func TestH_Robustness(t *testing.T) {
 			t.Fatal("resign retries exhausted")
 		}
 
-		t.Log("Waiting for blocks. If V2 mines, rewards should redistribute.")
-		waitBlocks(t, 2)
-
-		for i := 0; i < 3; i++ {
-			info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-			if info.IsJailed {
-				return
-			}
-			waitBlocks(t, 1)
-		}
 		info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
-		utils.AssertTrue(t, info.IsJailed, "Should be jailed")
+		if info.IsJailed {
+			return
+		}
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			if err != nil {
+				return false, err
+			}
+			return info.IsJailed, nil
+		})
+		utils.AssertNoError(t, err, "validator should become jailed")
 	})
 
 	// [S-16] Zero Delegated Rewards
@@ -88,7 +96,19 @@ func TestH_Robustness(t *testing.T) {
 		key, addr, err := createAndRegisterValidator(t, "ZeroDelegation")
 		utils.AssertNoError(t, err, "failed to setup validator")
 
-		waitBlocks(t, 2)
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 2,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+			if err != nil {
+				return false, err
+			}
+			return info.AccumulatedRewards.Sign() > 0, nil
+		})
 
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		t.Logf("Validator %s accumulated: %s", addr.Hex(), info.AccumulatedRewards.String())

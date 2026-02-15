@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -46,9 +47,20 @@ func TestE_Delegation(t *testing.T) {
 		info, _ := ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 		utils.AssertBigIntEq(t, info.Amount, delegateAmount, "delegation amount mismatch")
 
-		t.Log("Waiting for some blocks to accumulate rewards...")
-		waitBlocks(t, 2)
-
+		t.Log("Waiting briefly for rewards to accrue...")
+		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 2,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err = ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
+			if err != nil {
+				return false, err
+			}
+			return info.PendingRewards.Cmp(big.NewInt(0)) > 0, nil
+		})
 		info, _ = ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 		t.Logf("Accumulated rewards: %s", info.PendingRewards.String())
 
@@ -72,8 +84,38 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, userKey, valAddr, utils.ToWei(20))
 		robustUndelegate(t, userKey, valAddr, utils.ToWei(10))
 
-		period, _ := ctx.Proposal.UnbondingPeriod(nil)
-		waitBlocks(t, int(new(big.Int).Add(period, big.NewInt(1)).Int64()))
+		entries, _ := ctx.Staking.GetUnbondingEntries(nil, userAddr, valAddr)
+		var completion uint64
+		for _, e := range entries {
+			if e.CompletionBlock != nil && e.CompletionBlock.Sign() > 0 {
+				cb := e.CompletionBlock.Uint64()
+				if cb > completion {
+					completion = cb
+				}
+			}
+		}
+		if completion > 0 {
+			curHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
+			if curHeight < completion {
+				maxAttempts := int(completion-curHeight) + 2
+				if maxAttempts < 2 {
+					maxAttempts = 2
+				}
+				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+					MaxAttempts: maxAttempts,
+					Interval:    100 * time.Millisecond,
+					OnRetry: func(int) {
+						waitBlocks(t, 1)
+					},
+				}, func() (bool, error) {
+					h, err := ctx.Clients[0].BlockNumber(context.Background())
+					if err != nil {
+						return false, err
+					}
+					return h >= completion, nil
+				})
+			}
+		}
 
 		robustWithdrawUnbonded(t, userKey, valAddr, 20)
 
@@ -88,9 +130,9 @@ func TestE_Delegation(t *testing.T) {
 
 		success := false
 		for i := 0; i < 20; i++ {
-			waitBlocks(t, 1)
 			infoNow, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
 			if infoNow.AccumulatedRewards.Sign() == 0 {
+				waitBlocks(t, 1)
 				continue
 			}
 
@@ -122,14 +164,17 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, userKey, addr, utils.ToWei(10))
 
 		vOpts, _ := ctx.GetTransactor(key)
-		txR, _ := ctx.Staking.ResignValidator(vOpts)
-		ctx.WaitMined(txR.Hash())
+		txR, err := ctx.Staking.ResignValidator(vOpts)
+		utils.AssertNoError(t, err, "resign failed")
+		utils.AssertNoError(t, ctx.WaitMined(txR.Hash()), "resign tx failed")
 
 		opts, _ := ctx.GetTransactor(userKey)
 		opts.Value = utils.ToWei(5)
-		_, err = ctx.Staking.Delegate(opts, addr)
+		txDel, err := ctx.Staking.Delegate(opts, addr)
 		if err == nil {
-			t.Fatal("Should not be able to delegate to resigned validator")
+			if errW := ctx.WaitMined(txDel.Hash()); errW == nil {
+				t.Fatal("Should not be able to delegate to resigned validator")
+			}
 		}
 	})
 
@@ -142,7 +187,6 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, keyA, valAddr, utils.ToWei(10))
 		robustDelegate(t, keyB, valAddr, utils.ToWei(20))
 
-		waitBlocks(t, 1)
 		infoA, _ := ctx.Staking.GetDelegationInfo(nil, crypto.PubkeyToAddress(keyA.PublicKey), valAddr)
 		infoB, _ := ctx.Staking.GetDelegationInfo(nil, crypto.PubkeyToAddress(keyB.PublicKey), valAddr)
 		utils.AssertBigIntEq(t, infoA.Amount, utils.ToWei(10), "User A amount mismatch")
@@ -164,7 +208,6 @@ func TestE_Delegation(t *testing.T) {
 		userKey, userAddr, err := ctx.CreateAndFundAccount(utils.ToWei(100))
 		utils.AssertNoError(t, err, "failed delegator setup")
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
-		waitBlocks(t, 1)
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
 		info, _ := ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 		utils.AssertBigIntEq(t, info.Amount, utils.ToWei(20), "total amount mismatch")
@@ -185,7 +228,6 @@ func TestE_Delegation(t *testing.T) {
 		robustDelegate(t, userKey, valAddr, utils.ToWei(10))
 		err = passProposalFor(t, userAddr, "D-15 Propose")
 		utils.AssertNoError(t, err, "proposal failed")
-		waitBlocks(t, 1)
 
 		var lastErr error
 		for retry := 0; retry < 10; retry++ {
@@ -296,7 +338,6 @@ func TestE_Delegation(t *testing.T) {
 		robustExitValidator(t, key)
 		t.Logf("Ex-validator %s delegating to %s", addr.Hex(), valAddr.Hex())
 		robustDelegate(t, key, valAddr, utils.ToWei(10))
-		waitBlocks(t, 1)
 		delegationInfo, _ := ctx.Staking.GetDelegationInfo(nil, addr, valAddr)
 		utils.AssertBigIntEq(t, delegationInfo.Amount, utils.ToWei(10), "Delegation check failed")
 	})
@@ -395,12 +436,23 @@ func TestE_Delegation(t *testing.T) {
 	})
 
 	t.Run("D-14_MaxUnbonding", func(t *testing.T) {
-		userKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(100))
+		userKey, userAddr, err := ctx.CreateAndFundAccount(utils.ToWei(100))
 		utils.AssertNoError(t, err, "setup user failed")
 		robustDelegate(t, userKey, valAddr, utils.ToWei(25))
+		prevCnt, _ := ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
+		if prevCnt == nil {
+			prevCnt = big.NewInt(0)
+		}
 		for i := 0; i < 20; i++ {
 			robustUndelegate(t, userKey, valAddr, utils.ToWei(1))
-			waitBlocks(t, 1)
+			curCnt, _ := ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
+			if curCnt == nil || curCnt.Cmp(prevCnt) <= 0 {
+				waitBlocks(t, 1)
+				curCnt, _ = ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)
+			}
+			if curCnt != nil {
+				prevCnt = curCnt
+			}
 		}
 		opts, _ := ctx.GetTransactor(userKey)
 		_, err = ctx.Staking.Undelegate(opts, valAddr, utils.ToWei(1))

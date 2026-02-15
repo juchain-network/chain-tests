@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"math/big"
 	"testing"
 
@@ -159,18 +160,23 @@ func TestD_StakingManagement(t *testing.T) {
 		err = passProposalFor(t, addr, "S-05 Repro")
 		utils.AssertNoError(t, err, "reproposal failed")
 
-		unjailPeriod, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
-		t.Logf("Waiting %s blocks for unjail period...", unjailPeriod)
-		waitBlocks(t, int(unjailPeriod.Int64())+1)
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		utils.AssertNoError(t, errInfo, "read validator info failed")
+		current, errHeight := ctx.Clients[0].BlockNumber(context.Background())
+		utils.AssertNoError(t, errHeight, "read current block failed")
+		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+			jailUntil := info.JailUntilBlock.Uint64()
+			if current < jailUntil {
+				remaining := int(jailUntil - current + 1)
+				t.Logf("Waiting %d blocks until jail period ends...", remaining)
+				waitBlocks(t, remaining)
+			}
+		}
 
 		ctx.WaitIfEpochBlock()
 		robustUnjailValidator(t, key, addr)
 
-		t.Log("Waiting for epoch transition to activate...")
-		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
-
-		active, _ := ctx.Validators.IsValidatorActive(nil, addr)
+		active := waitForValidatorActive(t, addr, 2)
 		utils.AssertTrue(t, active, "should be active after reincarnation")
 	})
 
@@ -204,8 +210,7 @@ func TestD_StakingManagement(t *testing.T) {
 	})
 
 	t.Run("S-12_ZombieRegister", func(t *testing.T) {
-		t.Log("Waiting for fresh epoch...")
-		waitBlocks(t, 1)
+		t.Log("Starting zombie register flow...")
 		key, addr, err := createAndRegisterValidator(t, "S-12 Zombie")
 		if err != nil {
 			t.Fatalf("create validator failed: %v", err)

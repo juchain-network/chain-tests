@@ -28,9 +28,6 @@ func TestD_StakingScenarios(t *testing.T) {
 		utils.AssertNoError(t, err, "S-17 add stake failed")
 		ctx.WaitMined(tx1.Hash())
 
-		// 3. Wait blocks to accumulate rewards
-		waitBlocks(t, 1)
-
 		// 4. Decrease Stake
 		decAmt := utils.ToWei(50)
 		decOpts, _ := ctx.GetTransactor(valKey)

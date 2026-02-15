@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -132,9 +133,20 @@ func TestG_DoubleSign(t *testing.T) {
 		expectedMin := new(big.Int).Sub(reporterBalBefore, gasCost)
 		expectedMin.Add(expectedMin, rewardAmount)
 		if reporterBalAfter.Cmp(expectedMin) < 0 {
-			// Re-check at latest after a couple blocks to avoid stale state.
-			waitBlocks(t, 2)
-			reporterBalAfter, _ = ctx.Clients[0].BalanceAt(context.Background(), reporterAddr, nil)
+			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+				MaxAttempts: 3,
+				Interval:    100 * time.Millisecond,
+				OnRetry: func(int) {
+					waitBlocks(t, 1)
+				},
+			}, func() (bool, error) {
+				var err error
+				reporterBalAfter, err = ctx.Clients[0].BalanceAt(context.Background(), reporterAddr, nil)
+				if err != nil {
+					return false, err
+				}
+				return reporterBalAfter.Cmp(expectedMin) >= 0, nil
+			})
 		}
 		if reporterBalAfter.Cmp(expectedMin) < 0 {
 			t.Fatalf("reporter reward not received: before=%s after=%s gas=%s reward=%s expectedMin=%s",

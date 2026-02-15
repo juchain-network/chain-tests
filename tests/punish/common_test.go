@@ -275,9 +275,19 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 	if !mined || tx == nil {
 		return fmt.Errorf("failed to create proposal for %s", target.Hex())
 	}
-	propID := getPropID(tx)
-	if propID == ([32]byte{}) {
-		return fmt.Errorf("could not find proposal ID in logs for tx %s", tx.Hash().Hex())
+	propID := [32]byte{}
+	err = testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 4,
+		Interval:    100 * time.Millisecond,
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
+	}, func() (bool, error) {
+		propID = getPropID(tx)
+		return propID != ([32]byte{}), nil
+	})
+	if err != nil {
+		return fmt.Errorf("could not find proposal ID in logs for tx %s: %w", tx.Hash().Hex(), err)
 	}
 
 	for attempt := 0; attempt < 5; attempt++ {
@@ -294,11 +304,22 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 
 			robustVote(t, voterKey, propID, true)
 		}
-		pass, _ := ctx.Proposal.Pass(nil, target)
-		if pass {
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 2,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			pass, err := ctx.Proposal.Pass(nil, target)
+			if err != nil {
+				return false, err
+			}
+			return pass, nil
+		})
+		if err == nil {
 			return nil
 		}
-		waitBlocks(t, 1)
 	}
 	return fmt.Errorf("proposal did not pass for %s", target.Hex())
 }

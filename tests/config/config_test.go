@@ -6,8 +6,10 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -65,12 +67,22 @@ func TestA_SystemConfigSetup(t *testing.T) {
 			if err := ctx.EnsureConfig(target.cid, target.val, current); err != nil {
 				t.Fatalf("%s update failed: %v", target.name, err)
 			}
-			// Allow state to settle after proposal pass.
-			waitBlocks(t, 1)
-			current, err = ctx.GetConfigValue(target.cid)
-			utils.AssertNoError(t, err, fmt.Sprintf("failed to re-read %s", target.name))
-			if current.Cmp(target.val) != 0 {
-				t.Fatalf("%s mismatch after update: expected %v, got %v", target.name, target.val, current)
+
+			err = testkit.WaitUntil(testkit.WaitUntilOptions{
+				MaxAttempts: 4,
+				Interval:    100 * time.Millisecond,
+				OnRetry: func(int) {
+					waitBlocks(t, 1)
+				},
+			}, func() (bool, error) {
+				current, err = ctx.GetConfigValue(target.cid)
+				if err != nil {
+					return false, err
+				}
+				return current.Cmp(target.val) == 0, nil
+			})
+			if err != nil {
+				t.Fatalf("%s mismatch after update: expected %v, got %v (err=%v)", target.name, target.val, current, err)
 			}
 		}
 	}

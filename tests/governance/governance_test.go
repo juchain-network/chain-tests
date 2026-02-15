@@ -7,10 +7,12 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -229,13 +231,22 @@ func TestB_Governance(t *testing.T) {
 		propID := getPropID(tx)
 		voteProposalToPass(t, propID, name)
 
-		waitBlocks(t, 1)
-		current, err := ctx.GetConfigValue(int64(cid))
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			current, err := ctx.GetConfigValue(int64(cid))
+			if err != nil {
+				return false, err
+			}
+			return current.Cmp(big.NewInt(val)) == 0, nil
+		})
 		if err != nil {
-			t.Fatalf("read config %s failed: %v", name, err)
-		}
-		if current.Cmp(big.NewInt(val)) != 0 {
-			t.Fatalf("config %s not applied: expected %d, got %v", name, val, current)
+			current, _ := ctx.GetConfigValue(int64(cid))
+			t.Fatalf("config %s not applied: expected %d, got %v (err=%v)", name, val, current, err)
 		}
 	}
 
@@ -285,23 +296,43 @@ func TestB_Governance(t *testing.T) {
 		if errW := ctx.WaitMined(tx.Hash()); errW != nil {
 			return fmt.Errorf("createProposal tx failed: %w", errW)
 		}
-		// Wait 1 block for proposal to be indexed
-		waitBlocks(t, 1)
 
-		proposalID := getPropID(tx)
-		if proposalID == ([32]byte{}) {
-			return fmt.Errorf("createProposal missing proposal ID")
+		proposalID := [32]byte{}
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			proposalID = getPropID(tx)
+			return proposalID != ([32]byte{}), nil
+		})
+		if err != nil {
+			return fmt.Errorf("createProposal missing proposal ID: %w", err)
 		}
 
 		voteProposalToPass(t, proposalID, desc)
 
-		waitBlocks(t, 1)
-		pass, _ := ctx.Proposal.Pass(nil, dst)
-		if flag && !pass {
-			return fmt.Errorf("proposal should be passed")
-		}
-		if !flag && pass {
-			return fmt.Errorf("proposal should be removed")
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 4,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			pass, err := ctx.Proposal.Pass(nil, dst)
+			if err != nil {
+				return false, err
+			}
+			return pass == flag, nil
+		})
+		if err != nil {
+			pass, _ := ctx.Proposal.Pass(nil, dst)
+			if flag {
+				return fmt.Errorf("proposal should be passed (current=%v): %w", pass, err)
+			}
+			return fmt.Errorf("proposal should be removed (current=%v): %w", pass, err)
 		}
 		return nil
 	}

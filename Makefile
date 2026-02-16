@@ -234,8 +234,7 @@ test-delegation:
 	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"
 
 test-rewards:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness"
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness|TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
 
 test-epoch:
 	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet"

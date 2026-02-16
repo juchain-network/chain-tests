@@ -44,7 +44,11 @@ func (c *CIContext) configuredEpoch() uint64 {
 }
 
 const (
-	defaultProfileName = "fast"
+	defaultProfileName       = "fast"
+	defaultRetryPollInterval = 100 * time.Millisecond
+	defaultBlockPollInterval = 100 * time.Millisecond
+	minPollInterval          = 20 * time.Millisecond
+	maxPollInterval          = 2 * time.Second
 )
 
 type testParams struct {
@@ -116,6 +120,38 @@ func (c *CIContext) configuredTestParams() testParams {
 		params.ProposalLasting = overrides.ProposalLasting
 	}
 	return params
+}
+
+func normalizePollInterval(ms int64, fallback time.Duration) time.Duration {
+	interval := fallback
+	if ms > 0 {
+		interval = time.Duration(ms) * time.Millisecond
+	}
+	if interval < minPollInterval {
+		return minPollInterval
+	}
+	if interval > maxPollInterval {
+		return maxPollInterval
+	}
+	return interval
+}
+
+func (c *CIContext) RetryPollInterval() time.Duration {
+	if c == nil || c.Config == nil {
+		return defaultRetryPollInterval
+	}
+	return normalizePollInterval(c.Config.Test.Timing.RetryPollMS, defaultRetryPollInterval)
+}
+
+func (c *CIContext) BlockPollInterval() time.Duration {
+	if c == nil || c.Config == nil {
+		return defaultBlockPollInterval
+	}
+	timing := c.Config.Test.Timing
+	if timing.BlockPollMS > 0 {
+		return normalizePollInterval(timing.BlockPollMS, defaultBlockPollInterval)
+	}
+	return normalizePollInterval(timing.RetryPollMS, defaultBlockPollInterval)
 }
 
 type CIContext struct {
@@ -242,7 +278,7 @@ func (c *CIContext) WaitForBlockProgress(minIncrements int, timeout time.Duratio
 			c.sendDummyTx()
 			lastPoke = time.Now()
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(c.BlockPollInterval())
 	}
 	return fmt.Errorf("block height did not progress (min increments=%d)", minIncrements)
 }
@@ -760,21 +796,21 @@ func (c *CIContext) waitBlocks(n uint64) {
 	}
 	start, err := c.Clients[0].BlockNumber(context.Background())
 	if err != nil {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(c.BlockPollInterval())
 		start, _ = c.Clients[0].BlockNumber(context.Background())
 	}
 	target := start + n
 	for {
 		cur, err := c.Clients[0].BlockNumber(context.Background())
 		if err != nil {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(c.BlockPollInterval())
 			continue
 		}
 		if cur >= target {
 			return
 		}
 		c.sendDummyTx()
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(c.BlockPollInterval())
 	}
 }
 
@@ -790,7 +826,7 @@ func (c *CIContext) WaitIfEpochBlock() {
 	for {
 		height, err := c.Clients[0].BlockNumber(context.Background())
 		if err != nil {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(c.BlockPollInterval())
 			continue
 		}
 		mod := height % epoch
@@ -805,6 +841,6 @@ func (c *CIContext) WaitIfEpochBlock() {
 			c.sendDummyTx()
 			lastPoke = time.Now()
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(c.BlockPollInterval())
 	}
 }

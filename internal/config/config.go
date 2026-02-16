@@ -32,7 +32,11 @@ type Config struct {
 	Test struct {
 		FundingAmount string `yaml:"funding_amount"` // Amount to fund each test account (in Wei)
 		Profile       string `yaml:"profile"`        // Test profile name: fast/default/edge
-		Params        struct {
+		Timing        struct {
+			RetryPollMS int64 `yaml:"retry_poll_ms"` // Poll interval for retry loops
+			BlockPollMS int64 `yaml:"block_poll_ms"` // Poll interval for block progress checks
+		} `yaml:"timing"`
+		Params struct {
 			ProposalCooldown   int64 `yaml:"proposal_cooldown"`
 			UnbondingPeriod    int64 `yaml:"unbonding_period"`
 			ValidatorUnjail    int64 `yaml:"validator_unjail_period"`

@@ -68,6 +68,8 @@ func main() {
 	gocache := flag.String("gocache", "/tmp/go-build", "GOCACHE path")
 	debug := flag.Bool("debug", false, "Enable DEBUG logs (sets JUCHAIN_TEST_DEBUG=1)")
 	skipSetup := flag.Bool("skip-setup", false, "Skip stop/clean/init/run/ready (tests mode with -run only)")
+	sharedSetup := flag.Bool("shared-setup", false, "In groups mode, share one setup across explicit compatible groups")
+	sharedGroups := flag.String("shared-groups", "", "Comma-separated state-compatible groups allowed to share setup (e.g. rewards,epoch)")
 	runCiLog := flag.Bool("ci-log", false, "After grouped runs, execute make ci-log")
 	slowTop := flag.Int("slow-top", 20, "Max rows in slow tests table")
 	slowThresholdRaw := flag.String("slow-threshold", "0", "Mark tests >= duration as slow alert (e.g. 2s, 500ms); 0 disables")
@@ -128,25 +130,85 @@ func main() {
 	if *debug {
 		env = append(env, "JUCHAIN_TEST_DEBUG=1")
 	}
+	sharedGroupSet := buildGroupSet(*sharedGroups)
+	if *sharedSetup && len(sharedGroupSet) == 0 {
+		fmt.Println("shared-setup enabled but shared-groups is empty; groups will run with isolated setup")
+	}
 
 	var results []stepResult
 	var hadFailure bool
 
 	switch strings.ToLower(*mode) {
 	case "groups":
-		for _, group := range splitList(*groups) {
+		groupList := splitList(*groups)
+		sharedReady := false
+
+		setupShared := func() bool {
+			if sharedReady {
+				return true
+			}
+			for _, step := range []struct {
+				name string
+				args []string
+			}{
+				{name: "shared_clean", args: []string{"clean"}},
+				{name: "shared_init", args: []string{"init"}},
+				{name: "shared_run", args: []string{"run"}},
+			} {
+				res := runStep(runDir, step.name, "make", step.args, env, rootDir)
+				results = append(results, res)
+				if res.Status != "PASS" {
+					hadFailure = true
+					return false
+				}
+			}
+			sharedReady = true
+			return true
+		}
+
+		teardownShared := func() {
+			if !sharedReady {
+				return
+			}
+			res := runStep(runDir, "shared_stop", "make", []string{"stop"}, env, rootDir)
+			results = append(results, res)
+			if res.Status != "PASS" {
+				hadFailure = true
+			}
+			sharedReady = false
+		}
+
+		for _, group := range groupList {
 			if group == "" {
 				continue
 			}
+
+			useShared := *sharedSetup && isSharedSetupEligibleGroup(group, sharedGroupSet)
+			groupEnv := env
+			if useShared {
+				if !setupShared() {
+					break
+				}
+				groupEnv = append(append([]string{}, env...), "SKIP_SETUP=1")
+			} else if sharedReady {
+				teardownShared()
+				if hadFailure {
+					break
+				}
+			}
+
 			name := "group_" + group
 			cmd := "make"
 			args := []string{"test-" + group}
-			res := runStep(runDir, name, cmd, args, env, rootDir)
+			res := runStep(runDir, name, cmd, args, groupEnv, rootDir)
 			results = append(results, res)
 			if res.Status != "PASS" {
 				hadFailure = true
 				break
 			}
+		}
+		if sharedReady {
+			teardownShared()
 		}
 		if !hadFailure && *runCiLog {
 			cmd := "make"
@@ -270,6 +332,33 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+func buildGroupSet(raw string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, group := range splitList(raw) {
+		key := strings.ToLower(strings.TrimSpace(group))
+		if key != "" {
+			out[key] = struct{}{}
+		}
+	}
+	return out
+}
+
+func isSharedSetupEligibleGroup(group string, allowSet map[string]struct{}) bool {
+	if len(allowSet) == 0 {
+		return false
+	}
+
+	key := strings.ToLower(strings.TrimSpace(group))
+	switch key {
+	case "", "config", "punish":
+		// Config tests intentionally mutate global governance/system parameters and can
+		// leak state into following groups. Punish keeps its split-test mode today.
+		return false
+	}
+	_, ok := allowSet[key]
+	return ok
 }
 
 func envTruthy(value string) bool {

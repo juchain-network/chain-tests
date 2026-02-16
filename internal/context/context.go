@@ -618,13 +618,17 @@ func (c *CIContext) WaitMined(txHash common.Hash) error {
 
 	startTime := time.Now()
 	loggedPool := false
+	lastKeepAlive := time.Time{}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for tx %s after %v", txHash.Hex(), time.Since(startTime))
 		case <-ticker.C:
-			fmt.Print(".") // Keep-alive output
+			if lastKeepAlive.IsZero() || time.Since(lastKeepAlive) >= 2*time.Second {
+				fmt.Print(".") // Keep-alive output
+				lastKeepAlive = time.Now()
+			}
 			receipt, err := c.Clients[0].TransactionReceipt(context.Background(), txHash)
 			if err == nil {
 				if receipt.Status == 0 {

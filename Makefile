@@ -29,6 +29,9 @@ PKGS ?=
 ARGS ?=
 EPOCH ?=
 SKIP_PRECHECK ?=
+SKIP_SETUP ?=
+SHARED_SETUP ?=
+SHARED_GROUPS ?=
 SLOW_TOP ?=
 SLOW_THRESHOLD ?=
 SLOW_FAIL ?=
@@ -50,7 +53,7 @@ BUDGET_DRIFT_MIN_MS ?= 15000
 # Optional local override generated from historical report analysis
 -include config/ci_budget.local.mk
 
-CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
+CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(filter 1 true yes,$(SKIP_SETUP)),-skip-setup,) $(if $(filter 1 true yes,$(SHARED_SETUP)),-shared-setup,) $(if $(SHARED_GROUPS),-shared-groups $(SHARED_GROUPS),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
 
 backend_cmd = RUNTIME_BACKEND="$${RUNTIME_BACKEND:-$$(awk '/^[[:space:]]*backend:[[:space:]]*/{print $$2; exit}' "$(TEST_ENV_CONFIG)" 2>/dev/null | sed 's/\"//g')}"; \
 	if [ -z "$$RUNTIME_BACKEND" ]; then RUNTIME_BACKEND=native; fi
@@ -104,6 +107,9 @@ help:
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
+	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
+	@echo "  SHARED_SETUP=$(SHARED_SETUP)       # set to 1 to share setup across compatible groups in ci-groups"
+	@echo "  SHARED_GROUPS=$(SHARED_GROUPS)     # comma list of state-compatible groups allowed to share setup"
 	@echo "  SLOW_TOP=$(SLOW_TOP)               # top-N slow tests in CI report"
 	@echo "  SLOW_THRESHOLD=$(SLOW_THRESHOLD)   # duration threshold for slow alerts (e.g. 2s)"
 	@echo "  SLOW_FAIL=$(SLOW_FAIL)             # 1/true/yes -> fail when slow threshold exceeded"

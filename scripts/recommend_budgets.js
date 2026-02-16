@@ -21,6 +21,7 @@ function parseArgs(argv) {
     groupHeadroom: 1.3,
     slowQuantile: 0.9,
     slowHeadroom: 1.4,
+    minGroupSamples: 2,
     format: "human",
     currentGroupThresholds: "",
     currentSlowThreshold: "",
@@ -50,6 +51,9 @@ function parseArgs(argv) {
         break;
       case "--slow-headroom":
         out.slowHeadroom = Number(take());
+        break;
+      case "--min-group-samples":
+        out.minGroupSamples = Number(take());
         break;
       case "--format":
         out.format = String(take() || "").trim().toLowerCase();
@@ -94,6 +98,7 @@ function printUsage() {
   console.log("  --group-headroom <m>      Headroom multiplier for groups (default: 1.3)");
   console.log("  --slow-quantile <q>       Quantile for slow test durations (default: 0.9)");
   console.log("  --slow-headroom <m>       Headroom multiplier for slow tests (default: 1.4)");
+  console.log("  --min-group-samples <n>   Minimum samples required before updating a group (default: 2)");
   console.log("  --format <human|make|json> Output format (default: human)");
   console.log("  --current-group-thresholds <csv>  Current group thresholds for drift check");
   console.log("  --current-slow-threshold <dur>    Current group slow threshold for drift check");
@@ -131,6 +136,9 @@ function validateArgs(args) {
   }
   if (!["human", "make", "json"].includes(args.format)) {
     throw new Error("--format must be one of: human, make, json");
+  }
+  if (!Number.isFinite(args.minGroupSamples) || args.minGroupSamples < 1) {
+    throw new Error("--min-group-samples must be >= 1");
   }
 }
 
@@ -483,6 +491,61 @@ function driftPercent(currentMs, suggestedMs) {
   return ((suggestedMs - currentMs) / currentMs) * 100;
 }
 
+function mergeRecommendedGroups({
+  rawRecommendedGroups,
+  sampleCountByGroup,
+  minGroupSamples,
+  currentThresholds,
+  knownGroupsList,
+  suggestedDefault,
+}) {
+  const all = new Set([
+    ...knownGroupsList,
+    ...Object.keys(currentThresholds.groups || {}),
+    ...Object.keys(rawRecommendedGroups || {}),
+  ]);
+
+  const merged = {};
+  for (const group of all) {
+    const hasRaw = Object.prototype.hasOwnProperty.call(rawRecommendedGroups, group);
+    const rawVal = hasRaw ? rawRecommendedGroups[group] : null;
+    const samples = sampleCountByGroup[group] || 0;
+    const currentVal = Object.prototype.hasOwnProperty.call(currentThresholds.groups || {}, group)
+      ? currentThresholds.groups[group]
+      : null;
+
+    if (hasRaw && samples >= minGroupSamples) {
+      merged[group] = rawVal;
+      continue;
+    }
+    if (currentVal !== null) {
+      merged[group] = currentVal;
+      continue;
+    }
+    if (hasRaw) {
+      merged[group] = rawVal;
+    }
+  }
+
+  let mergedDefault = suggestedDefault;
+  if (!Number.isFinite(mergedDefault) || mergedDefault <= 0) {
+    mergedDefault = Number.isFinite(currentThresholds.defaultThreshold) ? currentThresholds.defaultThreshold : null;
+  }
+
+  if (Number.isFinite(mergedDefault) && mergedDefault > 0) {
+    for (const group of knownGroupsList) {
+      if (!Object.prototype.hasOwnProperty.call(merged, group)) {
+        merged[group] = mergedDefault;
+      }
+    }
+  }
+
+  return {
+    groups: merged,
+    defaultThreshold: mergedDefault,
+  };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const currentGroupThresholds = parseThresholdCsv(args.currentGroupThresholds);
@@ -530,6 +593,7 @@ function main() {
 
   const recommendedGroups = {};
   const groupLines = [];
+  const sampleCountByGroup = {};
   for (const [group, durations] of groupSamples.entries()) {
     const p = quantile(durations, args.groupQuantile);
     if (p === null) {
@@ -538,6 +602,7 @@ function main() {
     const max = Math.max(...durations);
     const rec = roundGroupBudget(p * args.groupHeadroom);
     recommendedGroups[group] = rec;
+    sampleCountByGroup[group] = durations.length;
     groupLines.push({
       group,
       samples: durations.length,
@@ -561,6 +626,15 @@ function main() {
     defaultGroup = roundGroupBudget(Math.max(...recValues));
   }
 
+  const effectiveRecommendation = mergeRecommendedGroups({
+    rawRecommendedGroups: recommendedGroups,
+    sampleCountByGroup,
+    minGroupSamples: args.minGroupSamples,
+    currentThresholds: currentGroupThresholds,
+    knownGroupsList: knownGroups,
+    suggestedDefault: defaultGroup,
+  });
+
   let slowSuggested = null;
   if (slowSamples.length > 0) {
     const p = quantile(slowSamples, args.slowQuantile);
@@ -575,6 +649,8 @@ function main() {
   if (args.format === "human") {
     console.log(`# Budget recommendation from ${reportFiles.length} report(s)`);
     console.log(`# Source dir: ${args.reportsDir}`);
+    console.log("");
+    console.log(`Group threshold update rule: min-group-samples=${args.minGroupSamples} (below threshold keeps current value when available)`);
     console.log("");
 
     if (groupLines.length === 0) {
@@ -602,14 +678,14 @@ function main() {
     console.log("");
   }
 
-  const ordered = orderedGroupEntries(recommendedGroups)
+  const ordered = orderedGroupEntries(effectiveRecommendation.groups)
     .map(([group, ms]) => `${group}=${formatDuration(ms)}`);
-  if (defaultGroup !== null) {
-    ordered.push(`default=${formatDuration(defaultGroup)}`);
+  if (Number.isFinite(effectiveRecommendation.defaultThreshold) && effectiveRecommendation.defaultThreshold > 0) {
+    ordered.push(`default=${formatDuration(effectiveRecommendation.defaultThreshold)}`);
   }
 
   const driftAlerts = [];
-  for (const [group, suggested] of Object.entries(recommendedGroups)) {
+  for (const [group, suggested] of Object.entries(effectiveRecommendation.groups)) {
     const current = currentGroupThreshold(group, currentGroupThresholds);
     if (!Number.isFinite(current) || current <= 0) {
       continue;
@@ -625,14 +701,14 @@ function main() {
       deltaPct: driftPercent(current, suggested),
     });
   }
-  if (defaultGroup !== null && Number.isFinite(currentGroupThresholds.defaultThreshold) && currentGroupThresholds.defaultThreshold > 0) {
-    if (driftTriggered(currentGroupThresholds.defaultThreshold, defaultGroup, args.driftRatio, args.driftMinMs)) {
+  if (Number.isFinite(effectiveRecommendation.defaultThreshold) && effectiveRecommendation.defaultThreshold > 0 && Number.isFinite(currentGroupThresholds.defaultThreshold) && currentGroupThresholds.defaultThreshold > 0) {
+    if (driftTriggered(currentGroupThresholds.defaultThreshold, effectiveRecommendation.defaultThreshold, args.driftRatio, args.driftMinMs)) {
       driftAlerts.push({
         kind: "group",
         name: "default",
         current: currentGroupThresholds.defaultThreshold,
-        suggested: defaultGroup,
-        deltaPct: driftPercent(currentGroupThresholds.defaultThreshold, defaultGroup),
+        suggested: effectiveRecommendation.defaultThreshold,
+        deltaPct: driftPercent(currentGroupThresholds.defaultThreshold, effectiveRecommendation.defaultThreshold),
       });
     }
   }
@@ -674,9 +750,13 @@ function main() {
 
   const recommendation = {
     groupThresholds: Object.fromEntries(
+      orderedGroupEntries(effectiveRecommendation.groups).map(([group, ms]) => [group, ms]),
+    ),
+    defaultGroupThreshold: effectiveRecommendation.defaultThreshold,
+    rawGroupThresholds: Object.fromEntries(
       orderedGroupEntries(recommendedGroups).map(([group, ms]) => [group, ms]),
     ),
-    defaultGroupThreshold: defaultGroup,
+    minGroupSamples: args.minGroupSamples,
     groupThresholdsCsv: ordered.length > 0 ? ordered.join(",") : null,
     slowThreshold: slowSuggested,
     testSlowThreshold: testSlowSuggested,

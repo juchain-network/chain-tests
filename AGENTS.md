@@ -126,6 +126,7 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
   - `make ci-budget-suggest-save`（把推荐阈值写入 `config/ci_budget.local.mk` 本地覆盖文件）
   - `make ci-budget-drift-check`（检测当前 CI_BUDGET 与推荐值偏差是否超过阈值并可失败）
   - `make ci-budget-enforced`（执行 image + 漂移检查 + 分组预算门禁测试）
+  - `BUDGET_RECOMMEND_MIN_GROUP_SAMPLES` 可控制推荐覆盖门槛（样本不足时优先保留当前阈值）
 - 分组运行：
   - `make test-config`
   - `make test-governance`

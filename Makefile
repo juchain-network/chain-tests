@@ -4,7 +4,7 @@ SHELL := /bin/bash
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-config test-governance test-staking test-delegation test-punish \
-        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-save ci-budget-drift-check ci-budget-enforced
+        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-enforced
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -88,10 +88,11 @@ help:
 	@echo "  test-epoch      - Epoch/upgrade tests"
 	@echo ""
 	@echo "CI Targets:"
-	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-drift-check ci-budget-enforced"
+	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-drift-check ci-budget-enforced"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
 	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
+	@echo "  ci-budget-suggest-json - Output budget suggestion as machine-readable JSON"
 	@echo "  ci-budget-suggest-save - Suggest and write CI_BUDGET_* overrides to config/ci_budget.local.mk"
 	@echo "  ci-budget-drift-check - Compare suggestions with current CI_BUDGET_* and fail on large drift"
 	@echo "  ci-budget-enforced - image + drift check + grouped budget-gated test run"
@@ -295,6 +296,21 @@ ci-budget-suggest:
 		--current-test-slow-threshold "$(CI_BUDGET_TEST_SLOW_THRESHOLD)" \
 		--drift-ratio $(BUDGET_DRIFT_RATIO) \
 		--drift-min-ms $(BUDGET_DRIFT_MIN_MS)
+
+ci-budget-suggest-json:
+	@node $(SCRIPTS_DIR)/recommend_budgets.js \
+		--reports-dir reports \
+		--recent $(BUDGET_RECOMMEND_RECENT) \
+		--group-quantile $(BUDGET_RECOMMEND_GROUP_QUANTILE) \
+		--group-headroom $(BUDGET_RECOMMEND_GROUP_HEADROOM) \
+		--slow-quantile $(BUDGET_RECOMMEND_SLOW_QUANTILE) \
+		--slow-headroom $(BUDGET_RECOMMEND_SLOW_HEADROOM) \
+		--current-group-thresholds "$(CI_BUDGET_GROUP_THRESHOLDS)" \
+		--current-slow-threshold "$(CI_BUDGET_SLOW_THRESHOLD)" \
+		--current-test-slow-threshold "$(CI_BUDGET_TEST_SLOW_THRESHOLD)" \
+		--drift-ratio $(BUDGET_DRIFT_RATIO) \
+		--drift-min-ms $(BUDGET_DRIFT_MIN_MS) \
+		--format json
 
 ci-budget-suggest-save:
 	@set -e; \

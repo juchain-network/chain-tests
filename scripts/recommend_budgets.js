@@ -94,7 +94,7 @@ function printUsage() {
   console.log("  --group-headroom <m>      Headroom multiplier for groups (default: 1.3)");
   console.log("  --slow-quantile <q>       Quantile for slow test durations (default: 0.9)");
   console.log("  --slow-headroom <m>       Headroom multiplier for slow tests (default: 1.4)");
-  console.log("  --format <human|make>     Output format (default: human)");
+  console.log("  --format <human|make|json> Output format (default: human)");
   console.log("  --current-group-thresholds <csv>  Current group thresholds for drift check");
   console.log("  --current-slow-threshold <dur>    Current group slow threshold for drift check");
   console.log("  --current-test-slow-threshold <dur> Current tests slow threshold for drift check");
@@ -129,8 +129,8 @@ function validateArgs(args) {
   if (!Number.isFinite(args.driftMinMs) || args.driftMinMs < 0) {
     throw new Error("--drift-min-ms must be >= 0");
   }
-  if (!["human", "make"].includes(args.format)) {
-    throw new Error("--format must be one of: human, make");
+  if (!["human", "make", "json"].includes(args.format)) {
+    throw new Error("--format must be one of: human, make, json");
   }
 }
 
@@ -510,7 +510,7 @@ function main() {
       }
       groupSamples.get(item.group).push(item.duration);
     }
-    slowSamples.push(...parsed.slowDurations);
+    const fromLogs = [];
     for (const logPath of parsed.logPaths) {
       const resolved = path.isAbsolute(logPath)
         ? logPath
@@ -519,7 +519,12 @@ function main() {
         continue;
       }
       seenLogs.add(resolved);
-      slowSamples.push(...collectCaseDurationsFromLog(resolved));
+      fromLogs.push(...collectCaseDurationsFromLog(resolved));
+    }
+    if (fromLogs.length > 0) {
+      slowSamples.push(...fromLogs);
+    } else {
+      slowSamples.push(...parsed.slowDurations);
     }
   }
 
@@ -564,8 +569,10 @@ function main() {
   const testSlowSuggested = slowSuggested !== null
     ? Math.max(5000, Math.floor(slowSuggested / 2))
     : null;
+  const slowQ = slowSamples.length > 0 ? quantile(slowSamples, args.slowQuantile) : null;
+  const slowMax = slowSamples.length > 0 ? Math.max(...slowSamples) : null;
 
-  if (args.format !== "make") {
+  if (args.format === "human") {
     console.log(`# Budget recommendation from ${reportFiles.length} report(s)`);
     console.log(`# Source dir: ${args.reportsDir}`);
     console.log("");
@@ -586,8 +593,6 @@ function main() {
 
     console.log(`Slow sample count: ${slowSamples.length}`);
     if (slowSuggested !== null) {
-      const slowQ = quantile(slowSamples, args.slowQuantile);
-      const slowMax = Math.max(...slowSamples);
       console.log(
         `Slow q${args.slowQuantile.toFixed(2)}=${formatDuration(slowQ)}, max=${formatDuration(slowMax)}, suggested=${formatDuration(slowSuggested)}`,
       );
@@ -652,6 +657,49 @@ function main() {
         deltaPct: driftPercent(currentTestSlowThreshold, testSlowSuggested),
       });
     }
+  }
+
+  const driftSummary = {
+    ratioThreshold: args.driftRatio,
+    minMs: args.driftMinMs,
+    alertCount: driftAlerts.length,
+    alerts: driftAlerts.map((item) => ({
+      kind: item.kind,
+      key: item.name,
+      currentMs: item.current,
+      suggestedMs: item.suggested,
+      deltaPercent: Number(item.deltaPct.toFixed(2)),
+    })),
+  };
+
+  const recommendation = {
+    groupThresholds: Object.fromEntries(
+      orderedGroupEntries(recommendedGroups).map(([group, ms]) => [group, ms]),
+    ),
+    defaultGroupThreshold: defaultGroup,
+    groupThresholdsCsv: ordered.length > 0 ? ordered.join(",") : null,
+    slowThreshold: slowSuggested,
+    testSlowThreshold: testSlowSuggested,
+  };
+
+  const summary = {
+    reportsAnalyzed: reportFiles.length,
+    reportsDir: args.reportsDir,
+    groupSampleCount: groupLines.reduce((sum, item) => sum + item.samples, 0),
+    slowSampleCount: slowSamples.length,
+    slowQuantile: args.slowQuantile,
+    slowQuantileDuration: slowQ,
+    slowMaxDuration: slowMax,
+    recommendation,
+    drift: driftSummary,
+  };
+
+  if (args.format === "json") {
+    console.log(JSON.stringify(summary, null, 2));
+    if (args.failOnDrift && driftAlerts.length > 0) {
+      process.exit(2);
+    }
+    return;
   }
 
   if (args.format === "make") {

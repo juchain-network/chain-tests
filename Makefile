@@ -29,8 +29,13 @@ PKGS ?=
 ARGS ?=
 EPOCH ?=
 SKIP_PRECHECK ?=
+SLOW_TOP ?=
+SLOW_THRESHOLD ?=
+SLOW_FAIL ?=
+GROUP_THRESHOLDS ?=
+GROUP_THRESHOLD_FAIL ?=
 
-CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),)
+CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
 
 backend_cmd = RUNTIME_BACKEND="$${RUNTIME_BACKEND:-$$(awk '/^[[:space:]]*backend:[[:space:]]*/{print $$2; exit}' "$(TEST_ENV_CONFIG)" 2>/dev/null | sed 's/\"//g')}"; \
 	if [ -z "$$RUNTIME_BACKEND" ]; then RUNTIME_BACKEND=native; fi
@@ -76,6 +81,11 @@ help:
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
+	@echo "  SLOW_TOP=$(SLOW_TOP)               # top-N slow tests in CI report"
+	@echo "  SLOW_THRESHOLD=$(SLOW_THRESHOLD)   # duration threshold for slow alerts (e.g. 2s)"
+	@echo "  SLOW_FAIL=$(SLOW_FAIL)             # 1/true/yes -> fail when slow threshold exceeded"
+	@echo "  GROUP_THRESHOLDS=$(GROUP_THRESHOLDS) # e.g. config=2m,rewards=3m,default=4m"
+	@echo "  GROUP_THRESHOLD_FAIL=$(GROUP_THRESHOLD_FAIL) # 1/true/yes -> fail on group overrun"
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
 
 init-config:

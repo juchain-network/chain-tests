@@ -729,6 +729,11 @@ func (c *CIContext) EnsureConfig(cid int64, targetVal *big.Int, currentVal *big.
 			}
 
 			for _, vk := range c.GenesisValidators {
+				// Proposal may already be finalized by previous votes.
+				if updatedVal, errCheck := c.GetConfigValue(cid); errCheck == nil && updatedVal.Cmp(targetVal) == 0 {
+					return nil
+				}
+
 				voterAddr := crypto.PubkeyToAddress(vk.PublicKey)
 				actve, _ := c.Validators.IsValidatorActive(nil, voterAddr)
 				if !actve {
@@ -746,6 +751,10 @@ func (c *CIContext) EnsureConfig(cid int64, targetVal *big.Int, currentVal *big.
 					if errV == nil {
 						errW := c.WaitMined(txV.Hash())
 						if errW == nil {
+							// Stop early once target config is effective.
+							if updatedVal, errCheck := c.GetConfigValue(cid); errCheck == nil && updatedVal.Cmp(targetVal) == 0 {
+								return nil
+							}
 							break
 						}
 						if strings.Contains(errW.Error(), "Epoch block forbidden") {

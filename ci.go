@@ -396,11 +396,9 @@ func runSingleTest(runDir, testName, packagePattern, timeout, configPath string,
 	defer logFile.Close()
 
 	steps := [][]string{
-		{"make", "stop"},
 		{"make", "clean"},
 		{"make", "init"},
 		{"make", "run"},
-		{"make", "ready"},
 		{"go", "test", packagePattern, "-v", "-run", "^" + testName + "$", "-count=1", "-parallel=1", "-p", "1", "-timeout", timeout, "-config", configPath},
 		{"make", "stop"},
 	}
@@ -451,11 +449,9 @@ func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string,
 	}
 	if !skipSetup {
 		steps = [][]string{
-			{"make", "stop"},
 			{"make", "clean"},
 			{"make", "init"},
 			{"make", "run"},
-			{"make", "ready"},
 			steps[0],
 			{"make", "stop"},
 		}

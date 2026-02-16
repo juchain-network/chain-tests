@@ -119,6 +119,7 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
   - `make reset`（等价 clean + init + run + ready）
 - 运行全部测试：
   - `make test-all`
+  - `make ci-groups-budget`（按分组执行并启用默认耗时预算门禁）
 - 分组运行：
   - `make test-config`
   - `make test-governance`

@@ -4,7 +4,7 @@ SHELL := /bin/bash
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-config test-governance test-staking test-delegation test-punish \
-        test-rewards test-epoch ci ci-tool ci-groups ci-tests
+        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -34,6 +34,9 @@ SLOW_THRESHOLD ?=
 SLOW_FAIL ?=
 GROUP_THRESHOLDS ?=
 GROUP_THRESHOLD_FAIL ?=
+CI_BUDGET_GROUP_THRESHOLDS ?= config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
+CI_BUDGET_SLOW_THRESHOLD ?= 45s
+CI_BUDGET_SLOW_TOP ?= 30
 
 CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
 
@@ -75,6 +78,7 @@ help:
 	@echo ""
 	@echo "CI Targets:"
 	@echo "  ci ci-tool ci-groups ci-tests"
+	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo ""
 	@echo "Variables:"
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
@@ -86,6 +90,9 @@ help:
 	@echo "  SLOW_FAIL=$(SLOW_FAIL)             # 1/true/yes -> fail when slow threshold exceeded"
 	@echo "  GROUP_THRESHOLDS=$(GROUP_THRESHOLDS) # e.g. config=2m,rewards=3m,default=4m"
 	@echo "  GROUP_THRESHOLD_FAIL=$(GROUP_THRESHOLD_FAIL) # 1/true/yes -> fail on group overrun"
+	@echo "  CI_BUDGET_GROUP_THRESHOLDS=$(CI_BUDGET_GROUP_THRESHOLDS)"
+	@echo "  CI_BUDGET_SLOW_THRESHOLD=$(CI_BUDGET_SLOW_THRESHOLD)"
+	@echo "  CI_BUDGET_SLOW_TOP=$(CI_BUDGET_SLOW_TOP)"
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
 
 init-config:
@@ -225,6 +232,16 @@ ci-tool:
 
 ci-groups:
 	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) $(if $(GROUPS),-groups $(GROUPS),) $(if $(CI_LOG),-ci-log,)
+
+ci-groups-budget:
+	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) \
+		$(if $(GROUPS),-groups $(GROUPS),) \
+		$(if $(CI_LOG),-ci-log,) \
+		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
+		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_SLOW_THRESHOLD)) \
+		-slow-fail \
+		-group-thresholds "$(if $(GROUP_THRESHOLDS),$(GROUP_THRESHOLDS),$(CI_BUDGET_GROUP_THRESHOLDS))" \
+		-group-threshold-fail
 
 ci-tests:
 	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi

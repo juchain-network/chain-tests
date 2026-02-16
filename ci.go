@@ -34,6 +34,26 @@ type timedCase struct {
 	Step     string
 }
 
+type groupDuration struct {
+	Group     string
+	Step      string
+	Duration  time.Duration
+	Threshold time.Duration
+	Exceeded  bool
+}
+
+type reportOptions struct {
+	SlowTop               int
+	SlowThreshold         time.Duration
+	GroupThresholds       map[string]time.Duration
+	DefaultGroupThreshold time.Duration
+}
+
+type reportStats struct {
+	SlowCaseAlerts int
+	GroupAlerts    int
+}
+
 func main() {
 	mode := flag.String("mode", "groups", "Run mode: groups or tests")
 	groups := flag.String("groups", "config,governance,staking,delegation,punish,rewards,epoch", "Comma-separated group list")
@@ -47,7 +67,31 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable DEBUG logs (sets JUCHAIN_TEST_DEBUG=1)")
 	skipSetup := flag.Bool("skip-setup", false, "Skip stop/clean/init/run/ready (tests mode with -run only)")
 	runCiLog := flag.Bool("ci-log", false, "After grouped runs, execute make ci-log")
+	slowTop := flag.Int("slow-top", 20, "Max rows in slow tests table")
+	slowThresholdRaw := flag.String("slow-threshold", "0", "Mark tests >= duration as slow alert (e.g. 2s, 500ms); 0 disables")
+	slowFail := flag.Bool("slow-fail", false, "Fail run when any test exceeds -slow-threshold")
+	groupThresholdsRaw := flag.String("group-thresholds", "", "Comma-separated group thresholds (e.g. config=2m,rewards=3m,default=4m)")
+	groupThresholdFail := flag.Bool("group-threshold-fail", false, "Fail run when any group duration exceeds configured threshold")
 	flag.Parse()
+
+	slowThreshold, err := parseDurationFlag(*slowThresholdRaw)
+	if err != nil {
+		fmt.Printf("Invalid -slow-threshold: %v\n", err)
+		os.Exit(1)
+	}
+	if *slowFail && slowThreshold <= 0 {
+		fmt.Println("slow-fail requires -slow-threshold > 0")
+		os.Exit(1)
+	}
+	groupThresholds, defaultGroupThreshold, err := parseGroupThresholds(*groupThresholdsRaw)
+	if err != nil {
+		fmt.Printf("Invalid -group-thresholds: %v\n", err)
+		os.Exit(1)
+	}
+	if *groupThresholdFail && len(groupThresholds) == 0 && defaultGroupThreshold <= 0 {
+		fmt.Println("group-threshold-fail requires -group-thresholds to be configured")
+		os.Exit(1)
+	}
 
 	rootDir := callerDir()
 	if rootDir == "" {
@@ -160,9 +204,24 @@ func main() {
 	}
 
 	reportPath := filepath.Join(runDir, "report.md")
-	if err := writeReport(reportPath, *mode, *groups, *tests, *runPattern, *configPath, *gocache, *debug, results); err != nil {
+	stats, err := writeReport(reportPath, *mode, *groups, *tests, *runPattern, *configPath, *gocache, *debug, results, reportOptions{
+		SlowTop:               *slowTop,
+		SlowThreshold:         slowThreshold,
+		GroupThresholds:       groupThresholds,
+		DefaultGroupThreshold: defaultGroupThreshold,
+	})
+	if err != nil {
 		fmt.Printf("Failed to write report: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *slowFail && stats.SlowCaseAlerts > 0 {
+		fmt.Printf("Slow threshold exceeded: %d test(s) >= %s\n", stats.SlowCaseAlerts, slowThreshold)
+		hadFailure = true
+	}
+	if *groupThresholdFail && stats.GroupAlerts > 0 {
+		fmt.Printf("Group threshold exceeded: %d group step(s)\n", stats.GroupAlerts)
+		hadFailure = true
 	}
 
 	fmt.Printf("Report: %s\n", reportPath)
@@ -207,6 +266,51 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+func parseDurationFlag(raw string) (time.Duration, error) {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	switch value {
+	case "", "0", "off", "none", "disabled":
+		return 0, nil
+	}
+	dur, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if dur < 0 {
+		return 0, fmt.Errorf("duration must be non-negative")
+	}
+	return dur, nil
+}
+
+func parseGroupThresholds(raw string) (map[string]time.Duration, time.Duration, error) {
+	thresholds := make(map[string]time.Duration)
+	var defaultThreshold time.Duration
+	if strings.TrimSpace(raw) == "" {
+		return thresholds, 0, nil
+	}
+
+	for _, item := range splitList(raw) {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			return nil, 0, fmt.Errorf("invalid item %q (expected key=duration)", item)
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		if key == "" {
+			return nil, 0, fmt.Errorf("empty group key in %q", item)
+		}
+		dur, err := parseDurationFlag(parts[1])
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", key, err)
+		}
+		if key == "default" {
+			defaultThreshold = dur
+			continue
+		}
+		thresholds[key] = dur
+	}
+	return thresholds, defaultThreshold, nil
 }
 
 func discoverTests(rootDir string) ([]string, error) {
@@ -509,8 +613,75 @@ func collectSlowCases(results []stepResult) []timedCase {
 	return out
 }
 
-func writeReport(path, mode, groups, tests, runPattern, configPath, gocache string, debug bool, results []stepResult) error {
+func collectSlowCaseAlerts(cases []timedCase, threshold time.Duration) []timedCase {
+	if threshold <= 0 {
+		return nil
+	}
+	var out []timedCase
+	for _, tc := range cases {
+		if tc.Duration >= threshold {
+			out = append(out, tc)
+		}
+	}
+	return out
+}
+
+func stepGroupName(step string) (string, bool) {
+	if !strings.HasPrefix(step, "group_") {
+		return "", false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(step, "group_"))
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+func selectGroupThreshold(group string, thresholds map[string]time.Duration, defaultThreshold time.Duration) time.Duration {
+	if len(thresholds) > 0 {
+		if val, ok := thresholds[strings.ToLower(strings.TrimSpace(group))]; ok {
+			return val
+		}
+	}
+	return defaultThreshold
+}
+
+func collectGroupDurations(results []stepResult, thresholds map[string]time.Duration, defaultThreshold time.Duration) []groupDuration {
+	var out []groupDuration
+	for _, res := range results {
+		group, ok := stepGroupName(res.Name)
+		if !ok {
+			continue
+		}
+		th := selectGroupThreshold(group, thresholds, defaultThreshold)
+		item := groupDuration{
+			Group:     group,
+			Step:      res.Name,
+			Duration:  res.Duration,
+			Threshold: th,
+			Exceeded:  th > 0 && res.Duration >= th,
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Duration == out[j].Duration {
+			return out[i].Group < out[j].Group
+		}
+		return out[i].Duration > out[j].Duration
+	})
+	return out
+}
+
+func writeReport(path, mode, groups, tests, runPattern, configPath, gocache string, debug bool, results []stepResult, opts reportOptions) (reportStats, error) {
+	if opts.SlowTop <= 0 {
+		opts.SlowTop = 20
+	}
+	if opts.GroupThresholds == nil {
+		opts.GroupThresholds = map[string]time.Duration{}
+	}
+
 	var sb strings.Builder
+	stats := reportStats{}
 	sb.WriteString("# Integration Test Report\n\n")
 	sb.WriteString(fmt.Sprintf("- Generated: %s\n", time.Now().Format(time.RFC3339)))
 	sb.WriteString(fmt.Sprintf("- Mode: %s\n", mode))
@@ -526,6 +697,34 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 	sb.WriteString(fmt.Sprintf("- Config: %s\n", configPath))
 	sb.WriteString(fmt.Sprintf("- GOCACHE: %s\n", gocache))
 	sb.WriteString(fmt.Sprintf("- Debug: %t\n\n", debug))
+
+	groupDurations := collectGroupDurations(results, opts.GroupThresholds, opts.DefaultGroupThreshold)
+	if len(groupDurations) > 0 {
+		sb.WriteString("## Group Runtime Profile\n\n")
+		sb.WriteString("| Group | Step | Duration | Threshold | Budget |\n")
+		sb.WriteString("| --- | --- | --- | --- | --- |\n")
+		for _, g := range groupDurations {
+			thresholdText := "-"
+			budget := "-"
+			if g.Threshold > 0 {
+				thresholdText = g.Threshold.String()
+				if g.Exceeded {
+					budget = "EXCEEDED"
+					stats.GroupAlerts++
+				} else {
+					budget = "OK"
+				}
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
+				g.Group,
+				g.Step,
+				g.Duration.Round(time.Second),
+				thresholdText,
+				budget,
+			))
+		}
+		sb.WriteString("\n")
+	}
 
 	sb.WriteString("| Step | Status | Duration | Skips | Log |\n")
 	sb.WriteString("| --- | --- | --- | --- | --- |\n")
@@ -545,10 +744,10 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 
 	slow := collectSlowCases(results)
 	if len(slow) > 0 {
-		sb.WriteString("\n## Slow Tests (Top 20)\n\n")
+		sb.WriteString(fmt.Sprintf("\n## Slow Tests (Top %d)\n\n", opts.SlowTop))
 		sb.WriteString("| Rank | Test | Duration | Status | Step |\n")
 		sb.WriteString("| --- | --- | --- | --- | --- |\n")
-		limit := 20
+		limit := opts.SlowTop
 		if len(slow) < limit {
 			limit = len(slow)
 		}
@@ -562,6 +761,28 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 				tc.Step,
 			))
 		}
+	}
+
+	if opts.SlowThreshold > 0 {
+		alerts := collectSlowCaseAlerts(slow, opts.SlowThreshold)
+		stats.SlowCaseAlerts = len(alerts)
+		sb.WriteString(fmt.Sprintf("\n## Slow Alerts (>= %s)\n\n", opts.SlowThreshold))
+		if len(alerts) == 0 {
+			sb.WriteString("No test case exceeded the slow threshold.\n")
+		} else {
+			sb.WriteString("| Rank | Test | Duration | Status | Step |\n")
+			sb.WriteString("| --- | --- | --- | --- | --- |\n")
+			for i, tc := range alerts {
+				sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s |\n",
+					i+1,
+					tc.Name,
+					tc.Duration,
+					tc.Status,
+					tc.Step,
+				))
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n## Details\n\n")
@@ -583,7 +804,10 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 		sb.WriteString("\n")
 	}
 
-	return os.WriteFile(path, []byte(sb.String()), 0o644)
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		return stats, err
+	}
+	return stats, nil
 }
 
 func printResult(res stepResult) {

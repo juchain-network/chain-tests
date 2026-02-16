@@ -83,6 +83,70 @@ func TestCollectSlowCasesSortByDurationDesc(t *testing.T) {
 	}
 }
 
+func TestParseDurationFlag(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{raw: "0", want: 0},
+		{raw: "off", want: 0},
+		{raw: "500ms", want: 500 * time.Millisecond},
+		{raw: "2s", want: 2 * time.Second},
+	}
+	for _, c := range cases {
+		got, err := parseDurationFlag(c.raw)
+		if err != nil {
+			t.Fatalf("parseDurationFlag(%q) failed: %v", c.raw, err)
+		}
+		if got != c.want {
+			t.Fatalf("parseDurationFlag(%q)=%s want %s", c.raw, got, c.want)
+		}
+	}
+	if _, err := parseDurationFlag("bad"); err == nil {
+		t.Fatalf("expected parseDurationFlag to fail for invalid duration")
+	}
+}
+
+func TestParseGroupThresholds(t *testing.T) {
+	thresholds, defaultVal, err := parseGroupThresholds("config=2m,rewards=3m,default=5m")
+	if err != nil {
+		t.Fatalf("parseGroupThresholds failed: %v", err)
+	}
+	if thresholds["config"] != 2*time.Minute {
+		t.Fatalf("unexpected config threshold: %s", thresholds["config"])
+	}
+	if thresholds["rewards"] != 3*time.Minute {
+		t.Fatalf("unexpected rewards threshold: %s", thresholds["rewards"])
+	}
+	if defaultVal != 5*time.Minute {
+		t.Fatalf("unexpected default threshold: %s", defaultVal)
+	}
+	if _, _, err := parseGroupThresholds("config2m"); err == nil {
+		t.Fatalf("expected parseGroupThresholds to fail for invalid expression")
+	}
+}
+
+func TestCollectGroupDurations(t *testing.T) {
+	results := []stepResult{
+		{Name: "group_config", Duration: 90 * time.Second},
+		{Name: "group_rewards", Duration: 4 * time.Minute},
+		{Name: "test_run_pattern", Duration: 5 * time.Second},
+	}
+	items := collectGroupDurations(results, map[string]time.Duration{
+		"config": 2 * time.Minute,
+	}, 3*time.Minute)
+
+	if len(items) != 2 {
+		t.Fatalf("unexpected group duration item count: %d", len(items))
+	}
+	if items[0].Group != "rewards" || !items[0].Exceeded {
+		t.Fatalf("expected rewards group to exceed default threshold: %#v", items[0])
+	}
+	if items[1].Group != "config" || items[1].Exceeded {
+		t.Fatalf("expected config group within threshold: %#v", items[1])
+	}
+}
+
 func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "report.md")
 	results := []stepResult{
@@ -99,18 +163,40 @@ func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 		},
 	}
 
-	if err := writeReport(reportPath, "groups", "config", "", "", "data/test_config.yaml", "/tmp/go-build", false, results); err != nil {
+	stats, err := writeReport(reportPath, "groups", "config", "", "", "data/test_config.yaml", "/tmp/go-build", false, results, reportOptions{
+		SlowTop:       10,
+		SlowThreshold: 5 * time.Second,
+		GroupThresholds: map[string]time.Duration{
+			"config": 8 * time.Second,
+		},
+	})
+	if err != nil {
 		t.Fatalf("writeReport failed: %v", err)
+	}
+	if stats.SlowCaseAlerts != 1 {
+		t.Fatalf("unexpected slow alert count: %d", stats.SlowCaseAlerts)
+	}
+	if stats.GroupAlerts != 1 {
+		t.Fatalf("unexpected group alert count: %d", stats.GroupAlerts)
 	}
 	raw, err := os.ReadFile(reportPath)
 	if err != nil {
 		t.Fatalf("failed to read report: %v", err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, "## Slow Tests (Top 20)") {
+	if !strings.Contains(text, "## Slow Tests (Top 10)") {
 		t.Fatalf("slow tests section not found in report")
 	}
 	if !strings.Contains(text, "| 1 | TestB | 6s | PASS | group_config |") {
 		t.Fatalf("expected sorted slow case row not found:\n%s", text)
+	}
+	if !strings.Contains(text, "## Group Runtime Profile") {
+		t.Fatalf("group runtime profile section not found in report")
+	}
+	if !strings.Contains(text, "| config | group_config | 10s | 8s | EXCEEDED |") {
+		t.Fatalf("group threshold row not found in report:\n%s", text)
+	}
+	if !strings.Contains(text, "## Slow Alerts (>= 5s)") {
+		t.Fatalf("slow alerts section not found in report")
 	}
 }

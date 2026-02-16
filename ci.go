@@ -24,6 +24,14 @@ type stepResult struct {
 	PassTests []string
 	FailTests []string
 	SkipTests []string
+	Timed     []timedCase
+}
+
+type timedCase struct {
+	Name     string
+	Duration time.Duration
+	Status   string
+	Step     string
 }
 
 func main() {
@@ -290,7 +298,7 @@ func runSingleTest(runDir, testName, packagePattern, timeout, configPath string,
 		}
 	}
 
-	pass, fail, skip := parseTestOutput(logPath)
+	pass, fail, skip, timed := parseTestOutput(logPath)
 
 	res := stepResult{
 		Name:      name,
@@ -301,6 +309,7 @@ func runSingleTest(runDir, testName, packagePattern, timeout, configPath string,
 		PassTests: pass,
 		FailTests: fail,
 		SkipTests: skip,
+		Timed:     attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -345,7 +354,7 @@ func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string,
 		}
 	}
 
-	pass, fail, skip := parseTestOutput(logPath)
+	pass, fail, skip, timed := parseTestOutput(logPath)
 
 	res := stepResult{
 		Name:      name,
@@ -356,6 +365,7 @@ func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string,
 		PassTests: pass,
 		FailTests: fail,
 		SkipTests: skip,
+		Timed:     attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -378,7 +388,7 @@ func runStep(runDir, name, cmd string, args []string, env []string, workdir stri
 		status = "FAIL"
 	}
 
-	pass, fail, skip := parseTestOutput(logPath)
+	pass, fail, skip, timed := parseTestOutput(logPath)
 
 	res := stepResult{
 		Name:      name,
@@ -389,6 +399,7 @@ func runStep(runDir, name, cmd string, args []string, env []string, workdir stri
 		PassTests: pass,
 		FailTests: fail,
 		SkipTests: skip,
+		Timed:     attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -416,29 +427,86 @@ func runLoggedCommand(logFile *os.File, cmd string, args []string, env []string,
 	return nil
 }
 
-func parseTestOutput(path string) ([]string, []string, []string) {
+func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	defer file.Close()
 
 	var pass []string
 	var fail []string
 	var skip []string
+	var timed []timedCase
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "--- PASS: ") {
-			pass = append(pass, strings.TrimSpace(strings.TrimPrefix(line, "--- PASS: ")))
+			value := strings.TrimSpace(strings.TrimPrefix(line, "--- PASS: "))
+			pass = append(pass, value)
+			if tc, ok := parseTimedCase(value, "PASS"); ok {
+				timed = append(timed, tc)
+			}
 		} else if strings.HasPrefix(line, "--- FAIL: ") {
-			fail = append(fail, strings.TrimSpace(strings.TrimPrefix(line, "--- FAIL: ")))
+			value := strings.TrimSpace(strings.TrimPrefix(line, "--- FAIL: "))
+			fail = append(fail, value)
+			if tc, ok := parseTimedCase(value, "FAIL"); ok {
+				timed = append(timed, tc)
+			}
 		} else if strings.HasPrefix(line, "--- SKIP: ") {
-			skip = append(skip, strings.TrimSpace(strings.TrimPrefix(line, "--- SKIP: ")))
+			value := strings.TrimSpace(strings.TrimPrefix(line, "--- SKIP: "))
+			skip = append(skip, value)
+			if tc, ok := parseTimedCase(value, "SKIP"); ok {
+				timed = append(timed, tc)
+			}
 		}
 	}
-	return pass, fail, skip
+	return pass, fail, skip, timed
+}
+
+func parseTimedCase(raw, status string) (timedCase, bool) {
+	l := strings.LastIndex(raw, " (")
+	r := strings.LastIndex(raw, ")")
+	if l <= 0 || r <= l+2 {
+		return timedCase{}, false
+	}
+	name := strings.TrimSpace(raw[:l])
+	durText := strings.TrimSpace(raw[l+2 : r])
+	dur, err := time.ParseDuration(durText)
+	if err != nil {
+		return timedCase{}, false
+	}
+	return timedCase{Name: name, Duration: dur, Status: status}, true
+}
+
+func attachStepName(step string, items []timedCase) []timedCase {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]timedCase, len(items))
+	copy(out, items)
+	for i := range out {
+		out[i].Step = step
+	}
+	return out
+}
+
+func collectSlowCases(results []stepResult) []timedCase {
+	var out []timedCase
+	for _, res := range results {
+		out = append(out, res.Timed...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Duration == out[j].Duration {
+			if out[i].Step == out[j].Step {
+				return out[i].Name < out[j].Name
+			}
+			return out[i].Step < out[j].Step
+		}
+		return out[i].Duration > out[j].Duration
+	})
+	return out
 }
 
 func writeReport(path, mode, groups, tests, runPattern, configPath, gocache string, debug bool, results []stepResult) error {
@@ -473,6 +541,27 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 			skips,
 			res.LogPath,
 		))
+	}
+
+	slow := collectSlowCases(results)
+	if len(slow) > 0 {
+		sb.WriteString("\n## Slow Tests (Top 20)\n\n")
+		sb.WriteString("| Rank | Test | Duration | Status | Step |\n")
+		sb.WriteString("| --- | --- | --- | --- | --- |\n")
+		limit := 20
+		if len(slow) < limit {
+			limit = len(slow)
+		}
+		for i := 0; i < limit; i++ {
+			tc := slow[i]
+			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s |\n",
+				i+1,
+				tc.Name,
+				tc.Duration,
+				tc.Status,
+				tc.Step,
+			))
+		}
 	}
 
 	sb.WriteString("\n## Details\n\n")

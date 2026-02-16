@@ -21,6 +21,7 @@ function parseArgs(argv) {
     groupHeadroom: 1.3,
     slowQuantile: 0.9,
     slowHeadroom: 1.4,
+    format: "human",
     currentGroupThresholds: "",
     currentSlowThreshold: "",
     currentTestSlowThreshold: "",
@@ -49,6 +50,9 @@ function parseArgs(argv) {
         break;
       case "--slow-headroom":
         out.slowHeadroom = Number(take());
+        break;
+      case "--format":
+        out.format = String(take() || "").trim().toLowerCase();
         break;
       case "--current-group-thresholds":
         out.currentGroupThresholds = take();
@@ -90,6 +94,7 @@ function printUsage() {
   console.log("  --group-headroom <m>      Headroom multiplier for groups (default: 1.3)");
   console.log("  --slow-quantile <q>       Quantile for slow test durations (default: 0.9)");
   console.log("  --slow-headroom <m>       Headroom multiplier for slow tests (default: 1.4)");
+  console.log("  --format <human|make>     Output format (default: human)");
   console.log("  --current-group-thresholds <csv>  Current group thresholds for drift check");
   console.log("  --current-slow-threshold <dur>    Current group slow threshold for drift check");
   console.log("  --current-test-slow-threshold <dur> Current tests slow threshold for drift check");
@@ -123,6 +128,9 @@ function validateArgs(args) {
   }
   if (!Number.isFinite(args.driftMinMs) || args.driftMinMs < 0) {
     throw new Error("--drift-min-ms must be >= 0");
+  }
+  if (!["human", "make"].includes(args.format)) {
+    throw new Error("--format must be one of: human, make");
   }
 }
 
@@ -557,54 +565,42 @@ function main() {
     ? Math.max(5000, Math.floor(slowSuggested / 2))
     : null;
 
-  console.log(`# Budget recommendation from ${reportFiles.length} report(s)`);
-  console.log(`# Source dir: ${args.reportsDir}`);
-  console.log("");
+  if (args.format !== "make") {
+    console.log(`# Budget recommendation from ${reportFiles.length} report(s)`);
+    console.log(`# Source dir: ${args.reportsDir}`);
+    console.log("");
 
-  if (groupLines.length === 0) {
-    console.log("No group_* step duration samples found.");
-  } else {
-    console.log("## Group summary");
-    console.log("| Group | Samples | q | qDuration | Max | Suggested |");
-    console.log("| --- | ---: | ---: | --- | --- | --- |");
-    for (const line of groupLines) {
+    if (groupLines.length === 0) {
+      console.log("No group_* step duration samples found.");
+    } else {
+      console.log("## Group summary");
+      console.log("| Group | Samples | q | qDuration | Max | Suggested |");
+      console.log("| --- | ---: | ---: | --- | --- | --- |");
+      for (const line of groupLines) {
+        console.log(
+          `| ${line.group} | ${line.samples} | ${args.groupQuantile.toFixed(2)} | ${formatDuration(line.p)} | ${formatDuration(line.max)} | ${formatDuration(line.rec)} |`,
+        );
+      }
+      console.log("");
+    }
+
+    console.log(`Slow sample count: ${slowSamples.length}`);
+    if (slowSuggested !== null) {
+      const slowQ = quantile(slowSamples, args.slowQuantile);
+      const slowMax = Math.max(...slowSamples);
       console.log(
-        `| ${line.group} | ${line.samples} | ${args.groupQuantile.toFixed(2)} | ${formatDuration(line.p)} | ${formatDuration(line.max)} | ${formatDuration(line.rec)} |`,
+        `Slow q${args.slowQuantile.toFixed(2)}=${formatDuration(slowQ)}, max=${formatDuration(slowMax)}, suggested=${formatDuration(slowSuggested)}`,
       );
+    } else {
+      console.log("Slow samples not found in scanned reports (kept existing default).");
     }
     console.log("");
   }
-
-  console.log(`Slow sample count: ${slowSamples.length}`);
-  if (slowSuggested !== null) {
-    const slowQ = quantile(slowSamples, args.slowQuantile);
-    const slowMax = Math.max(...slowSamples);
-    console.log(
-      `Slow q${args.slowQuantile.toFixed(2)}=${formatDuration(slowQ)}, max=${formatDuration(slowMax)}, suggested=${formatDuration(slowSuggested)}`,
-    );
-  } else {
-    console.log("Slow samples not found in scanned reports (kept existing default).");
-  }
-  console.log("");
 
   const ordered = orderedGroupEntries(recommendedGroups)
     .map(([group, ms]) => `${group}=${formatDuration(ms)}`);
   if (defaultGroup !== null) {
     ordered.push(`default=${formatDuration(defaultGroup)}`);
-  }
-
-  console.log("## Recommended Make overrides");
-  if (ordered.length > 0) {
-    console.log(`CI_BUDGET_GROUP_THRESHOLDS=${ordered.join(",")}`);
-  } else {
-    console.log("# CI_BUDGET_GROUP_THRESHOLDS=<insufficient-data>");
-  }
-  if (slowSuggested !== null) {
-    console.log(`CI_BUDGET_SLOW_THRESHOLD=${formatDuration(slowSuggested)}`);
-    console.log(`CI_BUDGET_TEST_SLOW_THRESHOLD=${formatDuration(testSlowSuggested)}`);
-  } else {
-    console.log("# CI_BUDGET_SLOW_THRESHOLD=<insufficient-data>");
-    console.log("# CI_BUDGET_TEST_SLOW_THRESHOLD=<insufficient-data>");
   }
 
   const driftAlerts = [];
@@ -658,18 +654,42 @@ function main() {
     }
   }
 
-  console.log("");
-  console.log(`## Drift check (ratio>=${args.driftRatio}, min=${args.driftMinMs}ms)`);
-  if (driftAlerts.length === 0) {
-    console.log("No drift alert against provided current thresholds.");
+  if (args.format === "make") {
+    if (ordered.length > 0) {
+      console.log(`CI_BUDGET_GROUP_THRESHOLDS=${ordered.join(",")}`);
+    }
+    if (slowSuggested !== null) {
+      console.log(`CI_BUDGET_SLOW_THRESHOLD=${formatDuration(slowSuggested)}`);
+      console.log(`CI_BUDGET_TEST_SLOW_THRESHOLD=${formatDuration(testSlowSuggested)}`);
+    }
   } else {
-    console.log("| Kind | Key | Current | Suggested | Delta |");
-    console.log("| --- | --- | --- | --- | ---: |");
-    for (const item of driftAlerts) {
-      const sign = item.deltaPct >= 0 ? "+" : "";
-      console.log(
-        `| ${item.kind} | ${item.name} | ${formatDuration(item.current)} | ${formatDuration(item.suggested)} | ${sign}${item.deltaPct.toFixed(1)}% |`,
-      );
+    console.log("## Recommended Make overrides");
+    if (ordered.length > 0) {
+      console.log(`CI_BUDGET_GROUP_THRESHOLDS=${ordered.join(",")}`);
+    } else {
+      console.log("# CI_BUDGET_GROUP_THRESHOLDS=<insufficient-data>");
+    }
+    if (slowSuggested !== null) {
+      console.log(`CI_BUDGET_SLOW_THRESHOLD=${formatDuration(slowSuggested)}`);
+      console.log(`CI_BUDGET_TEST_SLOW_THRESHOLD=${formatDuration(testSlowSuggested)}`);
+    } else {
+      console.log("# CI_BUDGET_SLOW_THRESHOLD=<insufficient-data>");
+      console.log("# CI_BUDGET_TEST_SLOW_THRESHOLD=<insufficient-data>");
+    }
+
+    console.log("");
+    console.log(`## Drift check (ratio>=${args.driftRatio}, min=${args.driftMinMs}ms)`);
+    if (driftAlerts.length === 0) {
+      console.log("No drift alert against provided current thresholds.");
+    } else {
+      console.log("| Kind | Key | Current | Suggested | Delta |");
+      console.log("| --- | --- | --- | --- | ---: |");
+      for (const item of driftAlerts) {
+        const sign = item.deltaPct >= 0 ? "+" : "";
+        console.log(
+          `| ${item.kind} | ${item.name} | ${formatDuration(item.current)} | ${formatDuration(item.suggested)} | ${sign}${item.deltaPct.toFixed(1)}% |`,
+        );
+      }
     }
   }
 

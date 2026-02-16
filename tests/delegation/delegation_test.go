@@ -6,12 +6,39 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
+
+func rewardAccrualAttemptBudget() int {
+	attempts := 8
+	if ctx != nil {
+		if period, err := ctx.Proposal.WithdrawProfitPeriod(nil); err == nil && period != nil && period.Sign() > 0 {
+			attempts = int(period.Int64()) + 3
+		} else if ctx.Config.Test.Params.WithdrawProfit > 0 {
+			attempts = int(ctx.Config.Test.Params.WithdrawProfit) + 3
+		}
+	}
+	if attempts < 4 {
+		attempts = 4
+	}
+	if attempts > 12 {
+		attempts = 12
+	}
+	return attempts
+}
+
+func retryAfterBlockInterval() time.Duration {
+	d := retrySleep() / 4
+	if d < 10*time.Millisecond {
+		return 10 * time.Millisecond
+	}
+	return d
+}
 
 func TestE_Delegation(t *testing.T) {
 	if ctx == nil || len(ctx.GenesisValidators) == 0 {
@@ -34,6 +61,8 @@ func TestE_Delegation(t *testing.T) {
 	ctx.EnsureConfig(6, big.NewInt(3), unb)
 	unj, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)
 	ctx.EnsureConfig(7, big.NewInt(3), unj)
+	wp, _ := ctx.Proposal.WithdrawProfitPeriod(nil)
+	ctx.EnsureConfig(4, big.NewInt(2), wp)
 
 	t.Run("D-01_FullFlow", func(t *testing.T) {
 		userKey, userAddr, err := ctx.CreateAndFundAccount(utils.ToWei(200))
@@ -49,7 +78,7 @@ func TestE_Delegation(t *testing.T) {
 		t.Log("Waiting briefly for rewards to accrue...")
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -102,7 +131,7 @@ func TestE_Delegation(t *testing.T) {
 				}
 				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 					MaxAttempts: maxAttempts,
-					Interval:    retrySleep(),
+					Interval:    retryAfterBlockInterval(),
 					OnRetry: func(int) {
 						waitBlocks(t, 1)
 					},
@@ -128,8 +157,8 @@ func TestE_Delegation(t *testing.T) {
 		claimedBefore := new(big.Int).Set(infoBefore.TotalClaimedRewards)
 
 		err := testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: 20,
-			Interval:    retrySleep(),
+			MaxAttempts: rewardAccrualAttemptBudget(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -146,7 +175,7 @@ func TestE_Delegation(t *testing.T) {
 
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -245,6 +274,7 @@ func TestE_Delegation(t *testing.T) {
 
 		var lastErr error
 		for retry := 0; retry < 10; retry++ {
+			ctx.WaitIfEpochBlock()
 			opts, errG := ctx.GetTransactor(userKey)
 			if errG != nil {
 				lastErr = errG
@@ -259,7 +289,6 @@ func TestE_Delegation(t *testing.T) {
 				lastErr = err
 				if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
 					waitForNextEpochBlock(t)
-					waitBlocks(t, 1)
 					continue
 				}
 				break
@@ -270,7 +299,6 @@ func TestE_Delegation(t *testing.T) {
 				if strings.Contains(errW.Error(), "revert") || strings.Contains(errW.Error(), "reverted") {
 					ctx.RefreshNonce(userAddr)
 					waitForNextEpochBlock(t)
-					waitBlocks(t, 1)
 				}
 				continue
 			}
@@ -283,13 +311,12 @@ func TestE_Delegation(t *testing.T) {
 				lastErr = fmt.Errorf("register validator tx reverted")
 				ctx.RefreshNonce(userAddr)
 				waitForNextEpochBlock(t)
-				waitBlocks(t, 1)
 				continue
 			}
 
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 3,
-				Interval:    retrySleep(),
+				Interval:    retryAfterBlockInterval(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},
@@ -365,7 +392,7 @@ func TestE_Delegation(t *testing.T) {
 		}
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -389,7 +416,11 @@ func TestE_Delegation(t *testing.T) {
 			}
 			return h >= targetHeight, nil
 		})
-		waitForNextEpochBlock(t)
+		active, _ := ctx.Validators.IsValidatorActive(nil, addr)
+		if active {
+			waitForNextEpochBlock(t)
+		}
+		ctx.WaitIfEpochBlock()
 		robustExitValidator(t, key)
 		t.Logf("Ex-validator %s delegating to %s", addr.Hex(), valAddr.Hex())
 		robustDelegate(t, key, valAddr, utils.ToWei(10))
@@ -504,7 +535,7 @@ func TestE_Delegation(t *testing.T) {
 			if curCnt == nil || curCnt.Cmp(prevCnt) <= 0 {
 				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 					MaxAttempts: 3,
-					Interval:    retrySleep(),
+					Interval:    retryAfterBlockInterval(),
 					OnRetry: func(int) {
 						waitBlocks(t, 1)
 					},

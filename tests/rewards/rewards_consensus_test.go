@@ -5,11 +5,47 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"juchain.org/chain/tools/ci/internal/testkit"
 )
+
+func rewardIncreaseProbeBlocks(defaultMax int) int {
+	maxBlocks := defaultMax
+	if maxBlocks <= 0 {
+		maxBlocks = 60
+	}
+	if ctx != nil {
+		if period, err := ctx.Proposal.WithdrawProfitPeriod(nil); err == nil && period != nil && period.Sign() > 0 {
+			dynamic := int(period.Int64())*4 + 8
+			if dynamic < maxBlocks {
+				maxBlocks = dynamic
+			}
+		} else if ctx.Config.Test.Params.WithdrawProfit > 0 {
+			dynamic := int(ctx.Config.Test.Params.WithdrawProfit)*4 + 8
+			if dynamic < maxBlocks {
+				maxBlocks = dynamic
+			}
+		}
+	}
+	if maxBlocks < 12 {
+		maxBlocks = 12
+	}
+	if maxBlocks > 60 {
+		maxBlocks = 60
+	}
+	return maxBlocks
+}
+
+func retryAfterBlockInterval() time.Duration {
+	d := retrySleep() / 4
+	if d < 10*time.Millisecond {
+		return 10 * time.Millisecond
+	}
+	return d
+}
 
 func TestI_ConsensusRewards(t *testing.T) {
 	if ctx == nil {
@@ -20,9 +56,10 @@ func TestI_ConsensusRewards(t *testing.T) {
 		_, minerAddr := minerKeyOrSkip(t)
 		beforeInfo, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
 		before := new(big.Int).Set(beforeInfo.AccumulatedRewards)
-		if !waitForRewardIncrease(t, minerAddr, before, 60) {
+		maxProbeBlocks := rewardIncreaseProbeBlocks(60)
+		if !waitForRewardIncrease(t, minerAddr, before, maxProbeBlocks) {
 			info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
-			t.Fatalf("accumulatedRewards did not increase within 60 blocks: before=%s after=%s", before.String(), info.AccumulatedRewards.String())
+			t.Fatalf("accumulatedRewards did not increase within %d blocks: before=%s after=%s", maxProbeBlocks, before.String(), info.AccumulatedRewards.String())
 		}
 		info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
 		t.Logf("Rewards increased for %s: %s -> %s", minerAddr.Hex(), before.String(), info.AccumulatedRewards.String())
@@ -64,7 +101,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 		}
 		err := testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

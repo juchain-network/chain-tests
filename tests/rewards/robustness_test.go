@@ -82,7 +82,7 @@ func TestH_Robustness(t *testing.T) {
 		}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -103,7 +103,7 @@ func TestH_Robustness(t *testing.T) {
 
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -138,7 +138,7 @@ func TestH_Robustness(t *testing.T) {
 		propID := [32]byte{}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -151,7 +151,7 @@ func TestH_Robustness(t *testing.T) {
 		proposerAddr := crypto.PubkeyToAddress(proposerKey.PublicKey)
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
-			Interval:    retrySleep(),
+			Interval:    retryAfterBlockInterval(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

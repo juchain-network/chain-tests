@@ -126,6 +126,21 @@ func TestParseGroupThresholds(t *testing.T) {
 	}
 }
 
+func TestEnvTruthy(t *testing.T) {
+	trueValues := []string{"1", "true", "TRUE", " yes ", "on"}
+	for _, v := range trueValues {
+		if !envTruthy(v) {
+			t.Fatalf("expected envTruthy(%q)=true", v)
+		}
+	}
+	falseValues := []string{"", "0", "false", "no", "off", "random"}
+	for _, v := range falseValues {
+		if envTruthy(v) {
+			t.Fatalf("expected envTruthy(%q)=false", v)
+		}
+	}
+}
+
 func TestCollectGroupDurations(t *testing.T) {
 	results := []stepResult{
 		{Name: "group_config", Duration: 90 * time.Second},

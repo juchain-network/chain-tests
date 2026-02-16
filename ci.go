@@ -54,6 +54,8 @@ type reportStats struct {
 	GroupAlerts    int
 }
 
+const nestedRunEnv = "CHAIN_TESTS_NESTED_RUN"
+
 func main() {
 	mode := flag.String("mode", "groups", "Run mode: groups or tests")
 	groups := flag.String("groups", "config,governance,staking,delegation,punish,rewards,epoch", "Comma-separated group list")
@@ -99,12 +101,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	unlock, err := acquireRunLock(rootDir)
-	if err != nil {
-		fmt.Printf("Failed to acquire run lock: %v\n", err)
-		os.Exit(1)
+	if !envTruthy(os.Getenv(nestedRunEnv)) {
+		unlock, err := acquireRunLock(rootDir)
+		if err != nil {
+			fmt.Printf("Failed to acquire run lock: %v\n", err)
+			os.Exit(1)
+		}
+		defer unlock()
 	}
-	defer unlock()
 
 	if *configPath == "" {
 		*configPath = filepath.Join(rootDir, "data", "test_config.yaml")
@@ -266,6 +270,15 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+func envTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseDurationFlag(raw string) (time.Duration, error) {
@@ -516,7 +529,7 @@ func runLoggedCommand(logFile *os.File, cmd string, args []string, env []string,
 	}
 
 	command := exec.Command(cmd, args...)
-	command.Env = env
+	command.Env = append(append([]string{}, env...), nestedRunEnv+"=1")
 	command.Dir = workdir
 	command.Stdout = logFile
 	command.Stderr = logFile

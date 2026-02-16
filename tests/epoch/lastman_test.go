@@ -34,7 +34,7 @@ func TestZ_LastManStanding(t *testing.T) {
 			if cur > start {
 				return true
 			}
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 		}
 		t.Logf("block did not advance after %s (start=%d)", label, start)
 		return false
@@ -52,7 +52,7 @@ func TestZ_LastManStanding(t *testing.T) {
 				}
 				return receipt, nil
 			}
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 		return nil, fmt.Errorf("timeout waiting for tx %s", txHash.Hex())
 	}

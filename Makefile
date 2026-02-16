@@ -4,7 +4,7 @@ SHELL := /bin/bash
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-config test-governance test-staking test-delegation test-punish \
-        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget
+        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -38,6 +38,11 @@ CI_BUDGET_GROUP_THRESHOLDS ?= config=6m,governance=15m,staking=12m,delegation=12
 CI_BUDGET_SLOW_THRESHOLD ?= 45s
 CI_BUDGET_SLOW_TOP ?= 30
 CI_BUDGET_TEST_SLOW_THRESHOLD ?= 20s
+BUDGET_RECOMMEND_RECENT ?= 120
+BUDGET_RECOMMEND_GROUP_QUANTILE ?= 0.90
+BUDGET_RECOMMEND_GROUP_HEADROOM ?= 1.30
+BUDGET_RECOMMEND_SLOW_QUANTILE ?= 0.90
+BUDGET_RECOMMEND_SLOW_HEADROOM ?= 1.40
 
 CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
 
@@ -78,9 +83,10 @@ help:
 	@echo "  test-epoch      - Epoch/upgrade tests"
 	@echo ""
 	@echo "CI Targets:"
-	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget"
+	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
+	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
 	@echo ""
 	@echo "Variables:"
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
@@ -96,6 +102,11 @@ help:
 	@echo "  CI_BUDGET_SLOW_THRESHOLD=$(CI_BUDGET_SLOW_THRESHOLD)"
 	@echo "  CI_BUDGET_SLOW_TOP=$(CI_BUDGET_SLOW_TOP)"
 	@echo "  CI_BUDGET_TEST_SLOW_THRESHOLD=$(CI_BUDGET_TEST_SLOW_THRESHOLD)"
+	@echo "  BUDGET_RECOMMEND_RECENT=$(BUDGET_RECOMMEND_RECENT)"
+	@echo "  BUDGET_RECOMMEND_GROUP_QUANTILE=$(BUDGET_RECOMMEND_GROUP_QUANTILE)"
+	@echo "  BUDGET_RECOMMEND_GROUP_HEADROOM=$(BUDGET_RECOMMEND_GROUP_HEADROOM)"
+	@echo "  BUDGET_RECOMMEND_SLOW_QUANTILE=$(BUDGET_RECOMMEND_SLOW_QUANTILE)"
+	@echo "  BUDGET_RECOMMEND_SLOW_HEADROOM=$(BUDGET_RECOMMEND_SLOW_HEADROOM)"
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
 
 init-config:
@@ -260,3 +271,12 @@ ci-tests-budget:
 		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
 		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_TEST_SLOW_THRESHOLD)) \
 		-slow-fail
+
+ci-budget-suggest:
+	@node $(SCRIPTS_DIR)/recommend_budgets.js \
+		--reports-dir reports \
+		--recent $(BUDGET_RECOMMEND_RECENT) \
+		--group-quantile $(BUDGET_RECOMMEND_GROUP_QUANTILE) \
+		--group-headroom $(BUDGET_RECOMMEND_GROUP_HEADROOM) \
+		--slow-quantile $(BUDGET_RECOMMEND_SLOW_QUANTILE) \
+		--slow-headroom $(BUDGET_RECOMMEND_SLOW_HEADROOM)

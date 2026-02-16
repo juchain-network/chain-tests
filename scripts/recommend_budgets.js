@@ -21,6 +21,12 @@ function parseArgs(argv) {
     groupHeadroom: 1.3,
     slowQuantile: 0.9,
     slowHeadroom: 1.4,
+    currentGroupThresholds: "",
+    currentSlowThreshold: "",
+    currentTestSlowThreshold: "",
+    driftRatio: 0.25,
+    driftMinMs: 15000,
+    failOnDrift: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -44,6 +50,24 @@ function parseArgs(argv) {
       case "--slow-headroom":
         out.slowHeadroom = Number(take());
         break;
+      case "--current-group-thresholds":
+        out.currentGroupThresholds = take();
+        break;
+      case "--current-slow-threshold":
+        out.currentSlowThreshold = take();
+        break;
+      case "--current-test-slow-threshold":
+        out.currentTestSlowThreshold = take();
+        break;
+      case "--drift-ratio":
+        out.driftRatio = Number(take());
+        break;
+      case "--drift-min-ms":
+        out.driftMinMs = Number(take());
+        break;
+      case "--fail-on-drift":
+        out.failOnDrift = true;
+        break;
       case "-h":
       case "--help":
         printUsage();
@@ -66,6 +90,12 @@ function printUsage() {
   console.log("  --group-headroom <m>      Headroom multiplier for groups (default: 1.3)");
   console.log("  --slow-quantile <q>       Quantile for slow test durations (default: 0.9)");
   console.log("  --slow-headroom <m>       Headroom multiplier for slow tests (default: 1.4)");
+  console.log("  --current-group-thresholds <csv>  Current group thresholds for drift check");
+  console.log("  --current-slow-threshold <dur>    Current group slow threshold for drift check");
+  console.log("  --current-test-slow-threshold <dur> Current tests slow threshold for drift check");
+  console.log("  --drift-ratio <r>         Relative drift threshold (default: 0.25)");
+  console.log("  --drift-min-ms <n>        Absolute drift floor in ms (default: 15000)");
+  console.log("  --fail-on-drift           Exit non-zero when drift alert is detected");
 }
 
 function validateArgs(args) {
@@ -87,6 +117,12 @@ function validateArgs(args) {
     if (!Number.isFinite(val) || val <= 0) {
       throw new Error(`--${name} must be > 0`);
     }
+  }
+  if (!Number.isFinite(args.driftRatio) || args.driftRatio < 0) {
+    throw new Error("--drift-ratio must be >= 0");
+  }
+  if (!Number.isFinite(args.driftMinMs) || args.driftMinMs < 0) {
+    throw new Error("--drift-min-ms must be >= 0");
   }
 }
 
@@ -153,6 +189,47 @@ function parseDurationMs(raw) {
     return null;
   }
   return total;
+}
+
+function parseThresholdCsv(raw) {
+  const out = {
+    groups: {},
+    defaultThreshold: null,
+  };
+  const text = String(raw || "").trim();
+  if (!text) {
+    return out;
+  }
+  const items = text.split(",").map((v) => v.trim()).filter(Boolean);
+  for (const item of items) {
+    const parts = item.split("=");
+    if (parts.length !== 2) {
+      throw new Error(`invalid threshold item: ${item}`);
+    }
+    const key = parts[0].trim().toLowerCase();
+    const dur = parseDurationMs(parts[1].trim());
+    if (!key || dur === null) {
+      throw new Error(`invalid threshold item: ${item}`);
+    }
+    if (key === "default") {
+      out.defaultThreshold = dur;
+    } else {
+      out.groups[key] = dur;
+    }
+  }
+  return out;
+}
+
+function parseOptionalDuration(raw, flagName) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    return null;
+  }
+  const ms = parseDurationMs(text);
+  if (ms === null) {
+    throw new Error(`invalid ${flagName}: ${raw}`);
+  }
+  return ms;
 }
 
 function parseDurationFromGoTestLine(line) {
@@ -371,8 +448,42 @@ function orderedGroupEntries(mapObj) {
   return entries;
 }
 
+function currentGroupThreshold(group, current) {
+  const key = String(group || "").toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(current.groups, key)) {
+    return current.groups[key];
+  }
+  return current.defaultThreshold;
+}
+
+function driftTriggered(currentMs, suggestedMs, ratioThreshold, minMs) {
+  if (!Number.isFinite(currentMs) || currentMs <= 0 || !Number.isFinite(suggestedMs) || suggestedMs <= 0) {
+    return false;
+  }
+  const diff = Math.abs(suggestedMs - currentMs);
+  if (diff < minMs) {
+    return false;
+  }
+  const ratio = diff / currentMs;
+  return ratio >= ratioThreshold;
+}
+
+function driftPercent(currentMs, suggestedMs) {
+  if (!Number.isFinite(currentMs) || currentMs <= 0 || !Number.isFinite(suggestedMs)) {
+    return 0;
+  }
+  return ((suggestedMs - currentMs) / currentMs) * 100;
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  const currentGroupThresholds = parseThresholdCsv(args.currentGroupThresholds);
+  const currentSlowThreshold = parseOptionalDuration(args.currentSlowThreshold, "--current-slow-threshold");
+  const currentTestSlowThreshold = parseOptionalDuration(
+    args.currentTestSlowThreshold,
+    "--current-test-slow-threshold",
+  );
+
   const reportFiles = listRecentReportFiles(args.reportsDir, args.recent);
   if (reportFiles.length === 0) {
     console.error(`No report files found under ${args.reportsDir}`);
@@ -442,6 +553,9 @@ function main() {
     const p = quantile(slowSamples, args.slowQuantile);
     slowSuggested = roundSlowBudget(p * args.slowHeadroom);
   }
+  const testSlowSuggested = slowSuggested !== null
+    ? Math.max(5000, Math.floor(slowSuggested / 2))
+    : null;
 
   console.log(`# Budget recommendation from ${reportFiles.length} report(s)`);
   console.log(`# Source dir: ${args.reportsDir}`);
@@ -487,10 +601,81 @@ function main() {
   }
   if (slowSuggested !== null) {
     console.log(`CI_BUDGET_SLOW_THRESHOLD=${formatDuration(slowSuggested)}`);
-    console.log(`CI_BUDGET_TEST_SLOW_THRESHOLD=${formatDuration(Math.max(5000, Math.floor(slowSuggested / 2)))}`);
+    console.log(`CI_BUDGET_TEST_SLOW_THRESHOLD=${formatDuration(testSlowSuggested)}`);
   } else {
     console.log("# CI_BUDGET_SLOW_THRESHOLD=<insufficient-data>");
     console.log("# CI_BUDGET_TEST_SLOW_THRESHOLD=<insufficient-data>");
+  }
+
+  const driftAlerts = [];
+  for (const [group, suggested] of Object.entries(recommendedGroups)) {
+    const current = currentGroupThreshold(group, currentGroupThresholds);
+    if (!Number.isFinite(current) || current <= 0) {
+      continue;
+    }
+    if (!driftTriggered(current, suggested, args.driftRatio, args.driftMinMs)) {
+      continue;
+    }
+    driftAlerts.push({
+      kind: "group",
+      name: group,
+      current,
+      suggested,
+      deltaPct: driftPercent(current, suggested),
+    });
+  }
+  if (defaultGroup !== null && Number.isFinite(currentGroupThresholds.defaultThreshold) && currentGroupThresholds.defaultThreshold > 0) {
+    if (driftTriggered(currentGroupThresholds.defaultThreshold, defaultGroup, args.driftRatio, args.driftMinMs)) {
+      driftAlerts.push({
+        kind: "group",
+        name: "default",
+        current: currentGroupThresholds.defaultThreshold,
+        suggested: defaultGroup,
+        deltaPct: driftPercent(currentGroupThresholds.defaultThreshold, defaultGroup),
+      });
+    }
+  }
+  if (slowSuggested !== null && Number.isFinite(currentSlowThreshold) && currentSlowThreshold > 0) {
+    if (driftTriggered(currentSlowThreshold, slowSuggested, args.driftRatio, args.driftMinMs)) {
+      driftAlerts.push({
+        kind: "slow",
+        name: "CI_BUDGET_SLOW_THRESHOLD",
+        current: currentSlowThreshold,
+        suggested: slowSuggested,
+        deltaPct: driftPercent(currentSlowThreshold, slowSuggested),
+      });
+    }
+  }
+  if (testSlowSuggested !== null && Number.isFinite(currentTestSlowThreshold) && currentTestSlowThreshold > 0) {
+    if (driftTriggered(currentTestSlowThreshold, testSlowSuggested, args.driftRatio, args.driftMinMs)) {
+      driftAlerts.push({
+        kind: "slow",
+        name: "CI_BUDGET_TEST_SLOW_THRESHOLD",
+        current: currentTestSlowThreshold,
+        suggested: testSlowSuggested,
+        deltaPct: driftPercent(currentTestSlowThreshold, testSlowSuggested),
+      });
+    }
+  }
+
+  console.log("");
+  console.log(`## Drift check (ratio>=${args.driftRatio}, min=${args.driftMinMs}ms)`);
+  if (driftAlerts.length === 0) {
+    console.log("No drift alert against provided current thresholds.");
+  } else {
+    console.log("| Kind | Key | Current | Suggested | Delta |");
+    console.log("| --- | --- | --- | --- | ---: |");
+    for (const item of driftAlerts) {
+      const sign = item.deltaPct >= 0 ? "+" : "";
+      console.log(
+        `| ${item.kind} | ${item.name} | ${formatDuration(item.current)} | ${formatDuration(item.suggested)} | ${sign}${item.deltaPct.toFixed(1)}% |`,
+      );
+    }
+  }
+
+  if (args.failOnDrift && driftAlerts.length > 0) {
+    console.error(`Drift alerts detected: ${driftAlerts.length}`);
+    process.exit(2);
   }
 }
 

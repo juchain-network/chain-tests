@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"juchain.org/chain/tools/ci/internal/testkit"
@@ -70,7 +69,7 @@ func TestA_SystemConfigSetup(t *testing.T) {
 
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 4,
-				Interval:    100 * time.Millisecond,
+				Interval:    retrySleep(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},

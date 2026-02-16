@@ -3,7 +3,6 @@ package tests
 import (
 	"math/big"
 	"testing"
-	"time"
 
 	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
@@ -32,7 +31,7 @@ func TestC_StakingFlow(t *testing.T) {
 	t.Log("Registering validator...")
 	err = testkit.WaitUntil(testkit.WaitUntilOptions{
 		MaxAttempts: 3,
-		Interval:    100 * time.Millisecond,
+		Interval:    retrySleep(),
 		OnRetry: func(int) {
 			waitBlocks(t, 1)
 		},

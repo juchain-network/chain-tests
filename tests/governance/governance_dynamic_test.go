@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -428,7 +427,7 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 		}
 		err := testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

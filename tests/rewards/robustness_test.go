@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -83,7 +82,7 @@ func TestH_Robustness(t *testing.T) {
 		}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -104,7 +103,7 @@ func TestH_Robustness(t *testing.T) {
 
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -139,7 +138,7 @@ func TestH_Robustness(t *testing.T) {
 		propID := [32]byte{}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -152,7 +151,7 @@ func TestH_Robustness(t *testing.T) {
 		proposerAddr := crypto.PubkeyToAddress(proposerKey.PublicKey)
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

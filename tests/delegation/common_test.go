@@ -292,7 +292,7 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 	propID := [32]byte{}
 	err = testkit.WaitUntil(testkit.WaitUntilOptions{
 		MaxAttempts: 4,
-		Interval:    100 * time.Millisecond,
+		Interval:    retrySleep(),
 		OnRetry: func(int) {
 			waitBlocks(t, 1)
 		},
@@ -320,7 +320,7 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 		}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

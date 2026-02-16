@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -65,7 +64,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 		}
 		err := testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

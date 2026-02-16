@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -108,7 +107,7 @@ func TestF2_QuickReEntry(t *testing.T) {
 		}
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -156,7 +155,7 @@ func TestF3_WithdrawProfits(t *testing.T) {
 		}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -318,7 +317,7 @@ func TestF7_PunishedRedemption(t *testing.T) {
 		}
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -338,7 +337,7 @@ func TestF7_PunishedRedemption(t *testing.T) {
 	// 6. Wait for next epoch to be active in currentValidatorSet
 	_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 		MaxAttempts: 2,
-		Interval:    100 * time.Millisecond,
+		Interval:    retrySleep(),
 		OnRetry: func(int) {
 			waitForNextEpochBlock(t)
 		},

@@ -135,7 +135,7 @@ func TestG_DoubleSign(t *testing.T) {
 		if reporterBalAfter.Cmp(expectedMin) < 0 {
 			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 3,
-				Interval:    100 * time.Millisecond,
+				Interval:    retrySleep(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},
@@ -216,7 +216,7 @@ func TestG_DoubleSign(t *testing.T) {
 			}
 			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: maxAttempts,
-				Interval:    100 * time.Millisecond,
+				Interval:    retrySleep(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},

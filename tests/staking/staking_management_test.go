@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -178,7 +177,7 @@ func TestD_StakingManagement(t *testing.T) {
 			}
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: maxAttempts,
-				Interval:    100 * time.Millisecond,
+				Interval:    retrySleep(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},
@@ -247,7 +246,7 @@ func TestD_StakingManagement(t *testing.T) {
 
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -50,7 +49,7 @@ func TestE_Delegation(t *testing.T) {
 		t.Log("Waiting briefly for rewards to accrue...")
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -103,7 +102,7 @@ func TestE_Delegation(t *testing.T) {
 				}
 				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 					MaxAttempts: maxAttempts,
-					Interval:    100 * time.Millisecond,
+					Interval:    retrySleep(),
 					OnRetry: func(int) {
 						waitBlocks(t, 1)
 					},
@@ -130,7 +129,7 @@ func TestE_Delegation(t *testing.T) {
 
 		err := testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 20,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -147,7 +146,7 @@ func TestE_Delegation(t *testing.T) {
 
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -290,7 +289,7 @@ func TestE_Delegation(t *testing.T) {
 
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 3,
-				Interval:    100 * time.Millisecond,
+				Interval:    retrySleep(),
 				OnRetry: func(int) {
 					waitBlocks(t, 1)
 				},
@@ -366,7 +365,7 @@ func TestE_Delegation(t *testing.T) {
 		}
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: maxAttempts,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -505,7 +504,7 @@ func TestE_Delegation(t *testing.T) {
 			if curCnt == nil || curCnt.Cmp(prevCnt) <= 0 {
 				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 					MaxAttempts: 3,
-					Interval:    100 * time.Millisecond,
+					Interval:    retrySleep(),
 					OnRetry: func(int) {
 						waitBlocks(t, 1)
 					},

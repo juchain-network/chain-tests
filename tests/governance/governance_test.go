@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -233,7 +232,7 @@ func TestB_Governance(t *testing.T) {
 
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -300,7 +299,7 @@ func TestB_Governance(t *testing.T) {
 		proposalID := [32]byte{}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},
@@ -316,7 +315,7 @@ func TestB_Governance(t *testing.T) {
 
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
-			Interval:    100 * time.Millisecond,
+			Interval:    retrySleep(),
 			OnRetry: func(int) {
 				waitBlocks(t, 1)
 			},

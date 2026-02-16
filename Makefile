@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 .PHONY: all help init-config image init run ready reset stop clean logs status \
-        precheck \
+        precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch ci ci-tool ci-groups ci-tests
@@ -46,6 +46,7 @@ help:
 	@echo "  init            - Generate genesis, keys, and runtime config"
 	@echo "  run             - Start network (auto backend: docker/native)"
 	@echo "  precheck        - Compile-only precheck for tests/tooling (cached by source fingerprint)"
+	@echo "  runtime-precheck - Validate contract/congress/geth consistency before startup"
 	@echo "  ready           - Wait for RPC readiness"
 	@echo "  stop            - Stop network"
 	@echo "  reset           - clean + init + run + ready"
@@ -102,12 +103,18 @@ precheck:
 	@echo "🔎 Running compile precheck..."
 	@GOCACHE="$(if $(GOCACHE),$(GOCACHE),/tmp/go-build)" bash $(SCRIPTS_DIR)/precheck.sh
 
+runtime-precheck:
+	@$(backend_cmd); \
+	echo "🔍 Running runtime consistency precheck..."; \
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" bash $(SCRIPTS_DIR)/runtime_precheck.sh
+
 run:
 	@set -e; \
 	if [ -z "$(SKIP_PRECHECK)" ]; then \
 		$(MAKE) precheck; \
 	fi; \
 	$(backend_cmd); \
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" bash $(SCRIPTS_DIR)/runtime_precheck.sh; \
 	echo "🚀 Starting network backend=$$RUNTIME_BACKEND"; \
 	if [ "$$RUNTIME_BACKEND" = "docker" ]; then \
 		bash $(SCRIPTS_DIR)/build_docker.sh; \

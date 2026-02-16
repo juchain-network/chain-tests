@@ -181,6 +181,17 @@ func waitForRewardIncrease(t *testing.T, minerAddr common.Address, before *big.I
 	nextStart := start
 	for i := 0; i < maxBlocks; i++ {
 		waitBlocks(t, 1)
+		info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
+		if info.AccumulatedRewards.Cmp(before) > 0 {
+			return true
+		}
+
+		// Event filtering is diagnostic and relatively heavy; sample periodically
+		// unless debug logging is explicitly requested.
+		if !debugEnabled() && i%5 != 0 {
+			continue
+		}
+
 		end, err := ctx.Clients[0].BlockNumber(context.Background())
 		if err != nil {
 			continue
@@ -209,10 +220,6 @@ func waitForRewardIncrease(t *testing.T, minerAddr common.Address, before *big.I
 		}
 		if end >= nextStart {
 			nextStart = end + 1
-		}
-		info, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
-		if info.AccumulatedRewards.Cmp(before) > 0 {
-			return true
 		}
 	}
 	return false

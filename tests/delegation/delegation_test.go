@@ -287,7 +287,12 @@ func TestE_Delegation(t *testing.T) {
 			txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(500))
 			if err != nil {
 				lastErr = err
-				if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
+				if strings.Contains(err.Error(), "Epoch block forbidden") {
+					ctx.WaitIfEpochBlock()
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(err.Error(), "Too many new validators") {
 					waitForNextEpochBlock(t)
 					continue
 				}
@@ -296,9 +301,14 @@ func TestE_Delegation(t *testing.T) {
 
 			if errW := ctx.WaitMined(txReg.Hash()); errW != nil {
 				lastErr = errW
+				if strings.Contains(errW.Error(), "Epoch block forbidden") {
+					ctx.WaitIfEpochBlock()
+					waitBlocks(t, 1)
+					continue
+				}
 				if strings.Contains(errW.Error(), "revert") || strings.Contains(errW.Error(), "reverted") {
 					ctx.RefreshNonce(userAddr)
-					waitForNextEpochBlock(t)
+					waitBlocks(t, 1)
 				}
 				continue
 			}

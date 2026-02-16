@@ -192,12 +192,17 @@ func createAndRegisterValidatorStable(t *testing.T, baseName string, attempts in
 			break
 		}
 		msg := err.Error()
-		if strings.Contains(msg, "revert") ||
-			strings.Contains(msg, "Epoch block forbidden") ||
-			strings.Contains(msg, "Too many new validators") ||
-			strings.Contains(msg, "already") ||
-			strings.Contains(msg, "top validator set") {
+		if strings.Contains(msg, "Too many new validators") || strings.Contains(msg, "top validator set") {
 			waitForNextEpochBlock(t)
+			continue
+		}
+		if strings.Contains(msg, "Epoch block forbidden") {
+			ctx.WaitIfEpochBlock()
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "revert") || strings.Contains(msg, "already") {
+			waitBlocks(t, 1)
 			continue
 		}
 		break

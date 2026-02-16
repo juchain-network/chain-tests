@@ -6,3 +6,4 @@ reports/
 docker/juchain
 .chain-tests-run.lock
 .chain-tests-precheck.stamp
+config/ci_budget.local.mk

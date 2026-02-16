@@ -272,14 +272,14 @@ ci-groups-budget:
 
 ci-tests:
 	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(PKGS),-pkgs $(PKGS),) $(if $(TESTS),-tests $(TESTS),) $(if $(RUN),-run $(RUN),) $(if $(TIMEOUT),-timeout $(TIMEOUT),)
+	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(PKGS),-pkgs "$(PKGS)",) $(if $(TESTS),-tests "$(TESTS)",) $(if $(RUN),-run "$(RUN)",) $(if $(TIMEOUT),-timeout $(TIMEOUT),)
 
 ci-tests-budget:
 	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi
 	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) \
-		$(if $(PKGS),-pkgs $(PKGS),) \
-		$(if $(TESTS),-tests $(TESTS),) \
-		$(if $(RUN),-run $(RUN),) \
+		$(if $(PKGS),-pkgs "$(PKGS)",) \
+		$(if $(TESTS),-tests "$(TESTS)",) \
+		$(if $(RUN),-run "$(RUN)",) \
 		$(if $(TIMEOUT),-timeout $(TIMEOUT),) \
 		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
 		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_TEST_SLOW_THRESHOLD)) \

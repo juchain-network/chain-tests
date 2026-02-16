@@ -145,7 +145,6 @@ func TestD_StakingManagement(t *testing.T) {
 	t.Run("S-05_Reincarnation", func(t *testing.T) {
 		t.Log("Waiting for fresh epoch...")
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 
 		key, addr, err := createAndRegisterValidator(t, "S-05 Reinc")
 		if err != nil {
@@ -171,10 +170,13 @@ func TestD_StakingManagement(t *testing.T) {
 			maxAttempts := 2
 			if targetHeight > current {
 				remaining := int(targetHeight - current)
+				if remaining > 1200 {
+					t.Fatalf("unexpectedly large jail wait (%d blocks): jailUntil=%d current=%d", remaining, targetHeight, current)
+				}
 				t.Logf("Waiting up to %d blocks until jail period ends...", remaining)
 				maxAttempts = remaining + 2
 			}
-			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: maxAttempts,
 				Interval:    100 * time.Millisecond,
 				OnRetry: func(int) {
@@ -187,6 +189,7 @@ func TestD_StakingManagement(t *testing.T) {
 				}
 				return h >= targetHeight, nil
 			})
+			utils.AssertNoError(t, err, "jail period wait failed")
 		}
 
 		ctx.WaitIfEpochBlock()

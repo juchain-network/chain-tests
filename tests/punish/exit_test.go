@@ -144,17 +144,39 @@ func TestF3_WithdrawProfits(t *testing.T) {
 		ctx.EnsureConfig(4, big.NewInt(2), period)
 		period, err = ctx.Proposal.WithdrawProfitPeriod(nil)
 		utils.AssertNoError(t, err, "failed to read withdraw profit period after update")
-		// Ensure we have waited enough blocks before first withdrawal
-		if period.Sign() > 0 {
-			waitBlocks(t, int(period.Uint64()+1))
+		maxAttempts := 6
+		if period != nil && period.Sign() > 0 {
+			maxAttempts = int(period.Uint64()) + 4
 		}
-		opts, err := ctx.GetTransactor(proposerKey)
-		utils.AssertNoError(t, err, "failed to get transactor")
-		tx, err := ctx.Validators.WithdrawProfits(opts, proposerAddr)
-		utils.AssertNoError(t, err, "withdraw profits failed")
-		ctx.WaitMined(tx.Hash())
+		if maxAttempts < 3 {
+			maxAttempts = 3
+		}
+		if maxAttempts > 20 {
+			maxAttempts = 20
+		}
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxAttempts,
+			Interval:    100 * time.Millisecond,
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			opts, err := ctx.GetTransactor(proposerKey)
+			if err != nil {
+				return false, nil
+			}
+			tx, err := ctx.Validators.WithdrawProfits(opts, proposerAddr)
+			if err != nil {
+				return false, nil
+			}
+			if err := ctx.WaitMined(tx.Hash()); err != nil {
+				return false, nil
+			}
+			return true, nil
+		})
+		utils.AssertNoError(t, err, "withdraw profits did not become available in time")
 
-		opts, err = ctx.GetTransactor(proposerKey)
+		opts, err := ctx.GetTransactor(proposerKey)
 		utils.AssertNoError(t, err, "failed to get transactor for second withdraw")
 		_, err = ctx.Validators.WithdrawProfits(opts, proposerAddr)
 		if err == nil {

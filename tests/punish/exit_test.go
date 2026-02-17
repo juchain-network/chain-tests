@@ -101,23 +101,12 @@ func TestF2_QuickReEntry(t *testing.T) {
 	current, _ := ctx.Clients[0].BlockNumber(context.Background())
 	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
 		targetHeight := info.JailUntilBlock.Uint64() + 1
-		maxAttempts := 2
 		if targetHeight > current {
-			maxAttempts = int(targetHeight-current) + 2
+			waitBlocks(t, int(targetHeight-current))
 		}
-		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: maxAttempts,
-			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
-			h, err := ctx.Clients[0].BlockNumber(context.Background())
-			if err != nil {
-				return false, err
-			}
-			return h >= targetHeight, nil
-		})
+		h, err := ctx.Clients[0].BlockNumber(context.Background())
+		utils.AssertNoError(t, err, "read current block failed after jail wait")
+		utils.AssertTrue(t, h >= targetHeight, "jail period wait failed")
 	}
 	// Avoid epoch-block-only restrictions without forcing a full epoch transition.
 	ctx.WaitIfEpochBlock()
@@ -370,23 +359,12 @@ func TestF7_PunishedRedemption(t *testing.T) {
 	current, _ := ctx.Clients[0].BlockNumber(context.Background())
 	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
 		targetHeight := info.JailUntilBlock.Uint64() + 1
-		maxAttempts := 2
 		if targetHeight > current {
-			maxAttempts = int(targetHeight-current) + 2
+			waitBlocks(t, int(targetHeight-current))
 		}
-		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: maxAttempts,
-			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
-			h, err := ctx.Clients[0].BlockNumber(context.Background())
-			if err != nil {
-				return false, err
-			}
-			return h >= targetHeight, nil
-		})
+		h, err := ctx.Clients[0].BlockNumber(context.Background())
+		utils.AssertNoError(t, err, "read current block failed after jail wait")
+		utils.AssertTrue(t, h >= targetHeight, "jail period wait failed")
 	}
 
 	// 5. Unjail

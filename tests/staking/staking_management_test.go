@@ -180,29 +180,17 @@ func TestD_StakingManagement(t *testing.T) {
 		utils.AssertNoError(t, errHeight, "read current block failed")
 		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
 			targetHeight := info.JailUntilBlock.Uint64() + 1
-			maxAttempts := 2
 			if targetHeight > current {
 				remaining := int(targetHeight - current)
 				if remaining > 1200 {
 					t.Fatalf("unexpectedly large jail wait (%d blocks): jailUntil=%d current=%d", remaining, targetHeight, current)
 				}
-				t.Logf("Waiting up to %d blocks until jail period ends...", remaining)
-				maxAttempts = remaining + 2
+				t.Logf("Waiting %d blocks until jail period ends...", remaining)
+				waitBlocks(t, remaining)
 			}
-			err = testkit.WaitUntil(testkit.WaitUntilOptions{
-				MaxAttempts: maxAttempts,
-				Interval:    retrySleep(),
-				OnRetry: func(int) {
-					waitBlocks(t, 1)
-				},
-			}, func() (bool, error) {
-				h, err := ctx.Clients[0].BlockNumber(context.Background())
-				if err != nil {
-					return false, err
-				}
-				return h >= targetHeight, nil
-			})
-			utils.AssertNoError(t, err, "jail period wait failed")
+			h, err := ctx.Clients[0].BlockNumber(context.Background())
+			utils.AssertNoError(t, err, "read current block failed after jail wait")
+			utils.AssertTrue(t, h >= targetHeight, "jail period wait failed")
 		}
 
 		ctx.WaitIfEpochBlock()

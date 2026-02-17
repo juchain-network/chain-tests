@@ -288,7 +288,7 @@ func changeConfig(t *testing.T, pIndex *int, cid uint256, val int64, name string
 		}
 		if strings.Contains(err.Error(), "Proposal creation too frequent") {
 			ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-			waitBlocks(t, 1)
+			waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
 			continue
 		}
 		t.Fatalf("create config proposal %s failed: %v", name, err)
@@ -359,7 +359,7 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "Proposal creation too frequent") {
 			ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-			waitBlocks(t, 1)
+			waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
 			continue
 		}
 		t.Fatalf("create proposal failed: %v", err)
@@ -410,7 +410,7 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "Proposal creation too frequent") {
 			ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-			waitBlocks(t, 1)
+			waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
 			continue
 		}
 		t.Fatalf("create expiry proposal failed: %v", err)
@@ -491,9 +491,14 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 			if err == nil {
 				break
 			}
-			if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
+			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
+				continue
+			}
+			if strings.Contains(err.Error(), "nonce too low") {
+				ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
+				waitNextBlock()
 				continue
 			}
 			t.Fatalf("proposal %s failed: %v", details, err)
@@ -692,7 +697,12 @@ func TestB_Governance_NonceIsolation(t *testing.T) {
 			}
 			tx, err := ctx.Proposal.CreateProposal(opts, target, false, "Duplicate")
 			if err != nil {
-				if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
+				if strings.Contains(err.Error(), "Proposal creation too frequent") {
+					ctx.RefreshNonce(crypto.PubkeyToAddress(key.PublicKey))
+					waitProposalCooldownFor(t, crypto.PubkeyToAddress(key.PublicKey))
+					continue
+				}
+				if strings.Contains(err.Error(), "nonce too low") {
 					ctx.RefreshNonce(crypto.PubkeyToAddress(key.PublicKey))
 					waitNextBlock()
 					continue

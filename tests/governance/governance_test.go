@@ -214,7 +214,7 @@ func TestB_Governance(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				ctx.RefreshNonce(crypto.PubkeyToAddress(pk.PublicKey))
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, crypto.PubkeyToAddress(pk.PublicKey))
 				continue
 			}
 			if strings.Contains(err.Error(), "Validator only") {
@@ -272,7 +272,7 @@ func TestB_Governance(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
 				continue
 			}
 			if strings.Contains(err.Error(), "Validator only") {
@@ -407,7 +407,7 @@ func TestB_Governance(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				ctx.RefreshNonce(crypto.PubkeyToAddress(proposerKey.PublicKey))
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, crypto.PubkeyToAddress(proposerKey.PublicKey))
 				continue
 			}
 			t.Fatalf("first proposal failed: %v", err)

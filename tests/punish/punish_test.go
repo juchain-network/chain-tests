@@ -136,9 +136,6 @@ func TestG_DoubleSign(t *testing.T) {
 			_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 3,
 				Interval:    retrySleep(),
-				OnRetry: func(int) {
-					waitBlocks(t, 1)
-				},
 			}, func() (bool, error) {
 				var err error
 				reporterBalAfter, err = ctx.Clients[0].BalanceAt(context.Background(), reporterAddr, nil)

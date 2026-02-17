@@ -119,8 +119,8 @@ func TestF2_QuickReEntry(t *testing.T) {
 			return h >= targetHeight, nil
 		})
 	}
-	// Ensure we are in a new epoch and not on an epoch block before unjailing
-	waitForNextEpochBlock(t)
+	// Avoid epoch-block-only restrictions without forcing a full epoch transition.
+	ctx.WaitIfEpochBlock()
 	robustUnjailValidator(t, valKey, valAddr)
 }
 
@@ -249,16 +249,75 @@ func TestF5_RoleChange(t *testing.T) {
 	opts, err := ctx.GetTransactor(key)
 	utils.AssertNoError(t, err, "transactor failed")
 
-	// 2. Resign & Wait & Exit
+	// 2. Resign & Exit
 	txR, err := ctx.Staking.ResignValidator(opts)
 	utils.AssertNoError(t, err, "resign failed")
 	ctx.WaitMined(txR.Hash())
-	// Wait for next epoch boundary so validator is out of active set
-	waitForNextEpochBlock(t)
+	// If still in active set, wait epoch-by-epoch; otherwise proceed immediately.
+	_ = testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 2,
+		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitForNextEpochBlock(t)
+		},
+	}, func() (bool, error) {
+		active, err := ctx.Validators.IsValidatorActive(nil, addr)
+		if err != nil {
+			return false, err
+		}
+		return !active, nil
+	})
 	robustExitValidator(t, key)
 
 	// 3. Delegate to another validator
-	targetVal := common.HexToAddress(ctx.Config.Validators[0].Address)
+	// Pick a currently valid target to avoid transient config/index assumptions.
+	targetVal := common.Address{}
+	minStake, _ := ctx.Proposal.MinValidatorStake(nil)
+	if highest, errHighest := ctx.Validators.GetHighestValidators(nil); errHighest == nil {
+		if top, errTop := ctx.Staking.GetTopValidators(nil, highest); errTop == nil {
+			for _, candidate := range top {
+				if candidate == addr {
+					continue
+				}
+				info, errInfo := ctx.Staking.GetValidatorInfo(nil, candidate)
+				if errInfo != nil || info.SelfStake == nil {
+					continue
+				}
+				if minStake != nil && minStake.Sign() > 0 && info.SelfStake.Cmp(minStake) < 0 {
+					continue
+				}
+				targetVal = candidate
+				break
+			}
+		}
+	}
+	if targetVal == (common.Address{}) {
+		// Fallback to genesis validators when top list is temporarily unavailable.
+		for _, vk := range ctx.GenesisValidators {
+			candidate := crypto.PubkeyToAddress(vk.PublicKey)
+			if candidate == addr {
+				continue
+			}
+			info, errInfo := ctx.Staking.GetValidatorInfo(nil, candidate)
+			if errInfo != nil || info.SelfStake == nil {
+				continue
+			}
+			if minStake != nil && minStake.Sign() > 0 && info.SelfStake.Cmp(minStake) < 0 {
+				continue
+			}
+			targetVal = candidate
+			break
+		}
+	}
+	if targetVal == (common.Address{}) {
+		targetVal = common.HexToAddress(ctx.Config.Validators[0].Address)
+	}
+	infoTarget, errTarget := ctx.Staking.GetValidatorInfo(nil, targetVal)
+	if errTarget != nil || infoTarget.SelfStake == nil ||
+		(minStake != nil && minStake.Sign() > 0 && infoTarget.SelfStake.Cmp(minStake) < 0) {
+		t.Fatalf("selected target validator is not valid: target=%s selfStake=%v minStake=%v err=%v", targetVal.Hex(), infoTarget.SelfStake, minStake, errTarget)
+	}
+	t.Logf("Delegating to target validator %s", targetVal.Hex())
 	robustDelegate(t, key, targetVal, utils.ToWei(10))
 
 	// Verify
@@ -331,7 +390,7 @@ func TestF7_PunishedRedemption(t *testing.T) {
 	}
 
 	// 5. Unjail
-	waitForNextEpochBlock(t)
+	ctx.WaitIfEpochBlock()
 	robustUnjailValidator(t, key, addr)
 
 	// 6. Wait for next epoch to be active in currentValidatorSet

@@ -142,8 +142,22 @@ func TestD_StakingManagement(t *testing.T) {
 
 	// [S-05] Reincarnation
 	t.Run("S-05_Reincarnation", func(t *testing.T) {
-		t.Log("Waiting for fresh epoch...")
-		waitForNextEpochBlock(t)
+		// Only wait for a fresh epoch when we are near an epoch boundary.
+		epochBI, errEpoch := ctx.Proposal.Epoch(nil)
+		header, errHeader := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+		if errEpoch == nil && epochBI != nil && epochBI.Sign() > 0 && errHeader == nil && header != nil {
+			epoch := epochBI.Uint64()
+			if epoch > 0 {
+				mod := header.Number.Uint64() % epoch
+				remaining := epoch - mod
+				if mod == 0 || remaining <= 3 {
+					t.Logf("Near epoch boundary (height=%d, remaining=%d), waiting for next epoch...", header.Number.Uint64(), remaining)
+					waitForNextEpochBlock(t)
+				}
+			}
+		} else {
+			ctx.WaitIfEpochBlock()
+		}
 
 		key, addr, err := createAndRegisterValidator(t, "S-05 Reinc")
 		if err != nil {

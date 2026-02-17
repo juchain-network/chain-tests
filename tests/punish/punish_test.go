@@ -159,7 +159,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	waitBlocks(t, 1)
+	ctx.WaitIfEpochBlock()
 
 	// [P-21] Resign + Double Sign
 	t.Run("P-21_ResignThenDoubleSign", func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestG_DoubleSign(t *testing.T) {
 		ctx.WaitMined(txDS.Hash())
 	})
 
-	waitBlocks(t, 1)
+	ctx.WaitIfEpochBlock()
 
 	// [P-22] Exit + Double Sign
 	t.Run("P-22_ExitThenDoubleSign", func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	waitBlocks(t, 1)
+	ctx.WaitIfEpochBlock()
 
 	// [P-10~P-14] Double Sign Exceptions
 	t.Run("P-10-14_DoubleSignExceptions", func(t *testing.T) {
@@ -300,7 +300,7 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 	})
 
-	waitBlocks(t, 1)
+	ctx.WaitIfEpochBlock()
 
 	// [P-23] Multi-Validator Double Sign (same epoch)
 	t.Run("P-23_MultiValidatorDoubleSign", func(t *testing.T) {

@@ -49,7 +49,7 @@ func getNextProposerOrSkip(t *testing.T, pIndex *int) *ecdsa.PrivateKey {
 			return key
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
+		ctx.WaitIfEpochBlock()
 	}
 	t.Fatalf("no active proposer available")
 	return nil
@@ -309,12 +309,24 @@ func changeConfig(t *testing.T, pIndex *int, cid uint256, val int64, name string
 		}
 	}
 	voteProposalToPass(t, propID, name)
-	waitBlocks(t, 1)
-	finalVal, errFinal := ctx.GetConfigValue(int64(cid))
-	if errFinal != nil {
-		t.Fatalf("read config %s failed: %v", name, errFinal)
-	}
-	if finalVal.Cmp(big.NewInt(val)) != 0 {
+	err = testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 4,
+		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
+	}, func() (bool, error) {
+		finalVal, errFinal := ctx.GetConfigValue(int64(cid))
+		if errFinal != nil {
+			return false, errFinal
+		}
+		return finalVal.Cmp(big.NewInt(val)) == 0, nil
+	})
+	if err != nil {
+		finalVal, errFinal := ctx.GetConfigValue(int64(cid))
+		if errFinal != nil {
+			t.Fatalf("read config %s failed: %v", name, errFinal)
+		}
 		t.Fatalf("config %s not applied: expected %d, got %v", name, val, finalVal)
 	}
 }
@@ -563,7 +575,7 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 		// Wait for epoch boundary to trigger validator set update.
 		waitForNextEpochBlock(t)
 		t.Log("Wait 1 extra block for state propagation...")
-		waitBlocks(t, 1)
+		ctx.WaitIfEpochBlock()
 
 		// Poll for voting count decrease for up to 20 blocks.
 		for i := 0; i < 20; i++ {

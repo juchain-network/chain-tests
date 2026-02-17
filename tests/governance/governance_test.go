@@ -74,7 +74,7 @@ func TestB_Governance(t *testing.T) {
 				}
 			}
 			waitForNextEpochBlock(t)
-			waitBlocks(t, 1)
+			ctx.WaitIfEpochBlock()
 		}
 		return nil
 	}
@@ -170,8 +170,8 @@ func TestB_Governance(t *testing.T) {
 					}
 					t.Fatalf("%s failed: vote tx from %s: %v", name, voterAddr.Hex(), errW)
 				}
-				// Wait 1 block for state to settle
-				waitBlocks(t, 1)
+				// Avoid epoch boundary restrictions for the next vote.
+				ctx.WaitIfEpochBlock()
 				votes++
 				continue voterLoop
 			}
@@ -438,9 +438,6 @@ func TestB_Governance(t *testing.T) {
 		}
 		t.Log("Cooldown triggered correctly")
 
-		t.Log("Waiting for cooldown to expire...")
-		waitBlocks(t, 2)
-
 		updateConfigAndWait(t, 19, 1, "ProposalCooldown=1")
 	})
 
@@ -497,10 +494,10 @@ func TestB_Governance(t *testing.T) {
 		if remaining < minRemaining {
 			t.Logf("Not enough blocks in current epoch (%d remaining, need >=%d), waiting for next epoch...", remaining, minRemaining)
 			waitForNextEpochBlock(t)
-			waitBlocks(t, 1)
+			ctx.WaitIfEpochBlock()
 		} else if blocksInto == 0 {
 			// Avoid onlyNotEpoch reverts on epoch blocks.
-			waitBlocks(t, 1)
+			ctx.WaitIfEpochBlock()
 		}
 
 		v1Key, v1Addr, err := ctx.CreateAndFundAccount(utils.ToWei(100005))

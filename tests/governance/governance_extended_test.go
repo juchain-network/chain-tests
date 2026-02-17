@@ -164,17 +164,25 @@ func TestB_Governance_Extended(t *testing.T) {
 		}
 
 		// 5. Verify Execution
-		waitBlocks(t, 1)
-
 		vCount, _ := ctx.Validators.GetVotingValidatorCount(nil)
 		t.Logf("G-14 Threshold check: voting validators = %d", vCount)
 
 		// Revert config change to original burn address
-		opts1, _ = ctx.GetTransactor(proposerKey)
-		waitNextBlock()
 		origVal := new(big.Int).SetBytes(origBurn.Bytes())
-		txReset, err := ctx.Proposal.CreateUpdateConfigProposal(opts1, big.NewInt(14), origVal)
-		if err == nil {
+		var txReset *types.Transaction
+		for retry := 0; retry < 4; retry++ {
+			opts1, _ = ctx.GetTransactor(proposerKey)
+			txReset, err = ctx.Proposal.CreateUpdateConfigProposal(opts1, big.NewInt(14), origVal)
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), "Proposal creation too frequent") {
+				waitNextBlock()
+				continue
+			}
+			break
+		}
+		if err == nil && txReset != nil {
 			ctx.WaitMined(txReset.Hash())
 			recReset, _ := ctx.Clients[0].TransactionReceipt(context.Background(), txReset.Hash())
 			var idReset [32]byte
@@ -189,6 +197,8 @@ func TestB_Governance_Extended(t *testing.T) {
 				ctx.Proposal.VoteProposal(vo, idReset, true)
 			}
 			waitNextBlock()
+		} else if err != nil {
+			t.Logf("Skip reset burn config due to proposal error: %v", err)
 		}
 	})
 

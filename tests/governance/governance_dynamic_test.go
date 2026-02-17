@@ -312,9 +312,6 @@ func changeConfig(t *testing.T, pIndex *int, cid uint256, val int64, name string
 	err = testkit.WaitUntil(testkit.WaitUntilOptions{
 		MaxAttempts: 4,
 		Interval:    retrySleep(),
-		OnRetry: func(int) {
-			waitBlocks(t, 1)
-		},
 	}, func() (bool, error) {
 		finalVal, errFinal := ctx.GetConfigValue(int64(cid))
 		if errFinal != nil {

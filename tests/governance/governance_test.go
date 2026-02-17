@@ -233,9 +233,6 @@ func TestB_Governance(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
 			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			current, err := ctx.GetConfigValue(int64(cid))
 			if err != nil {
@@ -300,9 +297,6 @@ func TestB_Governance(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
 			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			proposalID = getPropID(tx)
 			return proposalID != ([32]byte{}), nil
@@ -316,9 +310,6 @@ func TestB_Governance(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
 			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			pass, err := ctx.Proposal.Pass(nil, dst)
 			if err != nil {

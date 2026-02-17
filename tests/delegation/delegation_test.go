@@ -79,9 +79,6 @@ func TestE_Delegation(t *testing.T) {
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
 			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			info, err = ctx.Staking.GetDelegationInfo(nil, userAddr, valAddr)
 			if err != nil {

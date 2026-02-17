@@ -282,8 +282,13 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 			mined = true
 			break
 		}
-		if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
-			waitBlocks(t, 1)
+		if strings.Contains(err.Error(), "Proposal creation too frequent") {
+			waitProposalCooldownFor(t, proposerAddr)
+			continue
+		}
+		if strings.Contains(err.Error(), "nonce too low") {
+			ctx.RefreshNonce(proposerAddr)
+			waitNextBlock()
 			continue
 		}
 		return err

@@ -132,37 +132,37 @@ func TestF3_WithdrawProfits(t *testing.T) {
 		ctx.EnsureConfig(4, big.NewInt(2), period)
 		period, err = ctx.Proposal.WithdrawProfitPeriod(nil)
 		utils.AssertNoError(t, err, "failed to read withdraw profit period after update")
-		maxAttempts := 6
-		if period != nil && period.Sign() > 0 {
-			maxAttempts = int(period.Uint64()) + 4
+		_, _, incomingNow, _, lastWithdrawBlock, err := ctx.Validators.GetValidatorInfo(nil, proposerAddr)
+		utils.AssertNoError(t, err, "failed to read validator info before withdraw")
+		if incomingNow.Cmp(big.NewInt(0)) <= 0 {
+			t.Skip("no incoming fees available for withdraw")
 		}
-		if maxAttempts < 3 {
-			maxAttempts = 3
+		if period != nil && period.Sign() > 0 && lastWithdrawBlock != nil && lastWithdrawBlock.Sign() > 0 {
+			curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+			utils.AssertNoError(t, err, "failed to read current block before withdraw")
+			targetHeight := new(big.Int).Add(lastWithdrawBlock, period).Uint64()
+			if curHeight < targetHeight {
+				waitBlocks(t, int(targetHeight-curHeight))
+			}
 		}
-		if maxAttempts > 20 {
-			maxAttempts = 20
-		}
-		err = testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: maxAttempts,
-			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
+
+		withdrawn := false
+		for attempt := 0; attempt < 4; attempt++ {
 			opts, err := ctx.GetTransactor(proposerKey)
 			if err != nil {
-				return false, nil
+				waitBlocks(t, 1)
+				continue
 			}
 			tx, err := ctx.Validators.WithdrawProfits(opts, proposerAddr)
-			if err != nil {
-				return false, nil
+			if err == nil && ctx.WaitMined(tx.Hash()) == nil {
+				withdrawn = true
+				break
 			}
-			if err := ctx.WaitMined(tx.Hash()); err != nil {
-				return false, nil
+			if attempt < 3 {
+				waitBlocks(t, 1)
 			}
-			return true, nil
-		})
-		utils.AssertNoError(t, err, "withdraw profits did not become available in time")
+		}
+		utils.AssertTrue(t, withdrawn, "withdraw profits did not become available in time")
 
 		opts, err := ctx.GetTransactor(proposerKey)
 		utils.AssertNoError(t, err, "failed to get transactor for second withdraw")

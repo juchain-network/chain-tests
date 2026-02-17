@@ -176,9 +176,6 @@ func TestE_Delegation(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
 			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			infoAfter, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
 			if err != nil {
@@ -325,9 +322,6 @@ func TestE_Delegation(t *testing.T) {
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 3,
 				Interval:    retryAfterBlockInterval(),
-				OnRetry: func(int) {
-					waitBlocks(t, 1)
-				},
 			}, func() (bool, error) {
 				isVal, err := ctx.Validators.IsValidatorExist(nil, userAddr)
 				if err != nil {
@@ -544,9 +538,6 @@ func TestE_Delegation(t *testing.T) {
 				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 					MaxAttempts: 3,
 					Interval:    retryAfterBlockInterval(),
-					OnRetry: func(int) {
-						waitBlocks(t, 1)
-					},
 				}, func() (bool, error) {
 					var err error
 					curCnt, err = ctx.Staking.GetUnbondingEntriesCount(nil, userAddr, valAddr)

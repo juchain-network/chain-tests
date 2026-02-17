@@ -83,9 +83,6 @@ func TestH_Robustness(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
 			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			info, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
 			if err != nil {
@@ -139,9 +136,6 @@ func TestH_Robustness(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 4,
 			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			propID = getPropID(tx)
 			return propID != ([32]byte{}), nil
@@ -152,9 +146,6 @@ func TestH_Robustness(t *testing.T) {
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
 			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			p, err := ctx.Proposal.Proposals(nil, propID)
 			if err != nil {

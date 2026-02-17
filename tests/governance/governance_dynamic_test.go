@@ -430,21 +430,36 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 	period, _ := ctx.Proposal.ProposalLastingPeriod(nil)
 	if period.Sign() > 0 {
 		t.Logf("Waiting for expiry condition (period=%s)...", period.String())
-		maxAttempts := int(period.Int64()) + 6
-		if maxAttempts < 6 {
-			maxAttempts = 6
+		proposal, err := ctx.Proposal.Proposals(nil, propID2)
+		utils.AssertNoError(t, err, "read proposal failed")
+		if proposal.CreateBlock == nil || proposal.CreateBlock.Sign() <= 0 {
+			t.Fatalf("proposal create block unavailable")
 		}
-		err := testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: maxAttempts,
-			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
-			return proposalExpired(propID2)
-		})
+
+		target := new(big.Int).Add(proposal.CreateBlock, period)
+		target.Add(target, big.NewInt(1))
+		curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+		utils.AssertNoError(t, err, "read current block failed")
+		if target.IsUint64() {
+			targetHeight := target.Uint64()
+			if curHeight < targetHeight {
+				waitBlocks(t, int(targetHeight-curHeight))
+			}
+		}
+
+		expired, err := proposalExpired(propID2)
 		if err != nil {
-			t.Fatalf("wait proposal expiry failed: %v", err)
+			t.Fatalf("check proposal expiry failed: %v", err)
+		}
+		if !expired {
+			waitBlocks(t, 1)
+			expired, err = proposalExpired(propID2)
+			if err != nil {
+				t.Fatalf("check proposal expiry failed after extra block: %v", err)
+			}
+			if !expired {
+				t.Fatalf("proposal did not expire in expected window")
+			}
 		}
 		optsV, _ := ctx.GetTransactor(ctx.GenesisValidators[0])
 		_, err = ctx.Proposal.VoteProposal(optsV, propID2, true)

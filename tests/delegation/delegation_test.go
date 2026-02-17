@@ -364,41 +364,25 @@ func TestE_Delegation(t *testing.T) {
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		current, _ := ctx.Clients[0].BlockNumber(context.Background())
 		targetHeight := uint64(0)
-		if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
-			targetHeight = info.JailUntilBlock.Uint64() + 1
-		} else if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
-			targetHeight = current + unjailPeriod.Uint64() + 1
+		if info.IsJailed {
+			if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+				targetHeight = info.JailUntilBlock.Uint64() + 1
+			} else if unjailPeriod != nil && unjailPeriod.Sign() > 0 {
+				targetHeight = current + unjailPeriod.Uint64() + 1
+			}
 		}
-		maxAttempts := 2
 		if targetHeight > current {
-			maxAttempts = int(targetHeight-current) + 2
+			waitBlocks(t, int(targetHeight-current))
 		}
-		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: maxAttempts,
-			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
-			curInfo, err := ctx.Staking.GetValidatorInfo(nil, addr)
-			if err != nil {
-				return false, err
-			}
-			if !curInfo.IsJailed {
-				return true, nil
-			}
-			h, err := ctx.Clients[0].BlockNumber(context.Background())
-			if err != nil {
-				return false, err
-			}
-			if curInfo.JailUntilBlock != nil && curInfo.JailUntilBlock.Sign() > 0 {
-				return h >= curInfo.JailUntilBlock.Uint64(), nil
-			}
-			if targetHeight == 0 {
-				return true, nil
-			}
-			return h >= targetHeight, nil
-		})
+		curInfo, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		utils.AssertNoError(t, errInfo, "read validator info failed after jail wait")
+		h, errHeight := ctx.Clients[0].BlockNumber(context.Background())
+		utils.AssertNoError(t, errHeight, "read current block failed after jail wait")
+		if curInfo.JailUntilBlock != nil && curInfo.JailUntilBlock.Sign() > 0 {
+			utils.AssertTrue(t, h >= curInfo.JailUntilBlock.Uint64(), "jail period wait failed")
+		} else if targetHeight > 0 {
+			utils.AssertTrue(t, h >= targetHeight, "jail period wait failed")
+		}
 		active, _ := ctx.Validators.IsValidatorActive(nil, addr)
 		if active {
 			waitForNextEpochBlock(t)

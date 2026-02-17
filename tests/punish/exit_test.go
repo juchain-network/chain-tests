@@ -7,7 +7,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
 
@@ -242,20 +241,15 @@ func TestF5_RoleChange(t *testing.T) {
 	txR, err := ctx.Staking.ResignValidator(opts)
 	utils.AssertNoError(t, err, "resign failed")
 	ctx.WaitMined(txR.Hash())
-	// If still in active set, wait epoch-by-epoch; otherwise proceed immediately.
-	_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-		MaxAttempts: 2,
-		Interval:    retrySleep(),
-		OnRetry: func(int) {
-			waitForNextEpochBlock(t)
-		},
-	}, func() (bool, error) {
-		active, err := ctx.Validators.IsValidatorActive(nil, addr)
-		if err != nil {
-			return false, err
-		}
-		return !active, nil
-	})
+	// If still in active set, cross one epoch and re-check.
+	active, err := ctx.Validators.IsValidatorActive(nil, addr)
+	utils.AssertNoError(t, err, "failed to query active status after resign")
+	if active {
+		waitForNextEpochBlock(t)
+		active, err = ctx.Validators.IsValidatorActive(nil, addr)
+		utils.AssertNoError(t, err, "failed to query active status after epoch wait")
+	}
+	utils.AssertTrue(t, !active, "validator should be inactive before exit")
 	robustExitValidator(t, key)
 
 	// 3. Delegate to another validator
@@ -371,22 +365,15 @@ func TestF7_PunishedRedemption(t *testing.T) {
 	ctx.WaitIfEpochBlock()
 	robustUnjailValidator(t, key, addr)
 
-	// 6. Wait for next epoch to be active in currentValidatorSet
-	_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-		MaxAttempts: 2,
-		Interval:    retrySleep(),
-		OnRetry: func(int) {
-			waitForNextEpochBlock(t)
-		},
-	}, func() (bool, error) {
-		status, err := ctx.Validators.IsValidatorActive(nil, addr)
-		if err != nil {
-			return false, err
-		}
-		return status, nil
-	})
+	// 6. Become active in currentValidatorSet (allow one epoch transition).
+	status, err := ctx.Validators.IsValidatorActive(nil, addr)
+	utils.AssertNoError(t, err, "failed to query active status after unjail")
+	if !status {
+		waitForNextEpochBlock(t)
+		status, err = ctx.Validators.IsValidatorActive(nil, addr)
+		utils.AssertNoError(t, err, "failed to query active status after epoch wait")
+	}
 
 	// 7. Verify Active
-	status, _ := ctx.Validators.IsValidatorActive(nil, addr)
 	utils.AssertTrue(t, status, "Should be active after redemption")
 }

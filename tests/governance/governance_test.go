@@ -120,9 +120,19 @@ func TestB_Governance(t *testing.T) {
 				vo, _ := ctx.GetTransactor(vk)
 				txV, errV := ctx.Proposal.VoteProposal(vo, propID, true)
 				if errV != nil {
-					if strings.Contains(errV.Error(), "Epoch block forbidden") || strings.Contains(errV.Error(), "too frequent") || strings.Contains(errV.Error(), "nonce") {
+					if strings.Contains(errV.Error(), "Epoch block forbidden") {
 						ctx.RefreshNonce(voterAddr)
-						waitBlocks(t, 1)
+						ctx.WaitIfEpochBlock()
+						continue
+					}
+					if strings.Contains(errV.Error(), "too frequent") {
+						ctx.RefreshNonce(voterAddr)
+						waitProposalCooldownFor(t, voterAddr)
+						continue
+					}
+					if strings.Contains(errV.Error(), "nonce") {
+						ctx.RefreshNonce(voterAddr)
+						waitNextBlock()
 						continue
 					}
 					if strings.Contains(errV.Error(), "You can't vote for a proposal twice") {
@@ -140,7 +150,7 @@ func TestB_Governance(t *testing.T) {
 				broadcastTx(txV)
 				if errW := ctx.WaitMined(txV.Hash()); errW != nil {
 					if strings.Contains(errW.Error(), "Epoch block forbidden") {
-						waitBlocks(t, 1)
+						ctx.WaitIfEpochBlock()
 						lastErr = errW
 						continue
 					}

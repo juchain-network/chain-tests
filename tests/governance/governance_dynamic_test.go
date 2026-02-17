@@ -108,7 +108,7 @@ func robustVoteTx(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, aut
 					if t != nil {
 						t.Log("robustVoteTx: Hit epoch block, retrying...")
 					}
-					waitBlocks(t, 1)
+					ctx.WaitIfEpochBlock()
 					continue
 				}
 				// Dynamic threshold or concurrent voting may already finalize proposal.
@@ -146,7 +146,7 @@ func robustVoteTx(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, aut
 			if t != nil {
 				t.Log("robustVoteTx: Hit epoch block, retrying...")
 			}
-			waitBlocks(t, 1)
+			ctx.WaitIfEpochBlock()
 			continue
 		}
 		if strings.Contains(err.Error(), "Proposal already passed") {
@@ -159,7 +159,7 @@ func robustVoteTx(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, aut
 		// If nonce too low or other transient error, wait and retry
 		if strings.Contains(err.Error(), "nonce too low") {
 			ctx.RefreshNonce(voterAddr)
-			waitBlocks(t, 1)
+			waitNextBlock()
 			continue
 		}
 	}

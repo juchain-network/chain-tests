@@ -289,7 +289,6 @@ func TestE_Delegation(t *testing.T) {
 				lastErr = err
 				if strings.Contains(err.Error(), "Epoch block forbidden") {
 					ctx.WaitIfEpochBlock()
-					waitBlocks(t, 1)
 					continue
 				}
 				if strings.Contains(err.Error(), "Too many new validators") {
@@ -303,12 +302,11 @@ func TestE_Delegation(t *testing.T) {
 				lastErr = errW
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
 					ctx.WaitIfEpochBlock()
-					waitBlocks(t, 1)
 					continue
 				}
 				if strings.Contains(errW.Error(), "revert") || strings.Contains(errW.Error(), "reverted") {
 					ctx.RefreshNonce(userAddr)
-					waitBlocks(t, 1)
+					ctx.WaitIfEpochBlock()
 				}
 				continue
 			}

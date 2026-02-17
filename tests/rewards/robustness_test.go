@@ -48,7 +48,7 @@ func TestH_Robustness(t *testing.T) {
 			tx, err := ctx.Staking.ResignValidator(opts)
 			if err != nil {
 				if strings.Contains(err.Error(), "Epoch block forbidden") {
-					waitBlocks(t, 1)
+					ctx.WaitIfEpochBlock()
 					continue
 				}
 				if strings.Contains(err.Error(), "active set") {
@@ -198,7 +198,6 @@ func createAndRegisterValidatorStable(t *testing.T, baseName string, attempts in
 		}
 		if strings.Contains(msg, "Epoch block forbidden") {
 			ctx.WaitIfEpochBlock()
-			waitBlocks(t, 1)
 			continue
 		}
 		if strings.Contains(msg, "revert") || strings.Contains(msg, "already") {

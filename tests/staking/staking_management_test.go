@@ -261,9 +261,6 @@ func TestD_StakingManagement(t *testing.T) {
 		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
 			Interval:    retrySleep(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
 		}, func() (bool, error) {
 			pass, err := ctx.Proposal.Pass(nil, addr)
 			if err != nil {

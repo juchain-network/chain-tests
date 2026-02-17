@@ -70,9 +70,6 @@ func TestA_SystemConfigSetup(t *testing.T) {
 			err = testkit.WaitUntil(testkit.WaitUntilOptions{
 				MaxAttempts: 4,
 				Interval:    retrySleep(),
-				OnRetry: func(int) {
-					waitBlocks(t, 1)
-				},
 			}, func() (bool, error) {
 				current, err = ctx.GetConfigValue(target.cid)
 				if err != nil {

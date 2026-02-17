@@ -122,23 +122,7 @@ func TestE_Delegation(t *testing.T) {
 		if completion > 0 {
 			curHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
 			if curHeight < completion {
-				maxAttempts := int(completion-curHeight) + 2
-				if maxAttempts < 2 {
-					maxAttempts = 2
-				}
-				_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-					MaxAttempts: maxAttempts,
-					Interval:    retryAfterBlockInterval(),
-					OnRetry: func(int) {
-						waitBlocks(t, 1)
-					},
-				}, func() (bool, error) {
-					h, err := ctx.Clients[0].BlockNumber(context.Background())
-					if err != nil {
-						return false, err
-					}
-					return h >= completion, nil
-				})
+				waitBlocks(t, int(completion-curHeight))
 			}
 		}
 

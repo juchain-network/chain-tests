@@ -98,17 +98,6 @@ func TestH_Robustness(t *testing.T) {
 		key, addr, err := createAndRegisterValidatorStable(t, "ZeroDelegation", 3)
 		utils.AssertNoError(t, err, "failed to setup validator")
 
-		_ = testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: 2,
-			Interval:    retryAfterBlockInterval(),
-		}, func() (bool, error) {
-			info, err := ctx.Staking.GetValidatorInfo(nil, addr)
-			if err != nil {
-				return false, err
-			}
-			return info.AccumulatedRewards.Sign() > 0, nil
-		})
-
 		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
 		t.Logf("Validator %s accumulated: %s", addr.Hex(), info.AccumulatedRewards.String())
 

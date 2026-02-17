@@ -38,7 +38,7 @@ func TestB_Governance_Extended(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				t.Log("G-04 creation hit cooldown, waiting 1 block...")
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, opts.From)
 				continue
 			}
 			t.Fatalf("create proposal failed: %v", err)
@@ -96,7 +96,7 @@ func TestB_Governance_Extended(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				t.Log("G-14 Config hit cooldown, waiting 1 block...")
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, opts1.From)
 				continue
 			}
 			t.Fatalf("config proposal failed: %v", err)
@@ -117,7 +117,7 @@ func TestB_Governance_Extended(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
 				t.Log("G-14 Validator hit cooldown, waiting 1 block...")
-				waitBlocks(t, 1)
+				waitProposalCooldownFor(t, opts2.From)
 				continue
 			}
 			t.Fatalf("validator proposal failed: %v", err)
@@ -177,7 +177,7 @@ func TestB_Governance_Extended(t *testing.T) {
 				break
 			}
 			if strings.Contains(err.Error(), "Proposal creation too frequent") {
-				waitNextBlock()
+				waitProposalCooldownFor(t, opts1.From)
 				continue
 			}
 			break

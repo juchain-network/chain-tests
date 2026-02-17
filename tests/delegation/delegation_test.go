@@ -137,24 +137,31 @@ func TestE_Delegation(t *testing.T) {
 		t.Logf("Initial accumulated rewards: %s", infoBefore.AccumulatedRewards.String())
 		claimedBefore := new(big.Int).Set(infoBefore.TotalClaimedRewards)
 
-		err := testkit.WaitUntil(testkit.WaitUntilOptions{
-			MaxAttempts: rewardAccrualAttemptBudget(),
-			Interval:    retryAfterBlockInterval(),
-			OnRetry: func(int) {
-				waitBlocks(t, 1)
-			},
-		}, func() (bool, error) {
+		maxAccrualAttempts := rewardAccrualAttemptBudget()
+		accrued := false
+		var lastAccrualErr error
+		for attempt := 0; attempt < maxAccrualAttempts; attempt++ {
 			infoNow, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
 			if err != nil {
-				return false, err
+				lastAccrualErr = err
+			} else if infoNow.AccumulatedRewards.Sign() > 0 {
+				accrued = true
+				break
 			}
-			return infoNow.AccumulatedRewards.Sign() > 0, nil
-		})
-		utils.AssertNoError(t, err, "validator rewards should accrue before claim")
+			if attempt < maxAccrualAttempts-1 {
+				waitBlocks(t, 1)
+			}
+		}
+		if !accrued {
+			if lastAccrualErr != nil {
+				t.Fatalf("validator rewards should accrue before claim: %v", lastAccrualErr)
+			}
+			t.Fatal("validator rewards should accrue before claim")
+		}
 
 		robustClaimValidatorRewards(t, valKey)
 
-		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 3,
 			Interval:    retryAfterBlockInterval(),
 		}, func() (bool, error) {

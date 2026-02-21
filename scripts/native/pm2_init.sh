@@ -11,7 +11,21 @@ GENESIS_FILE="$DATA_DIR/genesis.json"
 ENV_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 LOG_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.log_dir" "./data/native-logs")")"
 
-GETH_BINARY="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "./docker/juchain")")"
+CHAIN_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")")"
+GETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")"
+GETH_CANDIDATES=()
+if [[ -n "$GETH_BINARY_CFG" ]]; then
+  GETH_CANDIDATES+=("$(to_abs_path "$GETH_BINARY_CFG")")
+fi
+GETH_CANDIDATES+=("$CHAIN_ROOT/build/bin/geth")
+
+GETH_BINARY=""
+for candidate in "${GETH_CANDIDATES[@]}"; do
+  if [[ -x "$candidate" ]]; then
+    GETH_BINARY="$candidate"
+    break
+  fi
+done
 NETWORK_ID="$(cfg_get "$CONFIG_FILE" "native.network_id" "666666")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
@@ -34,7 +48,7 @@ S1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.sync_ws" "18555")"
 S1_ENGINE="$(cfg_get "$CONFIG_FILE" "native.ports.sync_engine" "18556")"
 S1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.sync_p2p" "30307")"
 
-[[ -x "$GETH_BINARY" ]] || die "geth binary not found or not executable: $GETH_BINARY"
+[[ -x "$GETH_BINARY" ]] || die "geth binary not found. tried: ${GETH_CANDIDATES[*]}"
 [[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
 
 for i in 0 1 2 3; do
@@ -134,4 +148,3 @@ SYNCNODE_P2P_PORT=$S1_P2P
 EOF
 
 log "native pm2 env generated: $ENV_FILE"
-

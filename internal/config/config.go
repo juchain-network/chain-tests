@@ -11,6 +11,10 @@ type Config struct {
 	RPCs []string `yaml:"rpcs"` // List of RPC endpoints (e.g., node 1, node 2...)
 	// Optional: Per-validator RPCs aligned with Validators order.
 	ValidatorRPCs []string `yaml:"validator_rpcs"`
+	// Optional: Dedicated sync-node RPC endpoint.
+	SyncRPC string `yaml:"sync_rpc"`
+	// Optional: Explicit per-node RPC endpoints for multi-node health checks.
+	NodeRPCs []NodeRPC `yaml:"node_rpcs"`
 
 	Network struct {
 		Epoch uint64 `yaml:"epoch"`
@@ -36,6 +40,9 @@ type Config struct {
 			RetryPollMS int64 `yaml:"retry_poll_ms"` // Poll interval for retry loops
 			BlockPollMS int64 `yaml:"block_poll_ms"` // Poll interval for block progress checks
 		} `yaml:"timing"`
+		Smoke struct {
+			ObserveSeconds int64 `yaml:"observe_seconds"` // Smoke observe window in seconds
+		} `yaml:"smoke"`
 		Params struct {
 			ProposalCooldown   int64 `yaml:"proposal_cooldown"`
 			UnbondingPeriod    int64 `yaml:"unbonding_period"`
@@ -45,6 +52,12 @@ type Config struct {
 			ProposalLasting    int64 `yaml:"proposal_lasting_period"`
 		} `yaml:"params"`
 	} `yaml:"test"`
+}
+
+type NodeRPC struct {
+	Name string `yaml:"name"`
+	Role string `yaml:"role"`
+	URL  string `yaml:"url"`
 }
 
 func LoadConfig(path string) (*Config, error) {

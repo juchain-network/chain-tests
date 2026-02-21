@@ -52,9 +52,23 @@ logp "checking bytecode consistency..."
 node "$CHECK_SCRIPT" --out-dir "$CHAIN_CONTRACT_OUT" --bytecode-go "$BYTECODE_GO"
 
 if [[ "$BACKEND" == "native" ]]; then
-  GETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "../chain/build/bin/geth")"
-  GETH_BIN="$(to_abs_path "$GETH_BIN_CFG")"
-  [[ -x "$GETH_BIN" ]] || diep "native.geth_binary not found or not executable: $GETH_BIN"
+  GETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")"
+  CANDIDATES=()
+  if [[ -n "$GETH_BIN_CFG" ]]; then
+    CANDIDATES+=("$(to_abs_path "$GETH_BIN_CFG")")
+  fi
+  CANDIDATES+=("$CHAIN_ROOT/build/bin/geth")
+
+  GETH_BIN=""
+  for candidate in "${CANDIDATES[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      GETH_BIN="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$GETH_BIN" ]]; then
+    diep "native.geth_binary not found. Tried: ${CANDIDATES[*]}"
+  fi
 
   newest_ref="$BYTECODE_GO"
   newest_ts="$(file_mtime "$BYTECODE_GO")"

@@ -19,3 +19,5 @@ network:
 
 test:
   funding_amount: "100000000000000000000" # 100 ETH
+  smoke:
+    observe_seconds: 300

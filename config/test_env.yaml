@@ -2,9 +2,9 @@ runtime:
   backend: native
 
 paths:
-  chain_root: "../chain"
-  chain_contract_root: "../chain-contract"
-  chain_contract_out: "../chain-contract/out"
+  chain_root: "/Users/litian/code/work/github/chain"
+  chain_contract_root: "/Users/litian/code/work/github/chain-contract"
+  chain_contract_out: "/Users/litian/code/work/github/chain-contract/out"
   chain_docker_binary: ""
 
 network:
@@ -27,7 +27,7 @@ native:
   init_script: "./scripts/native/pm2_init.sh"
   ecosystem_file: "./native/ecosystem.config.js"
   env_file: "./data/native/.env"
-  geth_binary: "../chain/build/bin/geth"
+  geth_binary: "/Users/litian/code/work/github/chain/build/bin/geth"
   network_id: 666666
   external_rpc: "http://localhost:18545"
   pm2_namespace: "ju-chain"
@@ -53,6 +53,8 @@ native:
 tests:
   profile: fast
   timeout: "30m"
+  smoke:
+    observe_seconds: 300
   reset_before_each_case: true
   epoch_overrides:
     groups:

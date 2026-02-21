@@ -32,10 +32,20 @@ PROFILE_VALIDATOR_UNJAIL_PERIOD="$(profile_get "validator_unjail_period" "3")"
 PROFILE_WITHDRAW_PROFIT_PERIOD="$(profile_get "withdraw_profit_period" "2")"
 PROFILE_COMMISSION_UPDATE_COOLDOWN="$(profile_get "commission_update_cooldown" "1")"
 PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
+SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
+V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
+V1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_p2p" "30301")"
 V2_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_http" "18547")"
+V2_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_ws" "18548")"
+V2_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_p2p" "30303")"
 V3_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_http" "18549")"
+V3_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_ws" "18553")"
+V3_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_p2p" "30305")"
+S1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.sync_http" "18551")"
+S1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.sync_ws" "18555")"
+S1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.sync_p2p" "30307")"
 
 CFG_CONTRACT_ROOT="$(cfg_get "$CONFIG_FILE" "paths.chain_contract_root" "../chain-contract")"
 CFG_CONTRACT_OUT="$(cfg_get "$CONFIG_FILE" "paths.chain_contract_out" "")"
@@ -66,9 +76,10 @@ for v in \
     "$PROFILE_VALIDATOR_UNJAIL_PERIOD" \
     "$PROFILE_WITHDRAW_PROFIT_PERIOD" \
     "$PROFILE_COMMISSION_UPDATE_COOLDOWN" \
-    "$PROFILE_PROPOSAL_LASTING_PERIOD"; do
+    "$PROFILE_PROPOSAL_LASTING_PERIOD" \
+    "$SMOKE_OBSERVE_SECONDS"; do
     if ! [[ "$v" =~ ^[0-9]+$ ]] || [ "$v" -le 0 ]; then
-        die "test profile values must be positive integers, got: $v"
+        die "test timing/profile values must be positive integers, got: $v"
     fi
 done
 
@@ -285,12 +296,30 @@ echo "  - \"http://localhost:${V3_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
 
 cat >> "$DATA_DIR/test_config.yaml" <<EOF
 
+sync_rpc: "http://localhost:${S1_HTTP}"
+
+node_rpcs:
+  - name: "validator1"
+    role: "validator"
+    url: "http://localhost:${V1_HTTP}"
+  - name: "validator2"
+    role: "validator"
+    url: "http://localhost:${V2_HTTP}"
+  - name: "validator3"
+    role: "validator"
+    url: "http://localhost:${V3_HTTP}"
+  - name: "sync"
+    role: "sync"
+    url: "http://localhost:${S1_HTTP}"
+
 network:
   epoch: $NETWORK_EPOCH
 
 test:
   profile: "$TEST_PROFILE"
   funding_amount: "100000000000000000000" # 100 ETH
+  smoke:
+    observe_seconds: $SMOKE_OBSERVE_SECONDS
   params:
     proposal_cooldown: $PROFILE_PROPOSAL_COOLDOWN
     unbonding_period: $PROFILE_UNBONDING_PERIOD
@@ -300,21 +329,61 @@ test:
     proposal_lasting_period: $PROFILE_PROPOSAL_LASTING_PERIOD
 EOF
 
-awk '
-  /^  node0:$/ { in_node0=1; in_node3=0 }
-  /^  node1:$/ || /^  node2:$/ { in_node0=0; in_node3=0 }
-  /^  node3:$/ { in_node3=1; in_node0=0 }
-  in_node3 && skip_ports {
-    if ($0 ~ /^      -/) { next }
-    skip_ports=0
-  }
-  in_node3 && $0 ~ /^    ports:/ { skip_ports=1; next }
-  in_node3 && !inserted && $0 ~ /^    volumes:/ {
+awk \
+  -v v1_http="$V1_HTTP" -v v1_ws="$V1_WS" -v v1_p2p="$V1_P2P" \
+  -v v2_http="$V2_HTTP" -v v2_ws="$V2_WS" -v v2_p2p="$V2_P2P" \
+  -v v3_http="$V3_HTTP" -v v3_ws="$V3_WS" -v v3_p2p="$V3_P2P" \
+  -v s1_http="$S1_HTTP" -v s1_ws="$S1_WS" -v s1_p2p="$S1_P2P" '
+  function print_ports(node) {
     print "    ports:"
-    print "      - \"18545:8545\""
-    print "      - \"18546:8546\" # WS"
-    inserted=1
+    if (node == "node0") {
+      print "      - \"" v1_http ":8545\""
+      print "      - \"" v1_ws ":8546\" # WS"
+      print "      - \"" v1_p2p ":30303\" # P2P"
+    } else if (node == "node1") {
+      print "      - \"" v2_http ":8545\""
+      print "      - \"" v2_ws ":8546\" # WS"
+      print "      - \"" v2_p2p ":30303\" # P2P"
+    } else if (node == "node2") {
+      print "      - \"" v3_http ":8545\""
+      print "      - \"" v3_ws ":8546\" # WS"
+      print "      - \"" v3_p2p ":30303\" # P2P"
+    } else if (node == "node3") {
+      print "      - \"" s1_http ":8545\""
+      print "      - \"" s1_ws ":8546\" # WS"
+      print "      - \"" s1_p2p ":30303\" # P2P"
+    }
   }
+
+  /^  node[0-3]:$/ {
+    current_node = substr($1, 1, length($1) - 1)
+    skip_ports = 0
+    inserted = 0
+  }
+
+  current_node != "" && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  node[0-3]:$/ {
+    current_node = ""
+    skip_ports = 0
+    inserted = 0
+  }
+
+  current_node != "" && skip_ports {
+    if ($0 ~ /^      -/) {
+      next
+    }
+    skip_ports = 0
+  }
+
+  current_node != "" && $0 ~ /^    ports:/ {
+    skip_ports = 1
+    next
+  }
+
+  current_node != "" && !inserted && $0 ~ /^    volumes:/ {
+    print_ports(current_node)
+    inserted = 1
+  }
+
   { print }
 ' "$ROOT_DIR/docker/docker-compose.yml" > "$DATA_DIR/docker-compose.runtime.yml"
 

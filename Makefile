@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
-        test-config test-governance test-staking test-delegation test-punish \
+        test-smoke test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
@@ -38,7 +38,7 @@ SLOW_THRESHOLD ?=
 SLOW_FAIL ?=
 GROUP_THRESHOLDS ?=
 GROUP_THRESHOLD_FAIL ?=
-CI_BUDGET_GROUP_THRESHOLDS ?= config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
+CI_BUDGET_GROUP_THRESHOLDS ?= smoke=4m,config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
 CI_BUDGET_SLOW_THRESHOLD ?= 45s
 CI_BUDGET_SLOW_TOP ?= 30
 CI_BUDGET_TEST_SLOW_THRESHOLD ?= 20s
@@ -84,6 +84,7 @@ help:
 	@echo "Test Targets:"
 	@echo "  test            - Run full suite in single pass (no setup)"
 	@echo "  test-all        - Run all tests with isolated reset per test"
+	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
 	@echo "  test-config     - System config tests"
 	@echo "  test-governance - Governance tests"
 	@echo "  test-staking    - Staking tests"
@@ -249,6 +250,12 @@ test-config:
 	echo "⏱ config epoch=$$epoch"; \
 	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
 
+test-smoke:
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+	echo "⏱ smoke epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/smoke -run "TestS_SmokeChainLivenessAllNodes"
+
 test-governance:
 	@set -e; \
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups governance)"; \
@@ -283,7 +290,7 @@ test-all:
 	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)
 
 test-all-legacy:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups config,governance,staking,delegation,punish,rewards,epoch
+	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups smoke,config,governance,staking,delegation,punish,rewards,epoch
 
 test: ready
 	@echo "🧪 Running Integration Tests (Single Pass)..."

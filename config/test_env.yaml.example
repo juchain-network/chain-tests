@@ -67,6 +67,9 @@ tests:
   # Can be overridden per run via env TEST_PROFILE.
   profile: fast
   timeout: "30m"
+  smoke:
+    # Smoke liveness observe window (seconds). Default is 5 minutes.
+    observe_seconds: 300
   reset_before_each_case: true
   # Optional epoch overrides for faster/stabler grouped execution.
   # Resolution order:

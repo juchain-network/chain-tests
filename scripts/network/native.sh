@@ -44,8 +44,26 @@ pm2_delete_known() {
 }
 
 pm2_start_all() {
-  log "pm2 start using $ECOSYSTEM_FILE"
-  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --update-env >/dev/null
+  log "pm2 start using $ECOSYSTEM_FILE (staged startup)"
+
+  # Start primary validator first to avoid early clique fork races.
+  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[0]}" --update-env >/dev/null
+
+  log "waiting for primary validator bootstrap block: $RPC_URL"
+  # In staged startup only validator1 is online at this point; on Congress it may
+  # produce block #1 then pause until peers join. So gate on "block >= 1" instead
+  # of continuous head increments to avoid startup deadlock.
+  if ! RETRIES=60 MIN_BLOCK=1 INCREMENTS_REQUIRED=0 "$ROOT_DIR/scripts/wait_for_node.sh" "$RPC_URL" >/dev/null 2>&1; then
+    # Fallback keeps behavior backward-compatible if block-progress probe is unavailable.
+    wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
+  fi
+
+  # Bring up remaining validators/sync node after chain head is moving.
+  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[1]}" --update-env >/dev/null
+  sleep 1
+  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[2]}" --update-env >/dev/null
+  sleep 1
+  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[3]}" --update-env >/dev/null
 }
 
 pm2_status() {

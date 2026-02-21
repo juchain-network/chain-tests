@@ -157,6 +157,15 @@ func TestZ_LastManStanding(t *testing.T) {
 			continue
 		}
 		if _, err := waitReceipt(txVote.Hash(), 30*time.Second); err != nil {
+			// Receipt-level reverts are possible once the proposal is already finalized
+			// while later validators are still attempting to vote.
+			if strings.Contains(err.Error(), "reverted") {
+				if passed, _ := ctx.Proposal.Pass(nil, last); passed {
+					break
+				}
+				waitNextBlock()
+				continue
+			}
 			t.Fatalf("last man vote not mined in time: %v", err)
 		}
 	}

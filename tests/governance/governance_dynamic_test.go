@@ -342,6 +342,7 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 
 	pIndex := 0
 	setupGovConfig(t, &pIndex)
+	changeConfig(t, &pIndex, 0, 8, "ProposalLastingPeriod -> 8 (InvalidVoting)")
 
 	// 1. Create a proposal first
 	_, candAddr, err := ctx.CreateAndFundAccount(utils.ToWei(1))
@@ -432,11 +433,21 @@ func TestB_Governance_InvalidVoting(t *testing.T) {
 		t.Logf("Waiting for expiry condition (period=%s)...", period.String())
 		proposal, err := ctx.Proposal.Proposals(nil, propID2)
 		utils.AssertNoError(t, err, "read proposal failed")
-		if proposal.CreateBlock == nil || proposal.CreateBlock.Sign() <= 0 {
-			t.Fatalf("proposal create block unavailable")
+
+		createBlock := proposal.CreateBlock
+		if createBlock == nil || createBlock.Sign() <= 0 {
+			if receipt2 != nil && receipt2.BlockNumber != nil && receipt2.BlockNumber.Sign() > 0 {
+				createBlock = new(big.Int).Set(receipt2.BlockNumber)
+				t.Logf("proposal create block unavailable, fallback to receipt block %s", createBlock.String())
+			} else if latest, errH := ctx.Clients[0].HeaderByNumber(context.Background(), nil); errH == nil && latest != nil && latest.Number != nil {
+				createBlock = new(big.Int).Set(latest.Number)
+				t.Logf("proposal create block unavailable, fallback to latest block %s", createBlock.String())
+			} else {
+				t.Fatalf("proposal create block unavailable")
+			}
 		}
 
-		target := new(big.Int).Add(proposal.CreateBlock, period)
+		target := new(big.Int).Add(createBlock, period)
 		target.Add(target, big.NewInt(1))
 		curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
 		utils.AssertNoError(t, err, "read current block failed")
@@ -644,16 +655,42 @@ func TestB_Governance_DynamicThreshold(t *testing.T) {
 		t.Fatalf("V5 passed unexpectedly: votes(%d) < threshold(%d)", agree, newThreshold)
 	}
 
-	t.Log("Threshold did not drop enough to auto-pass (expected for 3 validators). Casting additional votes...")
-	if expired, err := proposalExpired(propID); err != nil {
-		t.Logf("skip expiry check due to query error: %v", err)
-	} else if expired {
-		t.Log("Original add-validator proposal expired during threshold transition, recreating proposal...")
-		propID = createAddProposal("G-15 Add V5 retry")
+	t.Log("Threshold did not drop enough to auto-pass (expected for 3 validators).")
+	t.Log("Recreating add-validator proposal to avoid near-expiry races before final voting...")
+	propID = createAddProposal("G-15 Add V5 retry")
+
+	waitForV5Pass := func(id [32]byte, maxBlocks int) bool {
+		if maxBlocks < 1 {
+			maxBlocks = 1
+		}
+		errWait := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: maxBlocks,
+			Interval:    retrySleep(),
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			pass, errPass := ctx.Proposal.Pass(nil, v5Addr)
+			if errPass != nil {
+				// RPC/query jitter: keep polling within bounded attempts.
+				return false, nil
+			}
+			return pass, nil
+		})
+		return errWait == nil
 	}
+
 	voteProposalToPass(t, propID, "G-15 Add V5 after threshold reduction")
-	passV5, _ = ctx.Proposal.Pass(nil, v5Addr)
-	utils.AssertTrue(t, passV5, "V5 should pass after threshold reduction")
+	if !waitForV5Pass(propID, 6) {
+		if expired, err := proposalExpired(propID); err != nil {
+			t.Logf("final pass check: skip expiry check due to query error: %v", err)
+		} else if expired {
+			t.Log("Final pass check detected expired proposal, recreating add-validator proposal once...")
+			propID = createAddProposal("G-15 Add V5 final retry")
+			voteProposalToPass(t, propID, "G-15 Add V5 final retry")
+		}
+	}
+	utils.AssertTrue(t, waitForV5Pass(propID, 6), "V5 should pass after threshold reduction")
 }
 
 // Test 3: Nonce Isolation

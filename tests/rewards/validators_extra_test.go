@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"math/big"
 	"strings"
 	"testing"
@@ -86,11 +87,27 @@ func TestI_ValidatorExtras(t *testing.T) {
 			feeOpts, _ := ctx.GetTransactor(feeKey)
 			tx, err := ctx.Validators.WithdrawProfits(feeOpts, valAddr)
 			if err == nil {
-				ctx.WaitMined(tx.Hash())
+				utils.AssertNoError(t, ctx.WaitMined(tx.Hash()), "first withdraw tx failed")
+				firstReceipt, errR1 := ctx.Clients[0].TransactionReceipt(context.Background(), tx.Hash())
+				utils.AssertNoError(t, errR1, "read first withdraw receipt failed")
+				cooldown, errCd := ctx.Proposal.WithdrawProfitPeriod(nil)
+				utils.AssertNoError(t, errCd, "read withdrawProfitPeriod failed")
+
 				// Immediate second withdraw should fail due to cooldown or no profits.
-				feeOpts, _ = ctx.GetTransactor(feeKey)
-				_, err = ctx.Validators.WithdrawProfits(feeOpts, valAddr)
+				feeOpts, _ = ctx.GetTransactorNoEpochWait(feeKey, true)
+				tx2, err := ctx.Validators.WithdrawProfits(feeOpts, valAddr)
 				if err == nil {
+					utils.AssertNoError(t, ctx.WaitMined(tx2.Hash()), "second withdraw tx failed")
+					secondReceipt, errR2 := ctx.Clients[0].TransactionReceipt(context.Background(), tx2.Hash())
+					utils.AssertNoError(t, errR2, "read second withdraw receipt failed")
+					if firstReceipt != nil && secondReceipt != nil && cooldown != nil && cooldown.Sign() > 0 {
+						delta := int64(secondReceipt.BlockNumber.Uint64() - firstReceipt.BlockNumber.Uint64())
+						if delta < cooldown.Int64() {
+							t.Fatalf("expected withdraw exception after immediate retry, got success before cooldown: delta=%d cooldown=%d", delta, cooldown.Int64())
+						}
+						t.Logf("Immediate retry succeeded only after cooldown elapsed: delta=%d cooldown=%d", delta, cooldown.Int64())
+						return
+					}
 					t.Fatal("expected withdraw exception after immediate retry, got success")
 				}
 				if !strings.Contains(err.Error(), "You don't have any profits") && !strings.Contains(err.Error(), "wait enough blocks") {

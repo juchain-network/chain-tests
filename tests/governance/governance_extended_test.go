@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"juchain.org/chain/tools/ci/internal/utils"
@@ -81,15 +80,13 @@ func TestB_Governance_Extended(t *testing.T) {
 
 		// 1. Config Proposal (burnAddress, CID 14)
 		proposerKey := ctx.GenesisValidators[0]
-		origBurn, _ := ctx.Proposal.BurnAddress(nil)
 		targetBurn := common.HexToAddress("0x000000000000000000000000000000000000bEEF")
 		targetVal := new(big.Int).SetBytes(targetBurn.Bytes())
 		var tx1 *types.Transaction
-		var opts1 *bind.TransactOpts
 		var err error
 
 		for {
-			opts1, _ = ctx.GetTransactor(proposerKey)
+			opts1, _ := ctx.GetTransactor(proposerKey)
 			tx1, err = ctx.Proposal.CreateUpdateConfigProposal(opts1, big.NewInt(14), targetVal)
 			if err == nil {
 				break
@@ -107,10 +104,9 @@ func TestB_Governance_Extended(t *testing.T) {
 		proposerKey2 := ctx.GenesisValidators[1] // Use another validator to avoid nonce/race if parallel
 		_, candAddr, _ := ctx.CreateAndFundAccount(utils.ToWei(1))
 		var tx2 *types.Transaction
-		var opts2 *bind.TransactOpts
 
 		for {
-			opts2, _ = ctx.GetTransactor(proposerKey2)
+			opts2, _ := ctx.GetTransactor(proposerKey2)
 			tx2, err = ctx.Proposal.CreateProposal(opts2, candAddr, true, "G-14 Parallel Val")
 			if err == nil {
 				break
@@ -144,62 +140,48 @@ func TestB_Governance_Extended(t *testing.T) {
 			}
 		}
 
-		// 4. Vote for both (Sequentially per account to avoid nonce race)
-		for i, vk := range ctx.GenesisValidators {
-			vo1, _ := ctx.GetTransactor(vk)
-			txV1, err1 := ctx.Proposal.VoteProposal(vo1, id1, true)
-			if err1 == nil {
-				ctx.WaitMined(txV1.Hash())
-			} else {
-				t.Logf("Vote1 val %d failed: %v", i, err1)
+		configPassed := false
+		validatorPassed := false
+		refreshPassStatus := func() {
+			if burnNow, errBurn := ctx.Proposal.BurnAddress(nil); errBurn == nil && burnNow == targetBurn {
+				configPassed = true
 			}
-
-			vo2, _ := ctx.GetTransactor(vk)
-			txV2, err2 := ctx.Proposal.VoteProposal(vo2, id2, true)
-			if err2 == nil {
-				ctx.WaitMined(txV2.Hash())
-			} else {
-				t.Logf("Vote2 val %d failed: %v", i, err2)
+			if passNow, errPass := ctx.Proposal.Pass(nil, candAddr); errPass == nil && passNow {
+				validatorPassed = true
 			}
 		}
+		refreshPassStatus()
 
+		// 4. Vote for both until both proposals pass.
+		for i, vk := range ctx.GenesisValidators {
+			if !configPassed {
+				vo1, _ := ctx.GetTransactor(vk)
+				txV1, err1 := ctx.Proposal.VoteProposal(vo1, id1, true)
+				if err1 == nil {
+					ctx.WaitMined(txV1.Hash())
+				} else {
+					t.Logf("Vote1 val %d failed: %v", i, err1)
+				}
+			}
+
+			if !validatorPassed {
+				vo2, _ := ctx.GetTransactor(vk)
+				txV2, err2 := ctx.Proposal.VoteProposal(vo2, id2, true)
+				if err2 == nil {
+					ctx.WaitMined(txV2.Hash())
+				} else {
+					t.Logf("Vote2 val %d failed: %v", i, err2)
+				}
+			}
+
+			refreshPassStatus()
+			if configPassed && validatorPassed {
+				break
+			}
+		}
 		// 5. Verify Execution
 		vCount, _ := ctx.Validators.GetVotingValidatorCount(nil)
 		t.Logf("G-14 Threshold check: voting validators = %d", vCount)
-
-		// Revert config change to original burn address
-		origVal := new(big.Int).SetBytes(origBurn.Bytes())
-		var txReset *types.Transaction
-		for retry := 0; retry < 4; retry++ {
-			opts1, _ = ctx.GetTransactor(proposerKey)
-			txReset, err = ctx.Proposal.CreateUpdateConfigProposal(opts1, big.NewInt(14), origVal)
-			if err == nil {
-				break
-			}
-			if strings.Contains(err.Error(), "Proposal creation too frequent") {
-				waitProposalCooldownFor(t, opts1.From)
-				continue
-			}
-			break
-		}
-		if err == nil && txReset != nil {
-			ctx.WaitMined(txReset.Hash())
-			recReset, _ := ctx.Clients[0].TransactionReceipt(context.Background(), txReset.Hash())
-			var idReset [32]byte
-			for _, l := range recReset.Logs {
-				if ev, err := ctx.Proposal.ParseLogCreateConfigProposal(*l); err == nil {
-					idReset = ev.Id
-					break
-				}
-			}
-			for _, vk := range ctx.GenesisValidators {
-				vo, _ := ctx.GetTransactor(vk)
-				ctx.Proposal.VoteProposal(vo, idReset, true)
-			}
-			waitNextBlock()
-		} else if err != nil {
-			t.Logf("Skip reset burn config due to proposal error: %v", err)
-		}
 	})
 
 	// [G-10] Already in Top Validator Set

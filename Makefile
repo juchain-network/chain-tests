@@ -11,6 +11,7 @@ SCRIPTS_DIR := scripts
 DATA_DIR := data
 NETWORK_DISPATCH := scripts/network/dispatch.sh
 CI_TOOL := go run ./ci.go
+EPOCH_RESOLVER := $(SCRIPTS_DIR)/resolve_epoch.sh
 
 # Runtime/backend config (docker/native selection)
 TEST_ENV_CONFIG ?= config/test_env.yaml
@@ -106,6 +107,8 @@ help:
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
+	@echo "                                    # also overrides group/special epoch config when set"
+	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
 	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
 	@echo "  SHARED_SETUP=$(SHARED_SETUP)       # set to 1 to share setup across compatible groups in ci-groups"
@@ -222,28 +225,59 @@ net-ready:
 	@$(backend_cmd); \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" ready
 
-# Punish tests are split with resets to avoid chain stall
+# Punish tests run in two isolated chunks to balance startup overhead and state stability.
 test-punish:
 	@echo "🧪 Running Punishment Test Group..."
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -tests TestF1_ExitFlow,TestF2_QuickReEntry,TestF3_WithdrawProfits,TestF4_MiscExit,TestF5_RoleChange,TestF6_DoubleSignWindow,TestF7_PunishedRedemption,TestG_DoubleSign,TestG_PunishPaths
+	@set -e; \
+	group_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups punish)"; \
+	paths_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_paths punish)"; \
+	double_sign_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_double_sign punish)"; \
+	if [ -z "$$paths_epoch" ]; then paths_epoch="$$group_epoch"; fi; \
+	if [ -z "$$double_sign_epoch" ]; then double_sign_epoch="$$group_epoch"; fi; \
+	echo "⏱ punish epochs: paths=$$paths_epoch double_sign=$$double_sign_epoch"; \
+	if [ "$$paths_epoch" = "$$double_sign_epoch" ]; then \
+		echo "⏱ punish running in single pass (shared epoch=$$paths_epoch)"; \
+		EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths|TestG_DoubleSign"; \
+	else \
+		EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths"; \
+		EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign"; \
+	fi
 
 test-config:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups config)"; \
+	echo "⏱ config epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
 
 test-governance:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/governance -run "TestB_Governance.*"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups governance)"; \
+	echo "⏱ governance epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/governance -run "TestB_Governance.*"
 
 test-staking:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/staking -run "TestC_Staking.*|TestD_Staking.*"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups staking)"; \
+	echo "⏱ staking epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/staking -run "TestC_Staking.*|TestD_Staking.*"
 
 test-delegation:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups delegation)"; \
+	echo "⏱ delegation epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"
 
 test-rewards:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness|TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups rewards)"; \
+	echo "⏱ rewards epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness|TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
 
 test-epoch:
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_LastManStanding|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups epoch)"; \
+	echo "⏱ epoch group epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_LastManStanding|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"
 
 test-all:
 	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)

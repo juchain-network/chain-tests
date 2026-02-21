@@ -23,6 +23,18 @@ type DelegateOps struct {
 	WaitMined     func(common.Hash) error
 }
 
+func isRetryableDelegateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "epoch block forbidden") ||
+		strings.Contains(msg, "insufficient funds") ||
+		strings.Contains(msg, "nonce too low") ||
+		strings.Contains(msg, "replacement transaction underpriced") ||
+		strings.Contains(msg, "already known")
+}
+
 func RobustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amount *big.Int, ops DelegateOps) {
 	if ops.GetTransactor == nil || ops.Delegate == nil || ops.WaitMined == nil {
 		if t != nil {
@@ -46,7 +58,7 @@ func RobustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 			if errW := ops.WaitMined(tx.Hash()); errW == nil {
 				return
 			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") {
+				if isRetryableDelegateError(errW) {
 					time.Sleep(defaultRetrySleep)
 					continue
 				}
@@ -57,7 +69,7 @@ func RobustDelegate(t *testing.T, key *ecdsa.PrivateKey, val common.Address, amo
 		}
 
 		lastErr = err
-		if strings.Contains(err.Error(), "Epoch block forbidden") {
+		if isRetryableDelegateError(err) {
 			time.Sleep(defaultRetrySleep)
 			continue
 		}

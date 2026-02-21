@@ -1,9 +1,10 @@
 package tests
 
 import (
-	"math/big"
+	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
@@ -18,47 +19,57 @@ func TestC_StakingFlow(t *testing.T) {
 	}
 
 	// 1. Create a new account for the Candidate Validator
-	t.Log("Creating new candidate validator account...")
-	valKey, valAddr, err := ctx.CreateAndFundAccount(utils.ToWei(100005)) // 100k min stake + gas
-	utils.AssertNoError(t, err, "failed to create validator account")
-
-	// 2. Pass Proposal (All genesis validators vote YES)
-	t.Log("Passing proposal...")
-	err = passProposalFor(t, valAddr, "New Validator Candidate")
-	utils.AssertNoError(t, err, "failed to pass proposal")
-
-	// 3. Register Validator (Candidate executes this)
-	t.Log("Registering validator...")
-	err = testkit.WaitUntil(testkit.WaitUntilOptions{
+	t.Log("Creating and registering new candidate validator account...")
+	var valAddr = common.Address{}
+	err := testkit.WaitUntil(testkit.WaitUntilOptions{
 		MaxAttempts: 3,
 		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
 	}, func() (bool, error) {
-		pass, err := ctx.Proposal.Pass(nil, valAddr)
-		if err != nil {
-			return false, err
+		_, addr, errCreate := createAndRegisterValidator(t, "New Validator Candidate")
+		if errCreate == nil {
+			valAddr = addr
+			return true, nil
 		}
-		return pass, nil
+		msg := strings.ToLower(errCreate.Error())
+		if strings.Contains(msg, "proposal expired") ||
+			strings.Contains(msg, "must repropose") ||
+			strings.Contains(msg, "condition not met") ||
+			strings.Contains(msg, "failed to create proposal") ||
+			strings.Contains(msg, "failed to pass proposal") {
+			return false, nil
+		}
+		return false, errCreate
 	})
-	if err != nil {
-		t.Log("Proposal has not passed yet (not enough votes?). Skipping registration.")
-		// In a 4-node cluster, we need >50% (3 votes). If we have keys for all 4, it should pass.
-		// If we only configured 1 key, it might fail.
-		return
-	}
-
-	registerOpts, _ := ctx.GetTransactor(valKey)
-	registerOpts.Value = utils.ToWei(100000) // Min stake
-	commission := big.NewInt(1000)           // 10%
-
-	txReg, err := ctx.Staking.RegisterValidator(registerOpts, commission)
-	utils.AssertNoError(t, err, "failed to register validator")
-
-	err = ctx.WaitMined(txReg.Hash())
-	utils.AssertNoError(t, err, "register tx failed")
+	utils.AssertNoError(t, err, "failed to create/register validator")
 
 	// 5. Verify Registration
-	isRegistered, err := ctx.Validators.IsValidatorExist(nil, valAddr)
-	utils.AssertNoError(t, err, "failed to check validator existence")
+	isRegistered := false
+	err = testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 6,
+		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
+	}, func() (bool, error) {
+		registered, errCheck := ctx.Validators.IsValidatorExist(nil, valAddr)
+		if errCheck != nil {
+			return false, errCheck
+		}
+		isRegistered = registered
+		if registered {
+			return true, nil
+		}
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, valAddr)
+		if errInfo == nil && info.IsRegistered {
+			isRegistered = true
+			return true, nil
+		}
+		return false, nil
+	})
+	utils.AssertNoError(t, err, "failed to check validator registration state")
 	utils.AssertTrue(t, isRegistered, "Validator should be registered")
 
 	t.Logf("Validator %s successfully registered!", valAddr.Hex())

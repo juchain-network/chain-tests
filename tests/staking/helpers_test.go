@@ -140,6 +140,11 @@ Done:
 
 	newHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
 	fmt.Printf("Epoch wait complete. New height: %d\n", newHeight)
+	ctx.WaitIfEpochBlock()
+	stableHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
+	if stableHeight > 0 {
+		newHeight = stableHeight
+	}
 	ctx.SyncNonces()
 	return newHeight
 }
@@ -157,7 +162,6 @@ func waitForValidatorActive(t *testing.T, addr common.Address, maxEpochs int) bo
 			return true
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	return false
 }
@@ -178,7 +182,6 @@ func ensureMinActiveValidators(t *testing.T, min int, maxEpochs int) {
 			return
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	set, _ := ctx.Validators.GetActiveValidators(nil)
 	t.Fatalf("active validators < %d (got %d)", min, len(set))
@@ -204,7 +207,6 @@ func getActiveProposerOrSkip(t *testing.T, maxEpochs int) *ecdsa.PrivateKey {
 			}
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	t.Fatalf("no active proposer available")
 	return nil
@@ -243,4 +245,37 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 
 func waitNextBlock() {
 	waitBlocks(nil, 1)
+}
+
+func waitProposalCooldownFor(t *testing.T, proposer common.Address) {
+	if ctx == nil {
+		if t != nil {
+			t.Fatalf("Context not initialized")
+		}
+		return
+	}
+	cooldown, err := ctx.Proposal.ProposalCooldown(nil)
+	if err != nil || cooldown == nil || cooldown.Sign() <= 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	lastBlock, err := ctx.Proposal.LastProposalBlock(nil, proposer)
+	if err != nil || lastBlock == nil || lastBlock.Sign() == 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		waitBlocks(t, 1)
+		return
+	}
+	target := new(big.Int).Add(lastBlock, cooldown)
+	if !target.IsUint64() {
+		waitBlocks(t, 1)
+		return
+	}
+	targetHeight := target.Uint64()
+	if curHeight < targetHeight {
+		waitBlocks(t, int(targetHeight-curHeight))
+	}
 }

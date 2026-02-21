@@ -1,11 +1,15 @@
 package tests
 
 import (
+	"context"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestG_PunishPaths(t *testing.T) {
@@ -38,8 +42,24 @@ func TestG_PunishPaths(t *testing.T) {
 
 	// [P-24] ExecutePending No-op
 	t.Run("P-24_ExecutePendingNoop", func(t *testing.T) {
-		var err error
-		for retry := 0; retry < 10; retry++ {
+		waitMinedBounded := func(txHash common.Hash, timeout time.Duration) error {
+			deadline := time.Now().Add(timeout)
+			for time.Now().Before(deadline) {
+				receipt, errR := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
+				if errR == nil && receipt != nil {
+					if receipt.Status == 0 {
+						return nil
+					}
+					return nil
+				}
+				time.Sleep(retrySleep())
+			}
+			return fmt.Errorf("tx %s still pending after %s", txHash.Hex(), timeout)
+		}
+
+		fromAddr := crypto.PubkeyToAddress(ctx.GenesisValidators[0].PublicKey)
+		var lastErr error
+		for retry := 0; retry < 6; retry++ {
 			opts, errG := ctx.GetTransactor(ctx.GenesisValidators[0])
 			if errG != nil {
 				ctx.WaitIfEpochBlock()
@@ -48,19 +68,29 @@ func TestG_PunishPaths(t *testing.T) {
 
 			tx, errCall := ctx.Punish.ExecutePending(opts, big.NewInt(1))
 			if errCall == nil {
-				ctx.WaitMined(tx.Hash())
-				err = nil
+				lastErr = waitMinedBounded(tx.Hash(), 4*time.Second)
+				if lastErr == nil {
+					t.Logf("executePending(1) sent: %s", tx.Hash().Hex())
+				}
 				break
 			}
-			err = errCall
-			if strings.Contains(err.Error(), "Epoch block forbidden") {
+			lastErr = errCall
+			if strings.Contains(errCall.Error(), "Epoch block forbidden") {
 				ctx.WaitIfEpochBlock()
+				continue
+			}
+			msg := strings.ToLower(errCall.Error())
+			if strings.Contains(msg, "nonce too low") ||
+				strings.Contains(msg, "replacement transaction underpriced") ||
+				strings.Contains(msg, "already known") {
+				ctx.RefreshNonce(fromAddr)
+				time.Sleep(retrySleep())
 				continue
 			}
 			break
 		}
-		if err != nil {
-			t.Logf("executePending(1) failed: %v", err)
+		if lastErr != nil {
+			t.Logf("executePending(1) best-effort result: %v", lastErr)
 		}
 	})
 

@@ -77,18 +77,15 @@ func waitForNextEpochBlock(t *testing.T) uint64 {
 
 	t.Logf("Current block %d, next epoch block %d, waiting %d blocks...", cur, nextEpochBlock, blocksToWait)
 
-	// Wait until we are at nextEpochBlock - 1
-	if blocksToWait > 1 {
-		waitBlocks(t, int(blocksToWait-1))
-	}
-
-	// Now wait block by block until we hit exactly nextEpochBlock
-	for {
-		header, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
-		if header.Number.Uint64() >= nextEpochBlock {
-			break
+	if blocksToWait > 0 {
+		waitBlocks(t, int(blocksToWait))
+		header, err = ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("failed to read header after epoch wait: %v", err)
 		}
-		time.Sleep(blockPollInterval())
+		if header.Number.Uint64() < nextEpochBlock {
+			t.Fatalf("epoch wait incomplete: current=%d target=%d", header.Number.Uint64(), nextEpochBlock)
+		}
 	}
 
 	// Trigger the validator set update.
@@ -140,6 +137,11 @@ Done:
 
 	newHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
 	fmt.Printf("Epoch wait complete. New height: %d\n", newHeight)
+	ctx.WaitIfEpochBlock()
+	stableHeight, _ := ctx.Clients[0].BlockNumber(context.Background())
+	if stableHeight > 0 {
+		newHeight = stableHeight
+	}
 	ctx.SyncNonces()
 	return newHeight
 }
@@ -157,7 +159,6 @@ func waitForValidatorActive(t *testing.T, addr common.Address, maxEpochs int) bo
 			return true
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	return false
 }
@@ -195,7 +196,6 @@ func ensureMinActiveValidators(t *testing.T, min int, maxEpochs int) {
 			return
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	set, _ := ctx.Validators.GetActiveValidators(nil)
 	t.Fatalf("active validators < %d (got %d)", min, len(set))
@@ -221,7 +221,6 @@ func getActiveProposerOrSkip(t *testing.T, maxEpochs int) *ecdsa.PrivateKey {
 			}
 		}
 		waitForNextEpochBlock(t)
-		waitBlocks(t, 1)
 	}
 	t.Fatalf("no active proposer available")
 	return nil
@@ -260,4 +259,70 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 
 func waitNextBlock() {
 	waitBlocks(nil, 1)
+}
+
+func waitProposalCooldownFor(t *testing.T, proposer common.Address) {
+	if ctx == nil {
+		if t != nil {
+			t.Fatalf("Context not initialized")
+		}
+		return
+	}
+	cooldown, err := ctx.Proposal.ProposalCooldown(nil)
+	if err != nil || cooldown == nil || cooldown.Sign() <= 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	lastBlock, err := ctx.Proposal.LastProposalBlock(nil, proposer)
+	if err != nil || lastBlock == nil || lastBlock.Sign() == 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		waitBlocks(t, 1)
+		return
+	}
+	target := new(big.Int).Add(lastBlock, cooldown)
+	if !target.IsUint64() {
+		waitBlocks(t, 1)
+		return
+	}
+	targetHeight := target.Uint64()
+	if curHeight < targetHeight {
+		waitBlocks(t, int(targetHeight-curHeight))
+	}
+}
+
+func waitWithdrawProfitCooldownFor(t *testing.T, validator common.Address) {
+	if ctx == nil {
+		if t != nil {
+			t.Fatalf("Context not initialized")
+		}
+		return
+	}
+	period, err := ctx.Proposal.WithdrawProfitPeriod(nil)
+	if err != nil || period == nil || period.Sign() <= 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	_, _, _, _, lastWithdrawBlock, err := ctx.Validators.GetValidatorInfo(nil, validator)
+	if err != nil || lastWithdrawBlock == nil || lastWithdrawBlock.Sign() == 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		waitBlocks(t, 1)
+		return
+	}
+	target := new(big.Int).Add(lastWithdrawBlock, period)
+	if !target.IsUint64() {
+		waitBlocks(t, 1)
+		return
+	}
+	targetHeight := target.Uint64()
+	if curHeight < targetHeight {
+		waitBlocks(t, int(targetHeight-curHeight))
+	}
 }

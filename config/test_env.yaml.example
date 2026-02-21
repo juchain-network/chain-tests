@@ -68,6 +68,24 @@ tests:
   profile: fast
   timeout: "30m"
   reset_before_each_case: true
+  # Optional epoch overrides for faster/stabler grouped execution.
+  # Resolution order:
+  # 1) env EPOCH
+  # 2) tests.epoch_overrides.<scope>.<name>
+  # 3) tests.epoch_overrides.groups.default (group scope only)
+  # 4) tests.profiles.<profile>.epoch
+  # 5) network.epoch
+  epoch_overrides:
+    groups:
+      # Applied to make test-<group> unless group-specific key exists.
+      default: 30
+      # Example: lower epoch only for groups that benefit in runtime.
+      staking: 15
+      punish: 18
+      epoch: 20
+    specials:
+      # Used by make test-punish second phase (TestG_DoubleSign).
+      punish_double_sign: 18
   # Parameter presets for different test speed/stability trade-offs.
   profiles:
     fast:

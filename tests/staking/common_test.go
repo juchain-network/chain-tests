@@ -215,12 +215,18 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 			if errW := ctx.WaitMined(txVote.Hash()); errW == nil {
 				return
 			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") {
+				errMsg := errW.Error()
+				errLower := strings.ToLower(errMsg)
+				if strings.Contains(errMsg, "Epoch block forbidden") {
 					time.Sleep(retrySleep())
 					continue
 				}
-				if strings.Contains(errW.Error(), "Validator only") || strings.Contains(errW.Error(), "Validator is jailed") {
+				if strings.Contains(errMsg, "Validator only") || strings.Contains(errMsg, "Validator is jailed") {
 					return
+				}
+				if strings.Contains(errMsg, "timeout waiting for tx") || strings.Contains(errMsg, "nonce too low") || strings.Contains(errLower, "revert") {
+					waitBlocks(t, 1)
+					continue
 				}
 				if t != nil {
 					t.Logf("vote tx failed: %v", errW)
@@ -228,6 +234,7 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 				return
 			}
 		}
+		errLower := strings.ToLower(err.Error())
 		if strings.Contains(err.Error(), "Epoch block forbidden") {
 			time.Sleep(retrySleep())
 			continue
@@ -237,6 +244,10 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 		}
 		if strings.Contains(err.Error(), "Proposal already passed") {
 			return
+		}
+		if strings.Contains(err.Error(), "timeout waiting for tx") || strings.Contains(err.Error(), "nonce too low") || strings.Contains(errLower, "revert") {
+			waitBlocks(t, 1)
+			continue
 		}
 		break
 	}
@@ -271,7 +282,12 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 		tx, err = ctx.Proposal.CreateProposal(opts, target, true, name)
 		if err == nil {
 			if errW := ctx.WaitMined(tx.Hash()); errW != nil {
+				errWLower := strings.ToLower(errW.Error())
 				if strings.Contains(errW.Error(), "timeout waiting for tx") {
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(errWLower, "proposal expired") || strings.Contains(errWLower, "must repropose") {
 					waitBlocks(t, 1)
 					continue
 				}
@@ -280,8 +296,18 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 			mined = true
 			break
 		}
-		if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(err.Error(), "Proposal creation too frequent") {
+			waitProposalCooldownFor(t, proposerAddr)
+			continue
+		}
+		if strings.Contains(errLower, "proposal expired") || strings.Contains(errLower, "must repropose") {
 			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(err.Error(), "nonce too low") {
+			ctx.RefreshNonce(proposerAddr)
+			waitNextBlock()
 			continue
 		}
 		return err
@@ -316,7 +342,15 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 				continue
 			}
 
+			if passed, errPass := ctx.Proposal.Pass(nil, target); errPass == nil && passed {
+				return nil
+			}
+
 			robustVote(t, voterKey, propID, true)
+
+			if passed, errPass := ctx.Proposal.Pass(nil, target); errPass == nil && passed {
+				return nil
+			}
 		}
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 2,
@@ -344,44 +378,126 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 		return nil, addr, err
 	}
 
-	err = passProposalFor(t, addr, name)
-	if err != nil {
+	isRegistered := func() bool {
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		return errInfo == nil && info.IsRegistered
+	}
+	ensureProposalPassed := func() error {
+		var lastProposalErr error
+		for attempt := 0; attempt < 8; attempt++ {
+			pass, errPass := ctx.Proposal.Pass(nil, addr)
+			if errPass == nil && pass {
+				return nil
+			}
+			errProp := passProposalFor(t, addr, name)
+			if errProp == nil {
+				return nil
+			}
+			lastProposalErr = errProp
+			errPropLower := strings.ToLower(errProp.Error())
+			if strings.Contains(errPropLower, "proposal expired") ||
+				strings.Contains(errPropLower, "must repropose") ||
+				strings.Contains(errPropLower, "proposal did not pass") ||
+				strings.Contains(errPropLower, "condition not met") {
+				waitBlocks(t, 1)
+				continue
+			}
+			return errProp
+		}
+		if lastProposalErr != nil {
+			return lastProposalErr
+		}
+		return fmt.Errorf("failed to pass proposal for %s", addr.Hex())
+	}
+
+	if err = ensureProposalPassed(); err != nil {
 		return nil, addr, err
 	}
 
-	var txReg *types.Transaction
-	for retry := 0; retry < 10; retry++ {
+	var lastErr error
+	for retry := 0; retry < 15; retry++ {
+		if isRegistered() {
+			return key, addr, nil
+		}
+
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
+			lastErr = errG
 			time.Sleep(retrySleep())
 			continue
 		}
 		opts.Value = utils.ToWei(100000)
 
-		txReg, err = ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
+		txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
-			if errW := ctx.WaitMined(txReg.Hash()); errW == nil {
-				break
-			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") || strings.Contains(errW.Error(), "Too many new validators") {
-					waitForNextEpochBlock(t)
-					waitBlocks(t, 1)
-					continue
-				}
-				return nil, addr, errW
+			errW := ctx.WaitMined(txReg.Hash())
+			if errW == nil {
+				return key, addr, nil
 			}
+			lastErr = errW
+			errWLower := strings.ToLower(errW.Error())
+			// Register tx may revert transiently around epoch/set-update windows.
+			if strings.Contains(errWLower, "proposal expired") || strings.Contains(errWLower, "must repropose") {
+				if errP := ensureProposalPassed(); errP != nil {
+					lastErr = errP
+				}
+				waitBlocks(t, 1)
+				continue
+			}
+			if strings.Contains(errW.Error(), "Epoch block forbidden") ||
+				strings.Contains(errW.Error(), "Too many new validators") {
+				if isRegistered() {
+					return key, addr, nil
+				}
+				if errP := ensureProposalPassed(); errP != nil {
+					lastErr = errP
+				}
+				waitForNextEpochBlock(t)
+				continue
+			}
+			if strings.Contains(errWLower, "reverted") {
+				if isRegistered() {
+					return key, addr, nil
+				}
+				// Opaque reverted receipts are often short-lived race conditions.
+				// Retry on the next block first to avoid unnecessary full-epoch waits.
+				if errP := ensureProposalPassed(); errP != nil {
+					lastErr = errP
+				}
+				waitBlocks(t, 1)
+				continue
+			}
+			return nil, addr, errW
 		}
-		if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
-			waitForNextEpochBlock(t)
+
+		lastErr = err
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "proposal expired") || strings.Contains(errLower, "must repropose") {
+			if errP := ensureProposalPassed(); errP != nil {
+				lastErr = errP
+			}
 			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(err.Error(), "Epoch block forbidden") ||
+			strings.Contains(err.Error(), "Too many new validators") ||
+			strings.Contains(err.Error(), "Must pass proposal first") {
+			if errP := ensureProposalPassed(); errP != nil {
+				lastErr = errP
+			}
+			waitForNextEpochBlock(t)
 			continue
 		}
 		break
 	}
-	if err != nil {
-		return nil, addr, err
+
+	if isRegistered() {
+		return key, addr, nil
 	}
-	return key, addr, nil
+	if lastErr == nil {
+		lastErr = fmt.Errorf("failed to register validator %s", addr.Hex())
+	}
+	return nil, addr, lastErr
 }
 
 // Robust Staking Helpers
@@ -501,6 +617,60 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 	}
 }
 
+func robustResignValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	var lastErr error
+	for retry := 0; retry < 10; retry++ {
+		opts, errG := ctx.GetTransactor(key)
+		if errG != nil {
+			lastErr = errG
+			time.Sleep(retrySleep())
+			continue
+		}
+
+		tx, err := ctx.Staking.ResignValidator(opts)
+		if err == nil {
+			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
+				return
+			} else {
+				lastErr = errW
+				msg := strings.ToLower(errW.Error())
+				if strings.Contains(msg, "epoch block forbidden") || strings.Contains(msg, "validator not registered") {
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(msg, "already resigned") {
+					return
+				}
+				continue
+			}
+		}
+
+		lastErr = err
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "epoch block forbidden") {
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "validator not registered") {
+			if addr != (common.Address{}) {
+				if exists, errV := ctx.Validators.IsValidatorExist(nil, addr); errV == nil && !exists {
+					waitBlocks(t, 1)
+					continue
+				}
+			}
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "already resigned") {
+			return
+		}
+		break
+	}
+	if t != nil && lastErr != nil {
+		t.Fatalf("resign failed: %v", lastErr)
+	}
+}
+
 func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
@@ -530,7 +700,6 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 		}
 		if strings.Contains(err.Error(), "active set") || strings.Contains(err.Error(), "wait until next epoch") {
 			waitForNextEpochBlock(t)
-			waitBlocks(t, 1)
 			continue
 		}
 		if t != nil {
@@ -577,6 +746,25 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 }
 
 func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	waitUntilJailPeriodComplete := func() {
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		if errInfo != nil || info.JailUntilBlock == nil || info.JailUntilBlock.Sign() <= 0 {
+			waitBlocks(t, 1)
+			return
+		}
+		current, errHeight := ctx.Clients[0].BlockNumber(context.Background())
+		if errHeight != nil {
+			waitBlocks(t, 1)
+			return
+		}
+		targetHeight := info.JailUntilBlock.Uint64() + 1
+		if targetHeight > current {
+			waitBlocks(t, int(targetHeight-current))
+			return
+		}
+		waitBlocks(t, 1)
+	}
+
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
@@ -590,7 +778,10 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") || strings.Contains(errW.Error(), "Too many new validators") {
 					waitForNextEpochBlock(t)
-					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(errW.Error(), "Jail period not complete") {
+					waitUntilJailPeriodComplete()
 					continue
 				}
 				if t != nil {
@@ -601,7 +792,23 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
 			waitForNextEpochBlock(t)
-			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(err.Error(), "Jail period not complete") {
+			waitUntilJailPeriodComplete()
+			continue
+		}
+		if strings.Contains(err.Error(), "Must pass reproposal first") {
+			if t != nil {
+				t.Logf("unjail requires reproposal, retrying after passProposalFor: %s", addr.Hex())
+			}
+			if errP := passProposalFor(t, addr, "Unjail Reproposal"); errP != nil {
+				if t != nil {
+					t.Fatalf("reproposal before unjail failed: %v", errP)
+				}
+				return
+			}
+			waitNextBlock()
 			continue
 		}
 		if t != nil {

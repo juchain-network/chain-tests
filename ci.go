@@ -352,9 +352,8 @@ func isSharedSetupEligibleGroup(group string, allowSet map[string]struct{}) bool
 
 	key := strings.ToLower(strings.TrimSpace(group))
 	switch key {
-	case "", "config", "punish":
-		// Config tests intentionally mutate global governance/system parameters and can
-		// leak state into following groups. Punish keeps its split-test mode today.
+	case "", "punish":
+		// Punish keeps its split-test mode today.
 		return false
 	}
 	_, ok := allowSet[key]

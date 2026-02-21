@@ -19,15 +19,44 @@ func TestH_Robustness(t *testing.T) {
 		t.Fatalf("Context not initialized")
 	}
 
+	var (
+		sharedValidatorKey  *ecdsa.PrivateKey
+		sharedValidatorAddr common.Address
+	)
+	ensureSharedValidator := func(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
+		if sharedValidatorKey != nil && sharedValidatorAddr != (common.Address{}) {
+			if info, err := ctx.Staking.GetValidatorInfo(nil, sharedValidatorAddr); err == nil && info.IsRegistered {
+				return sharedValidatorKey, sharedValidatorAddr
+			}
+		}
+		key, addr, err := createAndRegisterValidatorStable(t, "H-Shared", 3)
+		utils.AssertNoError(t, err, "failed to setup shared validator")
+		sharedValidatorKey = key
+		sharedValidatorAddr = addr
+		return key, addr
+	}
+
+	// [S-16] Zero Delegated Rewards
+	t.Run("S-16_ZeroDelegatedRewards", func(t *testing.T) {
+		key, addr := ensureSharedValidator(t)
+
+		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
+		t.Logf("Validator %s accumulated: %s", addr.Hex(), info.AccumulatedRewards.String())
+
+		opts, _ := ctx.GetTransactor(key)
+		ctx.Staking.ClaimValidatorRewards(opts)
+	})
+
 	// [V-01] Jailed Validator Redistribution
 	t.Run("V-01_JailedRedistribution", func(t *testing.T) {
-		valKey, valAddr, err := createAndRegisterValidatorStable(t, "V-01 Resign", 3)
-		utils.AssertNoError(t, err, "setup validator failed")
+		valKey, valAddr := ensureSharedValidator(t)
+		var err error
 		// Ensure doubleSignWindow is small enough for test.
 		curWindow, _ := ctx.Proposal.DoubleSignWindow(nil)
-		if curWindow != nil && curWindow.Cmp(big.NewInt(200)) > 0 {
-			_ = ctx.EnsureConfig(15, big.NewInt(20), curWindow)
-			curWindow = big.NewInt(20)
+		targetWindow := big.NewInt(8)
+		if curWindow == nil || curWindow.Cmp(targetWindow) > 0 {
+			_ = ctx.EnsureConfig(15, targetWindow, curWindow)
+			curWindow = new(big.Int).Set(targetWindow)
 		}
 		// Wait until we're outside the doubleSignWindow to avoid revert.
 		if curWindow != nil && curWindow.Sign() > 0 {
@@ -52,7 +81,11 @@ func TestH_Robustness(t *testing.T) {
 					continue
 				}
 				if strings.Contains(err.Error(), "active set") {
-					waitForNextEpochBlock(t)
+					if retry < 2 {
+						waitNextBlock()
+					} else {
+						waitForNextEpochBlock(t)
+					}
 					continue
 				}
 				t.Fatalf("resign failed: %v", err)
@@ -64,7 +97,11 @@ func TestH_Robustness(t *testing.T) {
 					break
 				}
 				if strings.Contains(errW.Error(), "transaction") && strings.Contains(errW.Error(), "reverted") {
-					waitForNextEpochBlock(t)
+					if retry < 2 {
+						waitNextBlock()
+					} else {
+						waitForNextEpochBlock(t)
+					}
 					continue
 				}
 				t.Fatalf("resign tx failed: %v", errW)
@@ -91,18 +128,6 @@ func TestH_Robustness(t *testing.T) {
 			return info.IsJailed, nil
 		})
 		utils.AssertNoError(t, err, "validator should become jailed")
-	})
-
-	// [S-16] Zero Delegated Rewards
-	t.Run("S-16_ZeroDelegatedRewards", func(t *testing.T) {
-		key, addr, err := createAndRegisterValidatorStable(t, "ZeroDelegation", 3)
-		utils.AssertNoError(t, err, "failed to setup validator")
-
-		info, _ := ctx.Staking.GetValidatorInfo(nil, addr)
-		t.Logf("Validator %s accumulated: %s", addr.Hex(), info.AccumulatedRewards.String())
-
-		opts, _ := ctx.GetTransactor(key)
-		ctx.Staking.ClaimValidatorRewards(opts)
 	})
 
 	// [S-15] Proposal Expiry

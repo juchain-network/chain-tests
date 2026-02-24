@@ -27,6 +27,8 @@ for candidate in "${GETH_CANDIDATES[@]}"; do
   fi
 done
 NETWORK_ID="$(cfg_get "$CONFIG_FILE" "native.network_id" "666666")"
+STATE_SCHEME="$(cfg_get "$CONFIG_FILE" "native.state_scheme" "$(cfg_get "$CONFIG_FILE" "network.state_scheme" "hash")")"
+HISTORY_STATE="$(cfg_get "$CONFIG_FILE" "native.history_state" "$(cfg_get "$CONFIG_FILE" "network.history_state" "")")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -64,8 +66,12 @@ mkdir -p "$(dirname "$ENV_FILE")" "$LOG_DIR"
 
 init_node() {
   local datadir="$1"
+  local init_args=("--datadir" "$datadir")
+  if [[ -n "$STATE_SCHEME" ]]; then
+    init_args+=("--state.scheme=$STATE_SCHEME")
+  fi
   if [[ ! -d "$datadir/geth/chaindata" ]]; then
-    "$GETH_BINARY" --datadir "$datadir" init "$GENESIS_FILE" >/dev/null
+    "$GETH_BINARY" "${init_args[@]}" init "$GENESIS_FILE" >/dev/null
   fi
 }
 
@@ -107,6 +113,8 @@ GETH_BINARY=$GETH_BINARY
 NETWORK_ID=$NETWORK_ID
 BOOTNODES=$BOOTNODES
 NATIVE_LOG_DIR=$LOG_DIR
+STATE_SCHEME=$STATE_SCHEME
+HISTORY_STATE=$HISTORY_STATE
 
 NODE0_DATADIR=$DATA_DIR/node0
 NODE1_DATADIR=$DATA_DIR/node1

@@ -25,6 +25,8 @@ const geth = process.env.GETH_BINARY || path.resolve(__dirname, '../docker/jucha
 const logDir = process.env.NATIVE_LOG_DIR || path.resolve(__dirname, '../data/native-logs');
 const networkId = process.env.NETWORK_ID || '666666';
 const bootnodes = process.env.BOOTNODES || '';
+const stateScheme = process.env.STATE_SCHEME || '';
+const historyState = process.env.HISTORY_STATE || '';
 
 function nameOf(suffix) {
   return `${ns}-${suffix}`;
@@ -59,6 +61,13 @@ function commonArgs(opts) {
     '--authrpc.port=' + opts.enginePort,
     '--cache', opts.cache || '1024'
   ];
+
+  if (stateScheme) {
+    args.push('--state.scheme=' + stateScheme);
+  }
+  if (historyState) {
+    args.push('--history.state=' + historyState);
+  }
 
   if (opts.mine) {
     args.push(

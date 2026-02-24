@@ -39,6 +39,10 @@ native:
   ecosystem_file: "./native/ecosystem.config.js"
   env_file: "./data/native/.env"
   geth_binary: "../chain/build/bin/geth"
+  # For geth >= 1.16, hash scheme avoids known path-scheme state freezer lock issues.
+  state_scheme: "hash"
+  # Optional: keep empty to use geth default (90000). Set "0" for full history if needed.
+  history_state: ""
   network_id: 666666
   external_rpc: "http://localhost:18545"
   pm2_namespace: "ju-chain"

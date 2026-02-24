@@ -15,8 +15,16 @@
     "londonBlock": 0,
     "arrowGlacierBlock": 0,
     "cancunTime": 0,
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      }
+    },
     "shanghaiTime": 0,
     "posaTime": 0,
+    "fixHeaderTime":0,
     "congress": {
       "period": 1,
       "epoch": 30

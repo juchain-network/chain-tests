@@ -33,6 +33,8 @@ PROFILE_WITHDRAW_PROFIT_PERIOD="$(profile_get "withdraw_profit_period" "2")"
 PROFILE_COMMISSION_UPDATE_COOLDOWN="$(profile_get "commission_update_cooldown" "1")"
 PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
+PREFUND_STAKING_INITIAL_STAKE="$(cfg_get "$CONFIG_FILE" "network.prefund_staking_initial_stake" "true")"
+MIN_VALIDATOR_STAKE_WEI="$(cfg_get "$CONFIG_FILE" "network.min_validator_stake_wei" "1000000000000000000")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -157,14 +159,24 @@ IFS=',' read -r FUNDER_ADDR FUNDER_PRIV FUNDER_PUB <<< "$(generate_key "funder-0
 FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
 echo "Funder: $FUNDER_ADDR"
 
-# Validators (3 nodes) + Sync Node (1 node) = 4 nodes total
-NUM_VALIDATORS=3
-NUM_NODES=4
+# Validators + sync node
+NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
+NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
 NODE_IPS=("172.28.0.10" "172.28.0.11" "172.28.0.12" "172.28.0.13")
 VAL_ADDRS=()
 VAL_PRIVS=()
 ENODES=()
 NODE_PUBS=()
+
+if ! [[ "$NUM_VALIDATORS" =~ ^[0-9]+$ ]] || [ "$NUM_VALIDATORS" -le 0 ]; then
+    die "network.validator_count must be a positive integer, got: $NUM_VALIDATORS"
+fi
+if ! [[ "$NUM_NODES" =~ ^[0-9]+$ ]] || [ "$NUM_NODES" -lt "$NUM_VALIDATORS" ]; then
+    die "network.node_count must be >= validator_count, got node_count=$NUM_NODES validator_count=$NUM_VALIDATORS"
+fi
+if ! [[ "$MIN_VALIDATOR_STAKE_WEI" =~ ^[0-9]+$ ]]; then
+    die "network.min_validator_stake_wei must be an unsigned integer in wei, got: $MIN_VALIDATOR_STAKE_WEI"
+fi
 
 # We generate for 0..3 (4 nodes). 0-2 are validators, 3 is sync.
 for i in $(seq 0 $((NUM_NODES-1))); do
@@ -233,7 +245,12 @@ echo "Building genesis.json..."
 
 # Generate System Contracts Alloc using the helper script
 echo "Generating system contracts alloc..."
-CHAIN_CONTRACT_ROOT="$CHAIN_CONTRACT_ROOT" CHAIN_CONTRACT_OUT="$CONTRACT_OUT_DIR" node "$SCRIPT_DIR/build_alloc.js" > "$DATA_DIR/sys_contracts.json"
+CHAIN_CONTRACT_ROOT="$CHAIN_CONTRACT_ROOT" \
+CHAIN_CONTRACT_OUT="$CONTRACT_OUT_DIR" \
+PREFUND_STAKING="$PREFUND_STAKING_INITIAL_STAKE" \
+MIN_VALIDATOR_STAKE_WEI="$MIN_VALIDATOR_STAKE_WEI" \
+VALIDATOR_COUNT="$NUM_VALIDATORS" \
+node "$SCRIPT_DIR/build_alloc.js" > "$DATA_DIR/sys_contracts.json"
 if [ $? -ne 0 ]; then
     echo "❌ Failed to generate system contracts alloc"
     exit 1

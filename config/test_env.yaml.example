@@ -7,15 +7,20 @@ paths:
   # Supports relative paths, resolved from chain-tests repo root.
   chain_root: "../chain"
   chain_contract_root: "../chain-contract"
-  # Prefer compiled artifacts only.
-  chain_contract_out: "../chain-contract/out"
-  # Optional prebuilt linux geth for docker runtime.
-  chain_docker_binary: ""
+  # Other paths are derived by default:
+  # - geth binary: <chain_root>/build/bin/geth
+  # - contracts out: <chain_contract_root>/out
 
 # Shared settings for both backends
 network:
   node_count: 4
   validator_count: 3
+  # Prefund Staking (0x...f013) with min stake * validator_count before block #1.
+  # Required for newer contract/binary combinations where initializeWithValidators
+  # validates staking contract balance during init.
+  prefund_staking_initial_stake: true
+  # Unit: wei per validator (default 1 ETH).
+  min_validator_stake_wei: "1000000000000000000"
   # Epoch length in blocks (smaller value speeds up epoch-bound tests).
   # Can be overridden at runtime by: make init EPOCH=60
   # (internally sets TEST_NETWORK_EPOCH).
@@ -38,7 +43,6 @@ native:
   init_script: "./scripts/native/pm2_init.sh"
   ecosystem_file: "./native/ecosystem.config.js"
   env_file: "./data/native/.env"
-  geth_binary: "../chain/build/bin/geth"
   # For geth >= 1.16, hash scheme avoids known path-scheme state freezer lock issues.
   state_scheme: "hash"
   # Optional: keep empty to use geth default (90000). Set "0" for full history if needed.

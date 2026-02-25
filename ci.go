@@ -58,7 +58,7 @@ const nestedRunEnv = "CHAIN_TESTS_NESTED_RUN"
 
 func main() {
 	mode := flag.String("mode", "groups", "Run mode: groups or tests")
-	groups := flag.String("groups", "smoke,config,governance,staking,delegation,punish,rewards,epoch", "Comma-separated group list")
+	groups := flag.String("groups", "config,governance,staking,delegation,punish,rewards,epoch", "Comma-separated group list")
 	tests := flag.String("tests", "", "Comma-separated test names (e.g. TestB_Governance,TestZ_LastManStanding)")
 	runPattern := flag.String("run", "", "go test -run pattern (used when -tests is empty)")
 	pkgs := flag.String("pkgs", "./tests/...", "go test package pattern/path")
@@ -420,6 +420,16 @@ func discoverTests(rootDir string) ([]string, error) {
 	err := filepath.WalkDir(testDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		rel, err := filepath.Rel(testDir, path)
+		if err == nil {
+			rel = filepath.ToSlash(rel)
+			if rel == "smoke" || strings.HasPrefix(rel, "smoke/") {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		if d.IsDir() {
 			return nil

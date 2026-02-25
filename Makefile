@@ -38,7 +38,8 @@ SLOW_THRESHOLD ?=
 SLOW_FAIL ?=
 GROUP_THRESHOLDS ?=
 GROUP_THRESHOLD_FAIL ?=
-CI_BUDGET_GROUP_THRESHOLDS ?= smoke=4m,config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
+CI_DEFAULT_GROUPS ?= config,governance,staking,delegation,punish,rewards,epoch
+CI_BUDGET_GROUP_THRESHOLDS ?= config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
 CI_BUDGET_SLOW_THRESHOLD ?= 45s
 CI_BUDGET_SLOW_TOP ?= 30
 CI_BUDGET_TEST_SLOW_THRESHOLD ?= 20s
@@ -83,7 +84,7 @@ help:
 	@echo ""
 	@echo "Test Targets:"
 	@echo "  test            - Run full suite in single pass (no setup)"
-	@echo "  test-all        - Run all tests with isolated reset per test"
+	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
 	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
 	@echo "  test-config     - System config tests"
 	@echo "  test-governance - Governance tests"
@@ -290,7 +291,7 @@ test-all:
 	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)
 
 test-all-legacy:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups smoke,config,governance,staking,delegation,punish,rewards,epoch
+	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups $(CI_DEFAULT_GROUPS)
 
 test: ready
 	@echo "🧪 Running Integration Tests (Single Pass)..."
@@ -302,11 +303,11 @@ ci-tool:
 	@$(CI_TOOL) $(CI_COMMON_FLAGS) $(ARGS)
 
 ci-groups:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) $(if $(GROUPS),-groups $(GROUPS),) $(if $(CI_LOG),-ci-log,)
+	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" $(if $(CI_LOG),-ci-log,)
 
 ci-groups-budget:
 	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) \
-		$(if $(GROUPS),-groups $(GROUPS),) \
+		-groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" \
 		$(if $(CI_LOG),-ci-log,) \
 		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
 		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_SLOW_THRESHOLD)) \

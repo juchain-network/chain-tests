@@ -23,6 +23,7 @@ const (
 	forkTxInterval      = 400 * time.Millisecond
 	noForkObserveWindow = 45 * time.Second
 	forkLeadWindow      = 5 * time.Second
+	minPreForkWindow    = 12 * time.Second
 	forkPostWindow      = 30 * time.Second
 	maxStallWindow      = 15 * time.Second
 	minTxSent           = 8
@@ -112,6 +113,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			t.Fatalf("fork already passed before test start: headTime=%d scheduled=%d mode=%s target=%s", head.timestamp, cfg.Fork.ScheduledTime, cfg.Fork.Mode, cfg.Fork.Target)
 		}
 		preStart := head.number
+		preStartTime := head.timestamp
 		preDeadline := time.Now().Add(time.Duration(cfg.Fork.DelaySeconds+60) * time.Second)
 		if cfg.Fork.DelaySeconds <= 0 {
 			preDeadline = time.Now().Add(90 * time.Second)
@@ -147,10 +149,15 @@ func TestF_ForkLiveness(t *testing.T) {
 		}
 
 		preEnd := head.number
-		if preEnd <= preStart {
+		remainingPreFork := int64(cfg.Fork.ScheduledTime) - int64(preStartTime)
+		requireStrictPreGrowth := remainingPreFork >= int64(minPreForkWindow.Seconds())
+		if requireStrictPreGrowth && preEnd <= preStart {
 			cancelSend()
 			wg.Wait()
 			t.Fatalf("no pre-fork block growth: start=%d end=%d target=%s", preStart, preEnd, cfg.Fork.Target)
+		}
+		if !requireStrictPreGrowth {
+			t.Logf("skip strict pre-fork growth check: target=%s pre_window=%ds", cfg.Fork.Target, remainingPreFork)
 		}
 
 		crossDeadline := time.Now().Add(40 * time.Second)

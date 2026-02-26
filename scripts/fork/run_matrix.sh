@@ -18,6 +18,8 @@ esac
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 FORK_CASES="${FORK_CASES:-poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,posa}"
 FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-120}"
+FORK_UPGRADE_STARTUP_BUFFER_SINGLE="${FORK_UPGRADE_STARTUP_BUFFER_SINGLE:-5}"
+FORK_UPGRADE_STARTUP_BUFFER_MULTI="${FORK_UPGRADE_STARTUP_BUFFER_MULTI:-30}"
 FORK_TEST_TIMEOUT="${FORK_TEST_TIMEOUT:-20m}"
 TEST_CONFIG_FILE="$PROJECT_ROOT/data/test_config.yaml"
 
@@ -25,12 +27,22 @@ run_case() {
   local mode="$1"
   local target="$2"
   local label="$3"
+  local case_delay="$FORK_DELAY_SECONDS"
   local rc=0
+
+  if [[ "$mode" == "upgrade" ]]; then
+    local startup_buffer="$FORK_UPGRADE_STARTUP_BUFFER_MULTI"
+    if [[ "$TOPOLOGY" == "single" ]]; then
+      startup_buffer="$FORK_UPGRADE_STARTUP_BUFFER_SINGLE"
+    fi
+    case_delay=$((FORK_DELAY_SECONDS + startup_buffer))
+  fi
+
   local init_env=(
     "TEST_ENV_CONFIG=$CONFIG_FILE"
     "GENESIS_MODE=$mode"
     "FORK_TARGET=$target"
-    "FORK_DELAY_SECONDS=$FORK_DELAY_SECONDS"
+    "FORK_DELAY_SECONDS=$case_delay"
   )
 
   if [[ "$TOPOLOGY" == "single" ]]; then

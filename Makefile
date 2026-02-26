@@ -32,6 +32,8 @@ ARGS ?=
 EPOCH ?=
 FORK_CASES ?=
 FORK_DELAY_SECONDS ?= 120
+FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
+FORK_UPGRADE_STARTUP_BUFFER_MULTI ?= 30
 FORK_TEST_TIMEOUT ?= 20m
 SKIP_PRECHECK ?=
 SKIP_SETUP ?=
@@ -120,6 +122,8 @@ help:
 	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
 	@echo "  FORK_CASES=$(FORK_CASES)         # comma list: poa,upgrade:shanghaiTime,...,posa"
 	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS)"
+	@echo "  FORK_UPGRADE_STARTUP_BUFFER_SINGLE=$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)"
+	@echo "  FORK_UPGRADE_STARTUP_BUFFER_MULTI=$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)"
 	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT)"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
 	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
@@ -271,6 +275,8 @@ test-fork-single:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		FORK_CASES="$(FORK_CASES)" \
 		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
+		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
+		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
 		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
 		bash ./scripts/fork/run_matrix.sh single
 
@@ -278,6 +284,8 @@ test-fork-multi:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		FORK_CASES="$(FORK_CASES)" \
 		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
+		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
+		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
 		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
 		bash ./scripts/fork/run_matrix.sh multi
 

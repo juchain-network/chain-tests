@@ -4,6 +4,12 @@ import sys
 import time
 
 FORK_FIELDS = ("cancunTime", "shanghaiTime", "posaTime", "fixHeaderTime")
+UPGRADE_DEPENDENCIES = {
+    "shanghaiTime": ("shanghaiTime",),
+    "cancunTime": ("shanghaiTime", "cancunTime"),
+    "fixHeaderTime": ("shanghaiTime", "fixHeaderTime"),
+    "posaTime": ("shanghaiTime", "posaTime"),
+}
 DEFAULT_BLOB_SCHEDULE = {
     "cancun": {
         "target": 3,
@@ -83,7 +89,9 @@ def main() -> int:
             cfg.pop(key, None)
         cfg.pop("blobSchedule", None)
         scheduled_time = now + max(delay, 0)
-        cfg[effective_target] = scheduled_time
+        dependencies = UPGRADE_DEPENDENCIES.get(effective_target, ())
+        for key in dependencies:
+            cfg[key] = scheduled_time
         if effective_target == "cancunTime":
             ensure_blob_schedule(cfg)
     else:

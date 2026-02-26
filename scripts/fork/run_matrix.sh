@@ -46,27 +46,37 @@ run_case() {
   env "${init_env[@]}" make -C "$PROJECT_ROOT" init
 
   if [[ "$TOPOLOGY" == "single" ]]; then
-    if ! env "${init_env[@]}" "$PROJECT_ROOT/scripts/network/native_single.sh" up "$CONFIG_FILE"; then
+    if env "${init_env[@]}" "$PROJECT_ROOT/scripts/network/native_single.sh" up "$CONFIG_FILE"; then
+      :
+    else
       rc=$?
     fi
     if [[ $rc -eq 0 ]]; then
-      if ! env "${init_env[@]}" "$PROJECT_ROOT/scripts/network/native_single.sh" ready "$CONFIG_FILE"; then
+      if env "${init_env[@]}" "$PROJECT_ROOT/scripts/network/native_single.sh" ready "$CONFIG_FILE"; then
+        :
+      else
         rc=$?
       fi
     fi
   else
-    if ! env "${init_env[@]}" make -C "$PROJECT_ROOT" run; then
+    if env "${init_env[@]}" make -C "$PROJECT_ROOT" run; then
+      :
+    else
       rc=$?
     fi
     if [[ $rc -eq 0 ]]; then
-      if ! env "${init_env[@]}" make -C "$PROJECT_ROOT" ready; then
+      if env "${init_env[@]}" make -C "$PROJECT_ROOT" ready; then
+        :
+      else
         rc=$?
       fi
     fi
   fi
 
   if [[ $rc -eq 0 ]]; then
-    if ! (cd "$PROJECT_ROOT" && env "${init_env[@]}" go test ./tests/fork -v -run "^TestF_ForkLiveness$" -count=1 -parallel=1 -p 1 -timeout "$FORK_TEST_TIMEOUT" -config "$TEST_CONFIG_FILE"); then
+    if (cd "$PROJECT_ROOT" && env "${init_env[@]}" go test ./tests/fork -v -run "^TestF_ForkLiveness$" -count=1 -parallel=1 -p 1 -timeout "$FORK_TEST_TIMEOUT" -config "$TEST_CONFIG_FILE"); then
+      :
+    else
       rc=$?
     fi
   fi

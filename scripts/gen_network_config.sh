@@ -35,6 +35,11 @@ PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
 PREFUND_STAKING_INITIAL_STAKE="$(cfg_get "$CONFIG_FILE" "network.prefund_staking_initial_stake" "true")"
 MIN_VALIDATOR_STAKE_WEI="$(cfg_get "$CONFIG_FILE" "network.min_validator_stake_wei" "1000000000000000000")"
+GENESIS_MODE="${GENESIS_MODE:-$(cfg_get "$CONFIG_FILE" "network.genesis_mode" "posa")}"
+FORK_TARGET="${FORK_TARGET:-$(cfg_get "$CONFIG_FILE" "network.fork_target" "")}"
+FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
+FORK_SCHEDULER_SCRIPT="$SCRIPT_DIR/fork/set_fork_schedule.py"
+POA_ALLOC_TEMPLATE="$(to_abs_path "./templates/alloc_poa_system_contracts.json")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -93,10 +98,17 @@ if [ -d "$DATA_DIR" ]; then
     fi
 fi
 mkdir -p "$DATA_DIR"
+mkdir -p "${GOCACHE:-$ROOT_DIR/.gocache}" "${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
+export GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}"
+export GOMODCACHE="${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
 
 echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
 echo "Using test profile: $TEST_PROFILE"
+echo "Using genesis mode: $GENESIS_MODE"
+if [ "$GENESIS_MODE" = "upgrade" ]; then
+    echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
+fi
 
 # 1. Generate Keys helper (using a temporary Go program)
 cat > "$DATA_DIR/genkeys.go" <<EOF
@@ -157,11 +169,20 @@ echo "Generating keys..."
 IFS=',' read -r FUNDER_ADDR FUNDER_PRIV FUNDER_PUB <<< "$(generate_key "funder-0")"
 # Trim any potential whitespace/newlines
 FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
+[ -n "$FUNDER_ADDR" ] || die "failed to generate funder key"
 echo "Funder: $FUNDER_ADDR"
 
 # Validators + sync node
-NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
-NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+if [ -n "${TEST_NETWORK_VALIDATOR_COUNT:-}" ]; then
+    NUM_VALIDATORS="$TEST_NETWORK_VALIDATOR_COUNT"
+else
+    NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
+fi
+if [ -n "${TEST_NETWORK_NODE_COUNT:-}" ]; then
+    NUM_NODES="$TEST_NETWORK_NODE_COUNT"
+else
+    NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+fi
 NODE_IPS=("172.28.0.10" "172.28.0.11" "172.28.0.12" "172.28.0.13")
 VAL_ADDRS=()
 VAL_PRIVS=()
@@ -174,8 +195,30 @@ fi
 if ! [[ "$NUM_NODES" =~ ^[0-9]+$ ]] || [ "$NUM_NODES" -lt "$NUM_VALIDATORS" ]; then
     die "network.node_count must be >= validator_count, got node_count=$NUM_NODES validator_count=$NUM_VALIDATORS"
 fi
+if [ "$NUM_NODES" -gt 4 ]; then
+    die "network.node_count currently supports up to 4 nodes, got: $NUM_NODES"
+fi
 if ! [[ "$MIN_VALIDATOR_STAKE_WEI" =~ ^[0-9]+$ ]]; then
     die "network.min_validator_stake_wei must be an unsigned integer in wei, got: $MIN_VALIDATOR_STAKE_WEI"
+fi
+if ! [[ "$FORK_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
+    die "network.fork_delay_seconds must be an unsigned integer in seconds, got: $FORK_DELAY_SECONDS"
+fi
+case "$GENESIS_MODE" in
+    poa|posa|upgrade)
+        ;;
+    *)
+        die "network.genesis_mode must be one of poa|posa|upgrade, got: $GENESIS_MODE"
+        ;;
+esac
+if [ "$GENESIS_MODE" = "upgrade" ]; then
+    case "$FORK_TARGET" in
+        shanghaiTime|cancunTime|posaTime|fixHeaderTime)
+            ;;
+        *)
+            die "FORK_TARGET must be one of shanghaiTime|cancunTime|posaTime|fixHeaderTime when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
+            ;;
+    esac
 fi
 
 # We generate for 0..3 (4 nodes). 0-2 are validators, 3 is sync.
@@ -186,6 +229,7 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     
     # Node P2P Key
     IFS=',' read -r NODE_ADDR NODE_PRIV NODE_PUB <<< "$(generate_key "node-p2p-$i")"
+    [ -n "$NODE_PRIV" ] || die "failed to generate p2p key for node$i"
     echo "$NODE_PRIV" > "$DATA_DIR/node$i/nodekey"
     echo "$NODE_PUB" > "$DATA_DIR/node$i/nodepub"
     NODE_PUBS+=("$NODE_PUB")
@@ -201,6 +245,7 @@ for i in $(seq 0 $((NUM_NODES-1))); do
         # Validator keys for 0-2
         IFS=',' read -r ADDR PRIV PUB <<< "$(generate_key "validator-$i")"
         ADDR=$(echo "$ADDR" | tr -d '[:space:]')
+        [ -n "$ADDR" ] || die "failed to generate validator key for node$i"
         VAL_ADDRS+=($ADDR)
         VAL_PRIVS+=($PRIV)
         echo "Validator $i: $ADDR"
@@ -245,15 +290,22 @@ echo "Building genesis.json..."
 
 # Generate System Contracts Alloc using the helper script
 echo "Generating system contracts alloc..."
-CHAIN_CONTRACT_ROOT="$CHAIN_CONTRACT_ROOT" \
-CHAIN_CONTRACT_OUT="$CONTRACT_OUT_DIR" \
-PREFUND_STAKING="$PREFUND_STAKING_INITIAL_STAKE" \
-MIN_VALIDATOR_STAKE_WEI="$MIN_VALIDATOR_STAKE_WEI" \
-VALIDATOR_COUNT="$NUM_VALIDATORS" \
-node "$SCRIPT_DIR/build_alloc.js" > "$DATA_DIR/sys_contracts.json"
-if [ $? -ne 0 ]; then
-    echo "❌ Failed to generate system contracts alloc"
-    exit 1
+if [ "$GENESIS_MODE" = "poa" ] || [ "$GENESIS_MODE" = "upgrade" ]; then
+    if [ ! -f "$POA_ALLOC_TEMPLATE" ]; then
+        die "missing PoA alloc template: $POA_ALLOC_TEMPLATE"
+    fi
+    cp "$POA_ALLOC_TEMPLATE" "$DATA_DIR/sys_contracts.json"
+else
+    CHAIN_CONTRACT_ROOT="$CHAIN_CONTRACT_ROOT" \
+    CHAIN_CONTRACT_OUT="$CONTRACT_OUT_DIR" \
+    PREFUND_STAKING="$PREFUND_STAKING_INITIAL_STAKE" \
+    MIN_VALIDATOR_STAKE_WEI="$MIN_VALIDATOR_STAKE_WEI" \
+    VALIDATOR_COUNT="$NUM_VALIDATORS" \
+    node "$SCRIPT_DIR/build_alloc.js" > "$DATA_DIR/sys_contracts.json"
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to generate system contracts alloc"
+        exit 1
+    fi
 fi
 
 # Add Funder and Validators to Alloc
@@ -283,6 +335,18 @@ echo "$ALLOC_JSON" > "$DATA_DIR/alloc.json"
 jq --slurpfile allocList "$DATA_DIR/alloc.json" --arg extra "$EXTRA_DATA" --arg epoch "$NETWORK_EPOCH" \
    '.alloc = $allocList[0] | .extraData = $extra | .config.congress.epoch = ($epoch | tonumber)' "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
 
+# Apply mode-specific fork schedule after template merge.
+if [ ! -f "$FORK_SCHEDULER_SCRIPT" ]; then
+    die "missing fork scheduler script: $FORK_SCHEDULER_SCRIPT"
+fi
+command -v python3 >/dev/null 2>&1 || die "python3 is required for fork schedule generation"
+FORK_META_JSON="$(python3 "$FORK_SCHEDULER_SCRIPT" "$DATA_DIR/genesis.json" "$GENESIS_MODE" "$FORK_TARGET" "$FORK_DELAY_SECONDS")"
+if [ -z "$FORK_META_JSON" ]; then
+    die "fork scheduler returned empty metadata"
+fi
+FORK_EFFECTIVE_TARGET="$(printf '%s' "$FORK_META_JSON" | jq -r '.target // ""')"
+FORK_SCHEDULED_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.scheduled_time // 0')"
+
 # 3. Generate test_config.yaml
 echo "Generating test_config.yaml..."
 cat > "$DATA_DIR/test_config.yaml" <<EOF
@@ -307,27 +371,54 @@ cat >> "$DATA_DIR/test_config.yaml" <<EOF
 
 validator_rpcs:
 EOF
-echo "  - \"http://localhost:${V1_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
-echo "  - \"http://localhost:${V2_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
-echo "  - \"http://localhost:${V3_HTTP}\"" >> "$DATA_DIR/test_config.yaml"
+VALIDATOR_HTTP_PORTS=("$V1_HTTP" "$V2_HTTP" "$V3_HTTP")
+for i in $(seq 0 $((NUM_VALIDATORS-1))); do
+    if [ "$i" -lt "${#VALIDATOR_HTTP_PORTS[@]}" ]; then
+        echo "  - \"http://localhost:${VALIDATOR_HTTP_PORTS[$i]}\"" >> "$DATA_DIR/test_config.yaml"
+    fi
+done
 
 cat >> "$DATA_DIR/test_config.yaml" <<EOF
 
-sync_rpc: "http://localhost:${S1_HTTP}"
+sync_rpc: ""
 
 node_rpcs:
-  - name: "validator1"
-    role: "validator"
-    url: "http://localhost:${V1_HTTP}"
-  - name: "validator2"
-    role: "validator"
-    url: "http://localhost:${V2_HTTP}"
-  - name: "validator3"
-    role: "validator"
-    url: "http://localhost:${V3_HTTP}"
-  - name: "sync"
-    role: "sync"
-    url: "http://localhost:${S1_HTTP}"
+EOF
+
+NODE_HTTP_PORTS=("$V1_HTTP" "$V2_HTTP" "$V3_HTTP" "$S1_HTTP")
+for i in $(seq 0 $((NUM_NODES-1))); do
+    role="validator"
+    name="validator$((i+1))"
+    if [ "$i" -ge "$NUM_VALIDATORS" ]; then
+        role="sync"
+        name="sync$((i-NUM_VALIDATORS+1))"
+    fi
+    if [ "$i" -lt "${#NODE_HTTP_PORTS[@]}" ]; then
+        rpc_port="${NODE_HTTP_PORTS[$i]}"
+    else
+        continue
+    fi
+    cat >> "$DATA_DIR/test_config.yaml" <<EOF
+  - name: "$name"
+    role: "$role"
+    url: "http://localhost:${rpc_port}"
+EOF
+done
+
+if [ "$NUM_NODES" -gt "$NUM_VALIDATORS" ]; then
+    if [ "$NUM_VALIDATORS" -lt "${#NODE_HTTP_PORTS[@]}" ]; then
+        SYNC_PORT="${NODE_HTTP_PORTS[$NUM_VALIDATORS]}"
+        if [ -n "$SYNC_PORT" ]; then
+            if [ "$(uname -s)" = "Darwin" ]; then
+                sed -i '' "s#^sync_rpc: \"\"#sync_rpc: \"http://localhost:${SYNC_PORT}\"#" "$DATA_DIR/test_config.yaml"
+            else
+                sed -i "s#^sync_rpc: \"\"#sync_rpc: \"http://localhost:${SYNC_PORT}\"#" "$DATA_DIR/test_config.yaml"
+            fi
+        fi
+    fi
+fi
+
+cat >> "$DATA_DIR/test_config.yaml" <<EOF
 
 network:
   epoch: $NETWORK_EPOCH
@@ -344,6 +435,12 @@ test:
     withdraw_profit_period: $PROFILE_WITHDRAW_PROFIT_PERIOD
     commission_update_cooldown: $PROFILE_COMMISSION_UPDATE_COOLDOWN
     proposal_lasting_period: $PROFILE_PROPOSAL_LASTING_PERIOD
+
+fork:
+  mode: "$GENESIS_MODE"
+  target: "$FORK_EFFECTIVE_TARGET"
+  scheduled_time: $FORK_SCHEDULED_TIME
+  delay_seconds: $FORK_DELAY_SECONDS
 EOF
 
 awk \

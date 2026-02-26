@@ -15,6 +15,16 @@ paths:
 network:
   node_count: 4
   validator_count: 3
+  # Genesis mode for chain startup:
+  # - poa: start from PoA system contracts
+  # - upgrade: start from PoA and schedule one fork-time transition
+  # - posa: direct PoSA startup
+  genesis_mode: "posa"
+  # Used only when genesis_mode=upgrade.
+  # Valid values: shanghaiTime | cancunTime | posaTime | fixHeaderTime
+  fork_target: ""
+  # Fork activation delay from init time (seconds), upgrade mode only.
+  fork_delay_seconds: 120
   # Prefund Staking (0x...f013) with min stake * validator_count before block #1.
   # Required for newer contract/binary combinations where initializeWithValidators
   # validates staking contract balance during init.

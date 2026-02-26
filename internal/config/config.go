@@ -20,6 +20,13 @@ type Config struct {
 		Epoch uint64 `yaml:"epoch"`
 	} `yaml:"network"`
 
+	Fork struct {
+		Mode          string `yaml:"mode"`
+		Target        string `yaml:"target"`
+		ScheduledTime int64  `yaml:"scheduled_time"`
+		DelaySeconds  int64  `yaml:"delay_seconds"`
+	} `yaml:"fork"`
+
 	// The rich account that funds test accounts
 	Funder struct {
 		PrivateKey string `yaml:"private_key"`

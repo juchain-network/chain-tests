@@ -4,7 +4,8 @@ SHELL := /bin/bash
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-smoke test-config test-governance test-staking test-delegation test-punish \
-        test-rewards test-epoch ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
+        test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
+        ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -29,6 +30,9 @@ CI_LOG ?=
 PKGS ?=
 ARGS ?=
 EPOCH ?=
+FORK_CASES ?=
+FORK_DELAY_SECONDS ?= 120
+FORK_TEST_TIMEOUT ?= 20m
 SKIP_PRECHECK ?=
 SKIP_SETUP ?=
 SHARED_SETUP ?=
@@ -86,6 +90,9 @@ help:
 	@echo "  test            - Run full suite in single pass (no setup)"
 	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
 	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
+	@echo "  test-fork-single - Fork liveness matrix on native single-node topology"
+	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
+	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
 	@echo "  test-config     - System config tests"
 	@echo "  test-governance - Governance tests"
 	@echo "  test-staking    - Staking tests"
@@ -111,6 +118,9 @@ help:
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "                                    # also overrides group/special epoch config when set"
 	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
+	@echo "  FORK_CASES=$(FORK_CASES)         # comma list: poa,upgrade:shanghaiTime,...,posa"
+	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS)"
+	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT)"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
 	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
 	@echo "  SHARED_SETUP=$(SHARED_SETUP)       # set to 1 to share setup across compatible groups in ci-groups"
@@ -256,6 +266,22 @@ test-smoke:
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
 	echo "⏱ smoke epoch=$$epoch"; \
 	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/smoke -run "TestS_SmokeChainLivenessAllNodes"
+
+test-fork-single:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		FORK_CASES="$(FORK_CASES)" \
+		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
+		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
+		bash ./scripts/fork/run_matrix.sh single
+
+test-fork-multi:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		FORK_CASES="$(FORK_CASES)" \
+		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
+		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
+		bash ./scripts/fork/run_matrix.sh multi
+
+test-fork-all: test-fork-single test-fork-multi
 
 test-governance:
 	@set -e; \

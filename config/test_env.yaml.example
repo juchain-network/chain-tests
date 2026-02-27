@@ -21,7 +21,10 @@ network:
   # - posa: direct PoSA startup
   genesis_mode: "posa"
   # Used only when genesis_mode=upgrade.
-  # Valid values: shanghaiTime | cancunTime | posaTime | fixHeaderTime
+  # Valid values:
+  # - shanghaiTime | cancunTime | posaTime | fixHeaderTime
+  # - allStaggered  -> shanghai/cancun/fixHeader/posa all non-zero and +60s increment
+  # - allSame       -> shanghai/cancun/fixHeader/posa all equal and non-zero
   fork_target: ""
   # Fork activation delay from init time (seconds), upgrade mode only.
   fork_delay_seconds: 120

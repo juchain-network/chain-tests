@@ -147,7 +147,10 @@ See `config/test_env.yaml.example` for full options.
 Important fields:
 
 - `network.genesis_mode`: `poa | upgrade | posa`
-- `network.fork_target`: `shanghaiTime | cancunTime | posaTime | fixHeaderTime`
+- `network.fork_target`:
+  - `shanghaiTime | cancunTime | posaTime | fixHeaderTime`
+  - `allStaggered` (all four fork timestamps are non-zero and increase by 60s)
+  - `allSame` (all four fork timestamps are equal and non-zero)
 - `network.fork_delay_seconds`: fork delay in seconds for upgrade mode
 - `network.epoch`: base epoch length (can be overridden per run: `make init EPOCH=60`)
 - `tests.profile`: `fast | default | edge`
@@ -190,4 +193,3 @@ When Congress consensus logic changes (`congress.go`):
 1. Rebuild geth
 2. Replace runtime binary
 3. Restart from clean data and run regression
-

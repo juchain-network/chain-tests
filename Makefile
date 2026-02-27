@@ -120,7 +120,7 @@ help:
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "                                    # also overrides group/special epoch config when set"
 	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
-	@echo "  FORK_CASES=$(FORK_CASES)         # comma list: poa,upgrade:shanghaiTime,...,posa"
+	@echo "  FORK_CASES=$(FORK_CASES)         # e.g. poa,upgrade:shanghaiTime,upgrade:allStaggered,upgrade:allSame,posa"
 	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS)"
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_SINGLE=$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)"
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_MULTI=$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)"

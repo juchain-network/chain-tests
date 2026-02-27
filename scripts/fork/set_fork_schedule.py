@@ -10,6 +10,7 @@ UPGRADE_DEPENDENCIES = {
     "fixHeaderTime": ("shanghaiTime", "fixHeaderTime"),
     "posaTime": ("shanghaiTime", "posaTime"),
 }
+STAGGER_STEP_SECONDS = 60
 DEFAULT_BLOB_SCHEDULE = {
     "cancun": {
         "target": 3,
@@ -20,7 +21,7 @@ DEFAULT_BLOB_SCHEDULE = {
 
 
 def canonical_target(raw: str) -> str:
-    value = (raw or "").strip()
+    value = (raw or "").strip().lower()
     aliases = {
         "cancun": "cancunTime",
         "cancuntime": "cancunTime",
@@ -30,10 +31,14 @@ def canonical_target(raw: str) -> str:
         "posatime": "posaTime",
         "fixheader": "fixHeaderTime",
         "fixheadertime": "fixHeaderTime",
-        "cancunTime": "cancunTime",
-        "shanghaiTime": "shanghaiTime",
-        "posaTime": "posaTime",
-        "fixHeaderTime": "fixHeaderTime",
+        "staggered": "allStaggered",
+        "allstaggered": "allStaggered",
+        "all_staggered": "allStaggered",
+        "all-staggered": "allStaggered",
+        "staggered1m": "allStaggered",
+        "allsame": "allSame",
+        "all_same": "allSame",
+        "all-same": "allSame",
     }
     return aliases.get(value, "")
 
@@ -67,6 +72,7 @@ def main() -> int:
     now = int(time.time())
     scheduled_time = 0
     effective_target = ""
+    effective_delay_seconds = max(delay, 0)
 
     if mode == "poa":
         for key in FORK_FIELDS:
@@ -81,18 +87,34 @@ def main() -> int:
         effective_target = canonical_target(target_raw)
         if not effective_target:
             print(
-                "upgrade mode requires target in {shanghaiTime,cancunTime,posaTime,fixHeaderTime}",
+                "upgrade mode requires target in {shanghaiTime,cancunTime,posaTime,fixHeaderTime,allStaggered,allSame}",
                 file=sys.stderr,
             )
             return 1
         for key in FORK_FIELDS:
             cfg.pop(key, None)
         cfg.pop("blobSchedule", None)
-        scheduled_time = now + max(delay, 0)
+        start_time = now + max(delay, 0)
+        scheduled_time = start_time
         dependencies = UPGRADE_DEPENDENCIES.get(effective_target, ())
-        for key in dependencies:
-            cfg[key] = scheduled_time
-        if effective_target == "cancunTime":
+        if len(dependencies) > 0:
+            for key in dependencies:
+                cfg[key] = scheduled_time
+        elif effective_target == "allStaggered":
+            cfg["shanghaiTime"] = start_time
+            cfg["cancunTime"] = start_time + STAGGER_STEP_SECONDS
+            cfg["fixHeaderTime"] = start_time + STAGGER_STEP_SECONDS*2
+            cfg["posaTime"] = start_time + STAGGER_STEP_SECONDS*3
+            scheduled_time = cfg["posaTime"]
+            effective_delay_seconds = effective_delay_seconds + STAGGER_STEP_SECONDS*3
+        elif effective_target == "allSame":
+            for key in ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"):
+                cfg[key] = start_time
+            scheduled_time = start_time
+        else:
+            print(f"unsupported upgrade target: {effective_target}", file=sys.stderr)
+            return 1
+        if cfg.get("cancunTime", 0) > 0:
             ensure_blob_schedule(cfg)
     else:
         print(f"unsupported mode: {mode}", file=sys.stderr)
@@ -102,12 +124,22 @@ def main() -> int:
         json.dump(data, f, indent=2)
         f.write("\n")
 
+    schedule = {}
+    for key in FORK_FIELDS:
+        value = cfg.get(key, 0)
+        if isinstance(value, int):
+            schedule[key] = value
+        else:
+            schedule[key] = 0
+
     print(
         json.dumps(
             {
                 "mode": mode,
                 "target": effective_target,
                 "scheduled_time": scheduled_time,
+                "effective_delay_seconds": effective_delay_seconds,
+                "schedule": schedule,
             }
         )
     )

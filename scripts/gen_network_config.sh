@@ -213,10 +213,10 @@ case "$GENESIS_MODE" in
 esac
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     case "$FORK_TARGET" in
-        shanghaiTime|cancunTime|posaTime|fixHeaderTime)
+        shanghaiTime|cancunTime|posaTime|fixHeaderTime|allStaggered|allSame)
             ;;
         *)
-            die "FORK_TARGET must be one of shanghaiTime|cancunTime|posaTime|fixHeaderTime when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
+            die "FORK_TARGET must be one of shanghaiTime|cancunTime|posaTime|fixHeaderTime|allStaggered|allSame when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
             ;;
     esac
 fi
@@ -346,6 +346,11 @@ if [ -z "$FORK_META_JSON" ]; then
 fi
 FORK_EFFECTIVE_TARGET="$(printf '%s' "$FORK_META_JSON" | jq -r '.target // ""')"
 FORK_SCHEDULED_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.scheduled_time // 0')"
+FORK_EFFECTIVE_DELAY_SECONDS="$(printf '%s' "$FORK_META_JSON" | jq -r '.effective_delay_seconds // '"$FORK_DELAY_SECONDS"'')"
+FORK_SHANGHAI_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.shanghaiTime // 0')"
+FORK_CANCUN_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.cancunTime // 0')"
+FORK_FIX_HEADER_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.fixHeaderTime // 0')"
+FORK_POSA_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.posaTime // 0')"
 
 # 3. Generate test_config.yaml
 echo "Generating test_config.yaml..."
@@ -440,7 +445,12 @@ fork:
   mode: "$GENESIS_MODE"
   target: "$FORK_EFFECTIVE_TARGET"
   scheduled_time: $FORK_SCHEDULED_TIME
-  delay_seconds: $FORK_DELAY_SECONDS
+  delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
+  schedule:
+    shanghai_time: $FORK_SHANGHAI_TIME
+    cancun_time: $FORK_CANCUN_TIME
+    fix_header_time: $FORK_FIX_HEADER_TIME
+    posa_time: $FORK_POSA_TIME
 EOF
 
 awk \

@@ -27,6 +27,18 @@ type Config struct {
 		DelaySeconds  int64  `yaml:"delay_seconds"`
 	} `yaml:"fork"`
 
+	Blacklist struct {
+		Enabled         bool   `yaml:"enabled"`
+		Mode            string `yaml:"mode"`
+		ContractAddress string `yaml:"contract_address"`
+		AlertFailOpen   bool   `yaml:"alert_fail_open"`
+		Mock            struct {
+			Predeploy bool   `yaml:"predeploy"`
+			CodeFile  string `yaml:"code_file"`
+			ABIFile   string `yaml:"abi_file"`
+		} `yaml:"mock"`
+	} `yaml:"blacklist"`
+
 	// The rich account that funds test accounts
 	Funder struct {
 		PrivateKey string `yaml:"private_key"`

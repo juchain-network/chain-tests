@@ -10,6 +10,13 @@ DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")
 TEMPLATE_GENESIS="$(to_abs_path "./templates/genesis.tpl.json")"
 PRIMARY_RPC="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
 
+is_true() {
+    case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 TEST_PROFILE="${TEST_PROFILE:-$(cfg_get "$CONFIG_FILE" "tests.profile" "fast")}"
 profile_get() {
     local key="$1"
@@ -40,6 +47,21 @@ FORK_TARGET="${FORK_TARGET:-$(cfg_get "$CONFIG_FILE" "network.fork_target" "")}"
 FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
 FORK_SCHEDULER_SCRIPT="$SCRIPT_DIR/fork/set_fork_schedule.py"
 POA_ALLOC_TEMPLATE="$(to_abs_path "./templates/alloc_poa_system_contracts.json")"
+BLACKLIST_ENABLED_RAW="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
+BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
+BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
+BLACKLIST_ALERT_FAIL_OPEN_RAW="$(cfg_get "$CONFIG_FILE" "blacklist.alert_fail_open" "true")"
+BLACKLIST_MOCK_PREDEPLOY_RAW="$(cfg_get "$CONFIG_FILE" "blacklist.mock.predeploy" "true")"
+BLACKLIST_MOCK_CODE_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "blacklist.mock.code_file" "./templates/blacklist/mock_runtime_hex.txt")")"
+BLACKLIST_MOCK_ABI_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "blacklist.mock.abi_file" "./templates/blacklist/mock_abi.json")")"
+BLACKLIST_ALLOC_SCRIPT="$SCRIPT_DIR/add_blacklist_alloc.js"
+
+BLACKLIST_ENABLED=false
+BLACKLIST_ALERT_FAIL_OPEN=false
+BLACKLIST_MOCK_PREDEPLOY=false
+if is_true "$BLACKLIST_ENABLED_RAW"; then BLACKLIST_ENABLED=true; fi
+if is_true "$BLACKLIST_ALERT_FAIL_OPEN_RAW"; then BLACKLIST_ALERT_FAIL_OPEN=true; fi
+if is_true "$BLACKLIST_MOCK_PREDEPLOY_RAW"; then BLACKLIST_MOCK_PREDEPLOY=true; fi
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -71,6 +93,12 @@ if [ ! -d "$CONTRACT_OUT_DIR" ]; then
     echo "Provide CHAIN_CONTRACT_OUT env or configure paths.chain_contract_out / paths.chain_contract_root."
     echo "Only compiled artifacts are required (no source build in this repo)."
     exit 1
+fi
+
+if [ "$BLACKLIST_ENABLED" = true ] && [ "$BLACKLIST_MODE" = "mock" ] && [ "$BLACKLIST_MOCK_PREDEPLOY" = true ]; then
+    [ -f "$BLACKLIST_MOCK_CODE_FILE" ] || die "blacklist mock runtime code file not found: $BLACKLIST_MOCK_CODE_FILE"
+    [ -f "$BLACKLIST_MOCK_ABI_FILE" ] || die "blacklist mock abi file not found: $BLACKLIST_MOCK_ABI_FILE"
+    [ -f "$BLACKLIST_ALLOC_SCRIPT" ] || die "missing blacklist alloc script: $BLACKLIST_ALLOC_SCRIPT"
 fi
 
 if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
@@ -106,6 +134,7 @@ echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
 echo "Using test profile: $TEST_PROFILE"
 echo "Using genesis mode: $GENESIS_MODE"
+echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
 fi
@@ -203,6 +232,16 @@ if ! [[ "$MIN_VALIDATOR_STAKE_WEI" =~ ^[0-9]+$ ]]; then
 fi
 if ! [[ "$FORK_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
     die "network.fork_delay_seconds must be an unsigned integer in seconds, got: $FORK_DELAY_SECONDS"
+fi
+case "$BLACKLIST_MODE" in
+    mock|real)
+        ;;
+    *)
+        die "blacklist.mode must be one of mock|real, got: $BLACKLIST_MODE"
+        ;;
+esac
+if ! [[ "$BLACKLIST_CONTRACT_ADDR" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+    die "blacklist.contract_address must be a hex address, got: $BLACKLIST_CONTRACT_ADDR"
 fi
 case "$GENESIS_MODE" in
     poa|posa|upgrade)
@@ -332,6 +371,12 @@ EXTRA_DATA="0x${VANITY}${VALIDATORS_HEX}${SUFFIX}"
 # Replace placeholders
 echo "$ALLOC_JSON" > "$DATA_DIR/alloc.json"
 
+if [ "$BLACKLIST_ENABLED" = true ] && [ "$BLACKLIST_MODE" = "mock" ] && [ "$BLACKLIST_MOCK_PREDEPLOY" = true ]; then
+    echo "Injecting blacklist mock alloc: addr=$BLACKLIST_CONTRACT_ADDR code=$BLACKLIST_MOCK_CODE_FILE"
+    node "$BLACKLIST_ALLOC_SCRIPT" "$DATA_DIR/alloc.json" "$BLACKLIST_CONTRACT_ADDR" "$BLACKLIST_MOCK_CODE_FILE" > "$DATA_DIR/alloc.with_blacklist.json"
+    mv "$DATA_DIR/alloc.with_blacklist.json" "$DATA_DIR/alloc.json"
+fi
+
 jq --slurpfile allocList "$DATA_DIR/alloc.json" --arg extra "$EXTRA_DATA" --arg epoch "$NETWORK_EPOCH" \
    '.alloc = $allocList[0] | .extraData = $extra | .config.congress.epoch = ($epoch | tonumber)' "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
 
@@ -451,6 +496,16 @@ fork:
     cancun_time: $FORK_CANCUN_TIME
     fix_header_time: $FORK_FIX_HEADER_TIME
     posa_time: $FORK_POSA_TIME
+
+blacklist:
+  enabled: $BLACKLIST_ENABLED
+  mode: "$BLACKLIST_MODE"
+  contract_address: "$BLACKLIST_CONTRACT_ADDR"
+  alert_fail_open: $BLACKLIST_ALERT_FAIL_OPEN
+  mock:
+    predeploy: $BLACKLIST_MOCK_PREDEPLOY
+    code_file: "$BLACKLIST_MOCK_CODE_FILE"
+    abi_file: "$BLACKLIST_MOCK_ABI_FILE"
 EOF
 
 awk \
@@ -523,5 +578,26 @@ else
     -e 's|\./start.sh|../docker/start.sh|g' \
     "$DATA_DIR/docker-compose.runtime.yml"
 fi
+
+awk \
+  -v enabled="$BLACKLIST_ENABLED" \
+  -v addr="$BLACKLIST_CONTRACT_ADDR" \
+  -v mode="$BLACKLIST_MODE" \
+  -v alert="$BLACKLIST_ALERT_FAIL_OPEN" '
+  /^  node[0-3]:$/ {
+    in_node = 1
+  }
+  in_node && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  node[0-3]:$/ {
+    in_node = 0
+  }
+  { print }
+  in_node && /^    environment:/ {
+    print "      - BLACKLIST_ENABLED=" enabled
+    print "      - BLACKLIST_CONTRACT_ADDR=" addr
+    print "      - BLACKLIST_MODE=" mode
+    print "      - BLACKLIST_ALERT_FAIL_OPEN=" alert
+  }
+' "$DATA_DIR/docker-compose.runtime.yml" > "$DATA_DIR/docker-compose.runtime.with_blacklist.yml"
+mv "$DATA_DIR/docker-compose.runtime.with_blacklist.yml" "$DATA_DIR/docker-compose.runtime.yml"
 
 echo "✅ Configuration generated at $DATA_DIR"

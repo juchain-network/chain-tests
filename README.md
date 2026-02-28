@@ -137,9 +137,30 @@ make test-fork-all
 
 Optional variables:
 
-- `FORK_CASES` (example: `poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,posa`)
+- `FORK_CASES` (default: `poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,upgrade:allStaggered,upgrade:allSame,posa`)
 - `FORK_DELAY_SECONDS`
 - `FORK_TEST_TIMEOUT`
+- `FORK_REPORT_DIR`
+
+### 5.5 PoSA / blacklist / full regression
+
+```bash
+make test-posa-multi
+make test-blacklist
+make test-regression-all
+```
+
+### 5.6 Performance / soak
+
+```bash
+make test-perf-tiers
+make test-soak-24h
+```
+
+Generated perf artifacts:
+- `summary.md`
+- `metrics.csv`
+- `verdict.json`
 
 ## 6. Key configuration
 
@@ -155,11 +176,18 @@ Important fields:
 - `network.epoch`: base epoch length (can be overridden per run: `make init EPOCH=60`)
 - `tests.profile`: `fast | default | edge`
 - `tests.epoch_overrides`: group/special-case epoch overrides for speed and stability
+- `blacklist.*`: mock/real mode, contract address, fail-open alert policy
+- `perf.*`: tier/soak defaults and thresholds
+- `ci.*`: PR/nightly/weekly profile defaults
 
 ## 7. Reports and logs
 
 - runtime artifacts: `data/`
 - test reports: `reports/ci_<timestamp>/report.md`
+- machine-readable run summary: `reports/ci_<timestamp>/summary.json`
+- machine-readable run manifest: `reports/ci_<timestamp>/manifest.json`
+- fork matrix report: `reports/fork_<timestamp>/matrix.md` + `matrix.json`
+- full regression index: `reports/regression_<timestamp>/index.md` + `index.json`
 
 View logs:
 
@@ -193,3 +221,11 @@ When Congress consensus logic changes (`congress.go`):
 1. Rebuild geth
 2. Replace runtime binary
 3. Restart from clean data and run regression
+
+## 10. CI profiles
+
+```bash
+make ci-pr-gate
+make ci-nightly-full
+make ci-weekly-soak
+```

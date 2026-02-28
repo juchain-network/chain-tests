@@ -6,6 +6,16 @@ paths:
   chain_contract_root: "/Users/litian/code/work/github/chain-contract"
   # chain_root: "/Users/litian/code/work/github/chain"
 
+blacklist:
+  enabled: true
+  mode: "mock"
+  contract_address: "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E"
+  alert_fail_open: true
+  mock:
+    predeploy: true
+    code_file: "./templates/blacklist/mock_runtime_hex.txt"
+    abi_file: "./templates/blacklist/mock_abi.json"
+
 network:
   node_count: 4
   validator_count: 3
@@ -87,3 +97,30 @@ tests:
       withdraw_profit_period: 30
       commission_update_cooldown: 30
       proposal_lasting_period: 300
+
+perf:
+  tps_tiers: [10, 30, 60]
+  sample_interval_seconds: 2
+  soak:
+    duration: "24h"
+    tps: 10
+    restart_interval: "1h"
+  thresholds:
+    success_rate_min: 0.99
+    stall_window_seconds_max: 15
+    max_height_lag: 8
+    rpc_latency_p95_ms_max: 500
+
+ci:
+  pr_gate:
+    groups: "config,governance,staking,punish,epoch"
+    run_smoke: true
+    run_blacklist: true
+  nightly:
+    groups: "config,governance,staking,delegation,punish,rewards,epoch"
+    run_smoke: true
+    run_fork_all: true
+    run_posa: true
+    run_blacklist: true
+  weekly_soak:
+    enabled: true

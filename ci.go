@@ -2,9 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +18,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ethereum/go-ethereum/ethclient"
+	"gopkg.in/yaml.v3"
+	intcfg "juchain.org/chain/tools/ci/internal/config"
 )
 
 type stepResult struct {
@@ -52,6 +61,53 @@ type reportOptions struct {
 type reportStats struct {
 	SlowCaseAlerts int
 	GroupAlerts    int
+}
+
+type summaryStep struct {
+	Name      string        `json:"name"`
+	Status    string        `json:"status"`
+	Duration  time.Duration `json:"duration"`
+	PassCount int           `json:"pass_count"`
+	FailCount int           `json:"fail_count"`
+	SkipCount int           `json:"skip_count"`
+	LogPath   string        `json:"log_path"`
+}
+
+type runSummary struct {
+	GeneratedAt     string        `json:"generated_at"`
+	Mode            string        `json:"mode"`
+	Groups          []string      `json:"groups,omitempty"`
+	Tests           []string      `json:"tests,omitempty"`
+	RunPattern      string        `json:"run_pattern,omitempty"`
+	ConfigPath      string        `json:"config_path"`
+	ReportPath      string        `json:"report_path"`
+	SlowCaseAlerts  int           `json:"slow_case_alerts"`
+	GroupAlerts     int           `json:"group_alerts"`
+	TotalPassTests  int           `json:"total_pass_tests"`
+	TotalFailTests  int           `json:"total_fail_tests"`
+	TotalSkipTests  int           `json:"total_skip_tests"`
+	TotalStepCount  int           `json:"total_step_count"`
+	FailedStepCount int           `json:"failed_step_count"`
+	Status          string        `json:"status"`
+	Steps           []summaryStep `json:"steps"`
+}
+
+type runManifest struct {
+	GeneratedAt      string                   `json:"generated_at"`
+	Mode             string                   `json:"mode"`
+	RuntimeBackend   string                   `json:"runtime_backend"`
+	GitCommit        string                   `json:"git_commit"`
+	GethVersion      string                   `json:"geth_version"`
+	GenesisHash      string                   `json:"genesis_hash"`
+	ForkSchedule     map[string]any           `json:"fork_schedule"`
+	CaseList         []string                 `json:"case_list"`
+	ReproCommands    []string                 `json:"repro_commands"`
+	ReportPath       string                   `json:"report_path"`
+	SummaryPath      string                   `json:"summary_path"`
+	Extra            map[string]any           `json:"extra,omitempty"`
+	StepStatus       map[string]string        `json:"step_status"`
+	StepLogs         map[string]string        `json:"step_logs"`
+	StepDurationsSec map[string]time.Duration `json:"step_durations"`
 }
 
 const nestedRunEnv = "CHAIN_TESTS_NESTED_RUN"
@@ -290,7 +346,23 @@ func main() {
 		hadFailure = true
 	}
 
+	summaryPath := filepath.Join(runDir, "summary.json")
+	summary := buildRunSummary(results, stats, *mode, *groups, *tests, *runPattern, *configPath, reportPath, hadFailure)
+	if err := writeJSONFile(summaryPath, summary); err != nil {
+		fmt.Printf("Failed to write summary: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifestPath := filepath.Join(runDir, "manifest.json")
+	manifest := buildRunManifest(rootDir, results, *mode, *configPath, reportPath, summaryPath)
+	if err := writeJSONFile(manifestPath, manifest); err != nil {
+		fmt.Printf("Failed to write manifest: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Report: %s\n", reportPath)
+	fmt.Printf("Summary: %s\n", summaryPath)
+	fmt.Printf("Manifest: %s\n", manifestPath)
 	if hadFailure {
 		os.Exit(1)
 	}
@@ -933,4 +1005,227 @@ func printCaseList(label string, items []string) {
 	for _, item := range list {
 		fmt.Printf("  %s: %s\n", label, item)
 	}
+}
+
+func writeJSONFile(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}
+
+func buildRunSummary(results []stepResult, stats reportStats, mode, groups, tests, runPattern, configPath, reportPath string, failed bool) runSummary {
+	summary := runSummary{
+		GeneratedAt:    time.Now().Format(time.RFC3339),
+		Mode:           mode,
+		Groups:         splitList(groups),
+		Tests:          splitList(tests),
+		RunPattern:     strings.TrimSpace(runPattern),
+		ConfigPath:     configPath,
+		ReportPath:     reportPath,
+		SlowCaseAlerts: stats.SlowCaseAlerts,
+		GroupAlerts:    stats.GroupAlerts,
+		TotalStepCount: len(results),
+		Status:         "PASS",
+	}
+	if failed {
+		summary.Status = "FAIL"
+	}
+
+	steps := make([]summaryStep, 0, len(results))
+	for _, res := range results {
+		steps = append(steps, summaryStep{
+			Name:      res.Name,
+			Status:    res.Status,
+			Duration:  res.Duration.Round(time.Millisecond),
+			PassCount: len(res.PassTests),
+			FailCount: len(res.FailTests),
+			SkipCount: len(res.SkipTests),
+			LogPath:   res.LogPath,
+		})
+		summary.TotalPassTests += len(res.PassTests)
+		summary.TotalFailTests += len(res.FailTests)
+		summary.TotalSkipTests += len(res.SkipTests)
+		if res.Status != "PASS" {
+			summary.FailedStepCount++
+		}
+	}
+	summary.Steps = steps
+	return summary
+}
+
+func buildRunManifest(rootDir string, results []stepResult, mode, configPath, reportPath, summaryPath string) runManifest {
+	caseSet := make(map[string]struct{})
+	reproSet := make(map[string]struct{})
+	stepStatus := make(map[string]string, len(results))
+	stepLogs := make(map[string]string, len(results))
+	stepDur := make(map[string]time.Duration, len(results))
+
+	for _, res := range results {
+		stepStatus[res.Name] = res.Status
+		stepLogs[res.Name] = res.LogPath
+		stepDur[res.Name] = res.Duration.Round(time.Millisecond)
+		repro := strings.TrimSpace(res.Command)
+		if repro != "" {
+			reproSet["cd "+rootDir+" && "+repro] = struct{}{}
+		}
+		for _, name := range res.PassTests {
+			caseSet[name] = struct{}{}
+		}
+		for _, name := range res.FailTests {
+			caseSet[name] = struct{}{}
+		}
+		for _, name := range res.SkipTests {
+			caseSet[name] = struct{}{}
+		}
+	}
+
+	caseList := make([]string, 0, len(caseSet))
+	for name := range caseSet {
+		caseList = append(caseList, name)
+	}
+	sort.Strings(caseList)
+
+	reproCommands := make([]string, 0, len(reproSet))
+	for cmd := range reproSet {
+		reproCommands = append(reproCommands, cmd)
+	}
+	sort.Strings(reproCommands)
+
+	return runManifest{
+		GeneratedAt:      time.Now().Format(time.RFC3339),
+		Mode:             mode,
+		RuntimeBackend:   detectRuntimeBackend(rootDir),
+		GitCommit:        detectGitCommit(rootDir),
+		GethVersion:      detectGethVersion(rootDir),
+		GenesisHash:      detectGenesisHash(rootDir, configPath),
+		ForkSchedule:     loadForkSchedule(configPath),
+		CaseList:         caseList,
+		ReproCommands:    reproCommands,
+		ReportPath:       reportPath,
+		SummaryPath:      summaryPath,
+		StepStatus:       stepStatus,
+		StepLogs:         stepLogs,
+		StepDurationsSec: stepDur,
+	}
+}
+
+type testEnvLite struct {
+	Runtime struct {
+		Backend string `yaml:"backend"`
+	} `yaml:"runtime"`
+	Paths struct {
+		ChainRoot string `yaml:"chain_root"`
+	} `yaml:"paths"`
+}
+
+func loadTestEnvLite(rootDir string) (*testEnvLite, error) {
+	configPath := os.Getenv("TEST_ENV_CONFIG")
+	if strings.TrimSpace(configPath) == "" {
+		configPath = filepath.Join(rootDir, "config", "test_env.yaml")
+	}
+	if !filepath.IsAbs(configPath) {
+		configPath = filepath.Join(rootDir, configPath)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	var cfg testEnvLite
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func detectRuntimeBackend(rootDir string) string {
+	if v := strings.TrimSpace(os.Getenv("RUNTIME_BACKEND")); v != "" {
+		return v
+	}
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return "native"
+	}
+	if v := strings.TrimSpace(cfg.Runtime.Backend); v != "" {
+		return v
+	}
+	return "native"
+}
+
+func detectGitCommit(rootDir string) string {
+	out, err := exec.Command("git", "-C", rootDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func detectGethVersion(rootDir string) string {
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return ""
+	}
+	chainRoot := strings.TrimSpace(cfg.Paths.ChainRoot)
+	if chainRoot == "" {
+		chainRoot = "../chain"
+	}
+	if !filepath.IsAbs(chainRoot) {
+		chainRoot = filepath.Join(rootDir, chainRoot)
+	}
+	gethPath := filepath.Join(chainRoot, "build", "bin", "geth")
+	if st, err := os.Stat(gethPath); err != nil || st.Mode()&0o111 == 0 {
+		return ""
+	}
+	out, err := exec.Command(gethPath, "version").Output()
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[0])
+}
+
+func detectGenesisHash(rootDir, configPath string) string {
+	cfg, err := intcfg.LoadConfig(configPath)
+	if err == nil && len(cfg.RPCs) > 0 {
+		client, derr := ethclient.Dial(cfg.RPCs[0])
+		if derr == nil {
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			block, berr := client.BlockByNumber(ctx, big.NewInt(0))
+			if berr == nil && block != nil {
+				return block.Hash().Hex()
+			}
+		}
+	}
+	genesisPath := filepath.Join(rootDir, "data", "genesis.json")
+	return fileSHA256(genesisPath)
+}
+
+func fileSHA256(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func loadForkSchedule(configPath string) map[string]any {
+	cfg, err := intcfg.LoadConfig(configPath)
+	if err != nil {
+		return map[string]any{}
+	}
+	out := map[string]any{
+		"mode":           cfg.Fork.Mode,
+		"target":         cfg.Fork.Target,
+		"scheduled_time": cfg.Fork.ScheduledTime,
+		"delay_seconds":  cfg.Fork.DelaySeconds,
+	}
+	return out
 }

@@ -8,3 +8,4 @@ docker/juchain
 .chain-tests-precheck.stamp
 config/ci_budget.local.mk
 .gomodcache/
+__pycache__/

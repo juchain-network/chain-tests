@@ -1,0 +1,354 @@
+package tests
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"flag"
+	"math/big"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+
+	"juchain.org/chain/tools/ci/internal/config"
+	testctx "juchain.org/chain/tools/ci/internal/context"
+)
+
+var (
+	ctx        *testctx.CIContext
+	cfg        *config.Config
+	configPath = flag.String("config", "../../config.yaml", "Path to test configuration file")
+)
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelInfo, true)))
+
+	loadedCfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		log.Error("Failed to load config", "err", err)
+		os.Exit(1)
+	}
+	if len(loadedCfg.RPCs) == 0 {
+		log.Error("No RPCs configured in test config", "config", *configPath)
+		os.Exit(1)
+	}
+	if loadedCfg.Funder.PrivateKey == "" || loadedCfg.Funder.Address == "" {
+		log.Error("Funder config missing address or private_key", "config", *configPath)
+		os.Exit(1)
+	}
+	c, err := testctx.NewCIContext(loadedCfg)
+	if err != nil {
+		log.Error("Failed to init context", "err", err)
+		os.Exit(1)
+	}
+	cfg = loadedCfg
+	ctx = c
+	os.Exit(m.Run())
+}
+
+func retrySleep() time.Duration {
+	if ctx != nil {
+		return ctx.RetryPollInterval()
+	}
+	return 100 * time.Millisecond
+}
+
+func waitBlocks(t *testing.T, n int) {
+	t.Helper()
+	if n <= 0 {
+		return
+	}
+	if err := ctx.WaitForBlockProgress(n, 120*time.Second); err != nil {
+		t.Fatalf("wait for %d blocks failed: %v", n, err)
+	}
+}
+
+func getProposalID(tx *types.Transaction) [32]byte {
+	var receipt *types.Receipt
+	for i := 0; i < 15; i++ {
+		r, err := ctx.Clients[0].TransactionReceipt(context.Background(), tx.Hash())
+		if err == nil && r != nil {
+			receipt = r
+			break
+		}
+		time.Sleep(retrySleep())
+	}
+	if receipt == nil {
+		return [32]byte{}
+	}
+	for _, lg := range receipt.Logs {
+		if ev, err := ctx.Proposal.ParseLogCreateProposal(*lg); err == nil {
+			return ev.Id
+		}
+	}
+	return [32]byte{}
+}
+
+func robustVote(t *testing.T, voter *ecdsa.PrivateKey, proposalID [32]byte) {
+	t.Helper()
+	for retry := 0; retry < 12; retry++ {
+		ctx.WaitIfEpochBlock()
+		opts, err := ctx.GetTransactor(voter)
+		if err != nil {
+			time.Sleep(retrySleep())
+			continue
+		}
+		tx, err := ctx.Proposal.VoteProposal(opts, proposalID, true)
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "epoch block forbidden") {
+				time.Sleep(retrySleep())
+				continue
+			}
+			t.Fatalf("vote proposal failed: %v", err)
+		}
+		if err := ctx.WaitMined(tx.Hash()); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "epoch block forbidden") {
+				time.Sleep(retrySleep())
+				continue
+			}
+			t.Fatalf("vote proposal tx failed: %v", err)
+		}
+		return
+	}
+	t.Fatalf("vote proposal retries exhausted")
+}
+
+func isActiveValidator(t *testing.T, addr common.Address) bool {
+	t.Helper()
+	active, err := ctx.Validators.IsValidatorActive(nil, addr)
+	if err != nil {
+		t.Fatalf("query validator active failed: %v", err)
+	}
+	return active
+}
+
+func currentEpochLength() int {
+	if ctx != nil && ctx.Config != nil && ctx.Config.Network.Epoch > 0 {
+		return int(ctx.Config.Network.Epoch)
+	}
+	return 30
+}
+
+func waitValidatorActiveState(t *testing.T, addr common.Address, target bool, maxEpochs int) bool {
+	t.Helper()
+	if maxEpochs <= 0 {
+		maxEpochs = 1
+	}
+	epoch := currentEpochLength()
+	maxBlocks := maxEpochs*epoch + 4
+	for i := 0; i < maxBlocks; i++ {
+		active, err := ctx.Validators.IsValidatorActive(nil, addr)
+		if err != nil {
+			time.Sleep(retrySleep())
+			continue
+		}
+		if active == target {
+			return true
+		}
+		ctx.WaitIfEpochBlock()
+		if err := ctx.WaitForBlockProgress(1, 45*time.Second); err != nil {
+			time.Sleep(retrySleep())
+		}
+	}
+	return false
+}
+
+func inActiveSet(addr common.Address) (bool, error) {
+	vals, err := ctx.Validators.GetActiveValidators(nil)
+	if err != nil {
+		return false, err
+	}
+	for _, v := range vals {
+		if v == addr {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func waitActiveSetState(t *testing.T, addr common.Address, target bool, maxEpochs int) bool {
+	t.Helper()
+	if maxEpochs <= 0 {
+		maxEpochs = 1
+	}
+	epoch := currentEpochLength()
+	maxBlocks := maxEpochs*epoch + 4
+	for i := 0; i < maxBlocks; i++ {
+		inSet, err := inActiveSet(addr)
+		if err == nil && inSet == target {
+			return true
+		}
+		if err != nil {
+			time.Sleep(retrySleep())
+			continue
+		}
+		ctx.WaitIfEpochBlock()
+		if err := ctx.WaitForBlockProgress(1, 45*time.Second); err != nil {
+			time.Sleep(retrySleep())
+		}
+	}
+	return false
+}
+
+func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
+	t.Helper()
+	var lastErr error
+	for retry := 0; retry < 16; retry++ {
+		ctx.WaitIfEpochBlock()
+		opts, err := ctx.GetTransactor(key)
+		if err != nil {
+			lastErr = err
+			time.Sleep(retrySleep())
+			continue
+		}
+
+		tx, err := ctx.Staking.ExitValidator(opts)
+		if err == nil {
+			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
+				return
+			} else {
+				lastErr = errW
+				msg := strings.ToLower(errW.Error())
+				if strings.Contains(msg, "epoch block forbidden") ||
+					strings.Contains(msg, "active set") ||
+					strings.Contains(msg, "wait until next epoch") {
+					waitBlocks(t, 1)
+					continue
+				}
+				t.Fatalf("exit validator tx failed: %v", errW)
+			}
+		}
+
+		lastErr = err
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "epoch block forbidden") ||
+			strings.Contains(msg, "active set") ||
+			strings.Contains(msg, "wait until next epoch") {
+			waitBlocks(t, 1)
+			continue
+		}
+		t.Fatalf("exit validator call failed: %v", err)
+	}
+
+	t.Fatalf("exit validator retries exhausted: %v", lastErr)
+}
+
+func robustResignValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	t.Helper()
+	var lastErr error
+	for retry := 0; retry < 16; retry++ {
+		ctx.WaitIfEpochBlock()
+		opts, err := ctx.GetTransactor(key)
+		if err != nil {
+			lastErr = err
+			time.Sleep(retrySleep())
+			continue
+		}
+
+		tx, err := ctx.Staking.ResignValidator(opts)
+		if err == nil {
+			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
+				return
+			} else {
+				lastErr = errW
+				msg := strings.ToLower(errW.Error())
+				if strings.Contains(msg, "epoch block forbidden") ||
+					strings.Contains(msg, "validator not registered") {
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(msg, "already resigned") {
+					return
+				}
+				t.Fatalf("resign validator tx failed: %v", errW)
+			}
+		}
+
+		lastErr = err
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "epoch block forbidden") {
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "validator not registered") {
+			if addr != (common.Address{}) {
+				if exists, errV := ctx.Validators.IsValidatorExist(nil, addr); errV == nil && !exists {
+					waitBlocks(t, 1)
+					continue
+				}
+			}
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "already resigned") {
+			return
+		}
+		t.Fatalf("resign validator call failed: %v", err)
+	}
+
+	t.Fatalf("resign validator retries exhausted: %v", lastErr)
+}
+
+func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
+	t.Helper()
+	fundAmount := new(big.Int)
+	fundAmount.SetString("2000000000000000000000", 10)
+	key, addr, err := ctx.CreateAndFundAccount(fundAmount)
+	if err != nil {
+		t.Fatalf("create candidate account failed: %v", err)
+	}
+
+	proposer := ctx.GenesisValidators[0]
+	ctx.WaitIfEpochBlock()
+	opts, err := ctx.GetTransactor(proposer)
+	if err != nil {
+		t.Fatalf("get proposer transactor failed: %v", err)
+	}
+	proposalTx, err := ctx.Proposal.CreateProposal(opts, addr, true, "P-Join")
+	if err != nil {
+		t.Fatalf("propose validator failed: %v", err)
+	}
+	if err := ctx.WaitMined(proposalTx.Hash()); err != nil {
+		t.Fatalf("proposal tx failed: %v", err)
+	}
+	pid := getProposalID(proposalTx)
+	if pid == ([32]byte{}) {
+		t.Fatalf("missing proposal id from logs")
+	}
+	voters := ctx.GenesisValidators
+	if len(voters) > 1 {
+		// proposer already participates in proposal lifecycle; avoid duplicate-vote reverts
+		voters = voters[1:]
+	}
+	for _, vk := range voters {
+		robustVote(t, vk, pid)
+	}
+
+	registered := false
+	for retry := 0; retry < 12; retry++ {
+		ctx.WaitIfEpochBlock()
+		regOpts, err := ctx.GetTransactor(key)
+		if err != nil {
+			time.Sleep(retrySleep())
+			continue
+		}
+		regOpts.Value = big.NewInt(1000000000000000000)
+		tx, err := ctx.Staking.RegisterValidator(regOpts, big.NewInt(1000))
+		if err == nil {
+			if err := ctx.WaitMined(tx.Hash()); err == nil {
+				registered = true
+				break
+			}
+		}
+		time.Sleep(retrySleep())
+	}
+	if !registered {
+		t.Fatalf("register candidate validator failed")
+	}
+	return key, addr
+}

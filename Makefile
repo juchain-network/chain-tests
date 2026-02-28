@@ -5,7 +5,9 @@ SHELL := /bin/bash
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-smoke test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
-        ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
+        test-posa-multi test-blacklist test-regression-all test-perf-tiers test-soak-24h \
+        ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced \
+        ci-pr-gate ci-nightly-full ci-weekly-soak
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -35,6 +37,16 @@ FORK_DELAY_SECONDS ?= 120
 FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
 FORK_UPGRADE_STARTUP_BUFFER_MULTI ?= 30
 FORK_TEST_TIMEOUT ?= 20m
+FORK_REPORT_DIR ?=
+PERF_TPS_TIERS ?= 10,30,60
+PERF_TIER_DURATION ?= 90s
+PERF_SAMPLE_INTERVAL ?= 2s
+PERF_SOAK_DURATION ?= 24h
+PERF_SOAK_TPS ?= 10
+PERF_SOAK_RESTART_INTERVAL ?= 1h
+REGRESSION_REPORT_DIR ?=
+CI_PR_GROUPS ?= config,governance,staking,punish,epoch
+CI_NIGHTLY_GROUPS ?= config,governance,staking,delegation,punish,rewards,epoch
 SKIP_PRECHECK ?=
 SKIP_SETUP ?=
 SHARED_SETUP ?=
@@ -95,6 +107,11 @@ help:
 	@echo "  test-fork-single - Fork liveness matrix on native single-node topology"
 	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
 	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
+	@echo "  test-posa-multi - Deep PoSA multi-node regression scenarios"
+	@echo "  test-blacklist  - Blacklist regression suite (mock/real modes)"
+	@echo "  test-regression-all - One-shot full regression orchestration + aggregate report"
+	@echo "  test-perf-tiers - Run TPS tier perf profile and summary"
+	@echo "  test-soak-24h   - Run long-soak profile and verdict report"
 	@echo "  test-config     - System config tests"
 	@echo "  test-governance - Governance tests"
 	@echo "  test-staking    - Staking tests"
@@ -105,6 +122,9 @@ help:
 	@echo ""
 	@echo "CI Targets:"
 	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-drift-check ci-budget-selftest ci-budget-enforced"
+	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups + blacklist)"
+	@echo "  ci-nightly-full - Nightly profile (full groups + fork-all + posa + blacklist)"
+	@echo "  ci-weekly-soak  - Weekly long-soak profile"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
 	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
@@ -125,6 +145,14 @@ help:
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_SINGLE=$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)"
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_MULTI=$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)"
 	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT)"
+	@echo "  FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
+	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS)"
+	@echo "  PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
+	@echo "  PERF_SAMPLE_INTERVAL=$(PERF_SAMPLE_INTERVAL)"
+	@echo "  PERF_SOAK_DURATION=$(PERF_SOAK_DURATION)"
+	@echo "  PERF_SOAK_TPS=$(PERF_SOAK_TPS)"
+	@echo "  PERF_SOAK_RESTART_INTERVAL=$(PERF_SOAK_RESTART_INTERVAL)"
+	@echo "  REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
 	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
 	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
 	@echo "  SHARED_SETUP=$(SHARED_SETUP)       # set to 1 to share setup across compatible groups in ci-groups"
@@ -278,6 +306,7 @@ test-fork-single:
 		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
 		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
 		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
+		FORK_REPORT_DIR="$(FORK_REPORT_DIR)" \
 		bash ./scripts/fork/run_matrix.sh single
 
 test-fork-multi:
@@ -287,6 +316,7 @@ test-fork-multi:
 		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
 		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
 		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
+		FORK_REPORT_DIR="$(FORK_REPORT_DIR)" \
 		bash ./scripts/fork/run_matrix.sh multi
 
 test-fork-all: test-fork-single test-fork-multi
@@ -320,6 +350,48 @@ test-epoch:
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups epoch)"; \
 	echo "⏱ epoch group epoch=$$epoch"; \
 	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_LastManStanding|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"
+
+test-posa-multi:
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups posa)"; \
+	echo "⏱ posa epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"
+
+test-blacklist:
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups blacklist)"; \
+	echo "⏱ blacklist epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/blacklist -run "TestBL_.*"
+
+test-perf-tiers:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
+		PERF_TIER_DURATION="$(PERF_TIER_DURATION)" \
+		PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
+		bash ./scripts/perf/run_tps_tiers.sh
+
+test-soak-24h:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		PERF_SOAK_DURATION="$(PERF_SOAK_DURATION)" \
+		PERF_SOAK_TPS="$(PERF_SOAK_TPS)" \
+		PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
+		PERF_SOAK_RESTART_INTERVAL="$(PERF_SOAK_RESTART_INTERVAL)" \
+		bash ./scripts/perf/run_soak.sh
+
+test-regression-all:
+	@set -e; \
+	reg_id="$$(date +%Y%m%d_%H%M%S)"; \
+	reg_dir="$(if $(REGRESSION_REPORT_DIR),$(REGRESSION_REPORT_DIR),reports/regression_$$reg_id)"; \
+	ci_dir="$$reg_dir/ci"; \
+	fork_dir="$$reg_dir/fork"; \
+	echo "📦 regression report dir=$$reg_dir"; \
+	mkdir -p "$$ci_dir" "$$fork_dir"; \
+	$(MAKE) REPORT_DIR="$$ci_dir" test-smoke; \
+	$(MAKE) REPORT_DIR="$$ci_dir" ci-groups GROUPS="$(CI_DEFAULT_GROUPS)"; \
+	$(MAKE) FORK_REPORT_DIR="$$fork_dir" test-fork-all; \
+	$(MAKE) REPORT_DIR="$$ci_dir" test-posa-multi; \
+	$(MAKE) REPORT_DIR="$$ci_dir" test-blacklist; \
+	python3 ./scripts/report/aggregate_reports.py --output-dir "$$reg_dir" --ci-dir "$$ci_dir" --fork-dir "$$fork_dir"
 
 test-all:
 	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)
@@ -442,3 +514,12 @@ ci-budget-selftest:
 	@node $(SCRIPTS_DIR)/recommend_budgets_selftest.js
 
 ci-budget-enforced: image ci-budget-drift-check ci-groups-budget
+
+ci-pr-gate:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_PR_GROUPS="$(CI_PR_GROUPS)" bash ./scripts/ci/run_profile.sh pr
+
+ci-nightly-full:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_NIGHTLY_GROUPS="$(CI_NIGHTLY_GROUPS)" bash ./scripts/ci/run_profile.sh nightly
+
+ci-weekly-soak:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/ci/run_profile.sh weekly_soak

@@ -21,6 +21,8 @@ GETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")"
 NETWORK_ID="$(cfg_get "$CONFIG_FILE" "native.network_id" "666666")"
 STATE_SCHEME="$(cfg_get "$CONFIG_FILE" "native.state_scheme" "$(cfg_get "$CONFIG_FILE" "network.state_scheme" "hash")")"
 HISTORY_STATE="$(cfg_get "$CONFIG_FILE" "native.history_state" "$(cfg_get "$CONFIG_FILE" "network.history_state" "")")"
+BLACKLIST_ENABLED="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
+BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
 RPC_HOST="0.0.0.0"
 RPC_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 WS_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -133,7 +135,7 @@ start_node() {
     args+=("--history.state=$HISTORY_STATE")
   fi
 
-  nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  BLACKLIST_ENABLED="$BLACKLIST_ENABLED" BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
   echo "$!" > "$PID_FILE"
   sleep 1
   if ! is_running; then

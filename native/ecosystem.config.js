@@ -93,9 +93,9 @@ function appConfig(appName, args, logPrefix) {
     autorestart: true,
     watch: false,
     max_memory_restart: '2G',
-    env: {
+    env: Object.assign({}, process.env, {
       NODE_ENV: 'production'
-    },
+    }),
     error_file: path.join(logDir, `${logPrefix}-error.log`),
     out_file: path.join(logDir, `${logPrefix}-out.log`),
     log_file: path.join(logDir, `${logPrefix}-combined.log`),

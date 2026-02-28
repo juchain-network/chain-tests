@@ -29,6 +29,10 @@ done
 NETWORK_ID="$(cfg_get "$CONFIG_FILE" "native.network_id" "666666")"
 STATE_SCHEME="$(cfg_get "$CONFIG_FILE" "native.state_scheme" "$(cfg_get "$CONFIG_FILE" "network.state_scheme" "hash")")"
 HISTORY_STATE="$(cfg_get "$CONFIG_FILE" "native.history_state" "$(cfg_get "$CONFIG_FILE" "network.history_state" "")")"
+BLACKLIST_ENABLED="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
+BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
+BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
+BLACKLIST_ALERT_FAIL_OPEN="$(cfg_get "$CONFIG_FILE" "blacklist.alert_fail_open" "true")"
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -115,6 +119,10 @@ BOOTNODES=$BOOTNODES
 NATIVE_LOG_DIR=$LOG_DIR
 STATE_SCHEME=$STATE_SCHEME
 HISTORY_STATE=$HISTORY_STATE
+BLACKLIST_ENABLED=$BLACKLIST_ENABLED
+BLACKLIST_CONTRACT_ADDR=$BLACKLIST_CONTRACT_ADDR
+BLACKLIST_MODE=$BLACKLIST_MODE
+BLACKLIST_ALERT_FAIL_OPEN=$BLACKLIST_ALERT_FAIL_OPEN
 
 NODE0_DATADIR=$DATA_DIR/node0
 NODE1_DATADIR=$DATA_DIR/node1

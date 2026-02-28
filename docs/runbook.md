@@ -1,7 +1,7 @@
 # chain-tests Runbook
 
 ## 1. Scope
-This runbook covers local and CI operations for `chain-tests` regression, fork matrix, blacklist regression, and perf/soak workflows.
+This runbook covers local and CI operations for `chain-tests` regression, fork matrix, and perf/soak workflows.
 
 ## 2. Prerequisites
 - Compiled geth binary under `<chain_root>/build/bin/geth`
@@ -37,28 +37,10 @@ This runbook covers local and CI operations for `chain-tests` regression, fork m
   - `make test-fork-all`
 - PoSA deep scenarios:
   - `make test-posa-multi`
-- Blacklist regression:
-  - `make test-blacklist`
 - Full orchestrated regression:
   - `make test-regression-all`
 
-## 6. Blacklist operations
-### 6.1 Key config keys
-- `blacklist.enabled`
-- `blacklist.mode`: `mock` or `real`
-- `blacklist.contract_address`
-- `blacklist.alert_fail_open`
-
-### 6.2 Recommended usage
-- Local default: `mode=mock` for deterministic validation
-- Nightly compatibility: rerun with `mode=real`
-
-### 6.3 Alert checks
-When fail-open is triggered, inspect logs for blacklist init errors:
-- Native logs: `/Users/litian/code/work/github/chain-tests/data/native-logs`
-- Docker logs: `docker compose logs node0 node1 node2 node3`
-
-## 7. Performance and soak
+## 6. Performance and soak
 - TPS profile:
   - `make test-perf-tiers`
 - 24h soak:
@@ -69,7 +51,7 @@ Expected artifacts:
 - `metrics.csv`
 - `verdict.json`
 
-## 8. CI profiles
+## 7. CI profiles
 - PR gate:
   - `make ci-pr-gate`
 - Nightly full:
@@ -77,22 +59,22 @@ Expected artifacts:
 - Weekly soak:
   - `make ci-weekly-soak`
 
-## 9. Troubleshooting
-### 9.1 Bytecode mismatch
+## 8. Troubleshooting
+### 8.1 Bytecode mismatch
 - Run in upstream contract repo: `forge build`
 - Rebuild geth in chain repo
 - Run: `make clean && make init`
 
-### 9.2 Fork schedule errors
+### 8.2 Fork schedule errors
 - Regenerate genesis via `make init`
 - Avoid manual edits to `data/genesis.json`
 
-### 9.3 Node lag or stall
+### 8.3 Node lag or stall
 - Check `reports/*/report.md` slow cases and group duration tables
 - Verify runtime logs and peer status
 - Restart network: `make net-reset`
 
-## 10. Rollback
+## 9. Rollback
 1. Pin previous geth binary and contract artifact versions.
 2. Reset local data:
    - `make clean`

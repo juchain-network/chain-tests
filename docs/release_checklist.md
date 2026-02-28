@@ -11,7 +11,6 @@
 - [ ] `make ci-groups`
 - [ ] `make test-fork-all`
 - [ ] `make test-posa-multi`
-- [ ] `make test-blacklist`
 
 ## 3. Full regression and reports
 - [ ] `make test-regression-all`

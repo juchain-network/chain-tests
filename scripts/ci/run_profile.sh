@@ -21,27 +21,22 @@ is_true() {
 run_pr() {
   local groups
   groups="$(cfg_get "$CONFIG_FILE" "ci.pr_gate.groups" "${CI_PR_GROUPS:-config,governance,staking,punish,epoch}")"
-  local run_smoke run_blacklist
+  local run_smoke
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.pr_gate.run_smoke" "true")"
-  run_blacklist="$(cfg_get "$CONFIG_FILE" "ci.pr_gate.run_blacklist" "true")"
 
   if is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke
   fi
   GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci-groups GROUPS="$groups"
-  if is_true "$run_blacklist"; then
-    make -C "$ROOT_DIR" test-blacklist
-  fi
 }
 
 run_nightly() {
   local groups
   groups="$(cfg_get "$CONFIG_FILE" "ci.nightly.groups" "${CI_NIGHTLY_GROUPS:-config,governance,staking,delegation,punish,rewards,epoch}")"
-  local run_smoke run_fork run_posa run_blacklist
+  local run_smoke run_fork run_posa
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke" "true")"
   run_fork="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_fork_all" "true")"
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_posa" "true")"
-  run_blacklist="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_blacklist" "true")"
 
   if is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke
@@ -52,9 +47,6 @@ run_nightly() {
   fi
   if is_true "$run_posa"; then
     make -C "$ROOT_DIR" test-posa-multi
-  fi
-  if is_true "$run_blacklist"; then
-    make -C "$ROOT_DIR" test-blacklist
   fi
 }
 

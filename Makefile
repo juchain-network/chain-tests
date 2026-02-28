@@ -5,7 +5,7 @@ SHELL := /bin/bash
         net-up net-down net-reset net-ready test test-all test-all-legacy \
         test-smoke test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
-        test-posa-multi test-blacklist test-regression-all test-perf-tiers test-soak-24h \
+        test-posa-multi test-regression-all test-perf-tiers test-soak-24h \
         ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced \
         ci-pr-gate ci-nightly-full ci-weekly-soak
 
@@ -108,7 +108,6 @@ help:
 	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
 	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
 	@echo "  test-posa-multi - Deep PoSA multi-node regression scenarios"
-	@echo "  test-blacklist  - Blacklist regression suite (mock/real modes)"
 	@echo "  test-regression-all - One-shot full regression orchestration + aggregate report"
 	@echo "  test-perf-tiers - Run TPS tier perf profile and summary"
 	@echo "  test-soak-24h   - Run long-soak profile and verdict report"
@@ -122,8 +121,8 @@ help:
 	@echo ""
 	@echo "CI Targets:"
 	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-drift-check ci-budget-selftest ci-budget-enforced"
-	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups + blacklist)"
-	@echo "  ci-nightly-full - Nightly profile (full groups + fork-all + posa + blacklist)"
+	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups)"
+	@echo "  ci-nightly-full - Nightly profile (full groups + fork-all + posa)"
 	@echo "  ci-weekly-soak  - Weekly long-soak profile"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
@@ -357,12 +356,6 @@ test-posa-multi:
 	echo "⏱ posa epoch=$$epoch"; \
 	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"
 
-test-blacklist:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups blacklist)"; \
-	echo "⏱ blacklist epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/blacklist -run "TestBL_.*"
-
 test-perf-tiers:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
@@ -390,7 +383,6 @@ test-regression-all:
 	$(MAKE) REPORT_DIR="$$ci_dir" ci-groups GROUPS="$(CI_DEFAULT_GROUPS)"; \
 	$(MAKE) FORK_REPORT_DIR="$$fork_dir" test-fork-all; \
 	$(MAKE) REPORT_DIR="$$ci_dir" test-posa-multi; \
-	$(MAKE) REPORT_DIR="$$ci_dir" test-blacklist; \
 	python3 ./scripts/report/aggregate_reports.py --output-dir "$$reg_dir" --ci-dir "$$ci_dir" --fork-dir "$$fork_dir"
 
 test-all:

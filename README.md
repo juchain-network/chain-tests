@@ -142,11 +142,10 @@ Optional variables:
 - `FORK_TEST_TIMEOUT`
 - `FORK_REPORT_DIR`
 
-### 5.5 PoSA / blacklist / full regression
+### 5.5 PoSA / full regression
 
 ```bash
 make test-posa-multi
-make test-blacklist
 make test-regression-all
 ```
 
@@ -176,7 +175,6 @@ Important fields:
 - `network.epoch`: base epoch length (can be overridden per run: `make init EPOCH=60`)
 - `tests.profile`: `fast | default | edge`
 - `tests.epoch_overrides`: group/special-case epoch overrides for speed and stability
-- `blacklist.*`: mock/real mode, contract address, fail-open alert policy
 - `perf.*`: tier/soak defaults and thresholds
 - `ci.*`: PR/nightly/weekly profile defaults
 

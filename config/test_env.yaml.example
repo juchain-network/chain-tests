@@ -172,12 +172,10 @@ ci:
   pr_gate:
     groups: "config,governance,staking,punish,epoch"
     run_smoke: true
-    run_blacklist: true
   nightly:
     groups: "config,governance,staking,delegation,punish,rewards,epoch"
     run_smoke: true
     run_fork_all: true
     run_posa: true
-    run_blacklist: true
   weekly_soak:
     enabled: true

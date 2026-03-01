@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/network/lib.sh"
 
 PROFILE="${1:-}"
-[[ -n "$PROFILE" ]] || { echo "usage: scripts/ci/run_profile.sh <pr|nightly|weekly_soak>" >&2; exit 1; }
+[[ -n "$PROFILE" ]] || { echo "usage: scripts/ci/run_profile.sh <pr|nightly|weekly_soak|release_gate>" >&2; exit 1; }
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 
@@ -60,10 +60,28 @@ run_weekly_soak() {
   make -C "$ROOT_DIR" test-soak-24h
 }
 
+run_release_gate() {
+  local run_smoke run_fork run_posa
+  run_smoke="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_smoke" "true")"
+  run_fork="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_fork_all" "true")"
+  run_posa="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_posa" "true")"
+
+  if is_true "$run_smoke"; then
+    make -C "$ROOT_DIR" test-smoke
+  fi
+  if is_true "$run_fork"; then
+    make -C "$ROOT_DIR" test-fork-all
+  fi
+  if is_true "$run_posa"; then
+    make -C "$ROOT_DIR" test-posa-multi
+  fi
+}
+
 case "$PROFILE" in
   pr) run_pr ;;
   nightly) run_nightly ;;
   weekly_soak) run_weekly_soak ;;
+  release_gate) run_release_gate ;;
   *)
     echo "unsupported profile: $PROFILE" >&2
     exit 1

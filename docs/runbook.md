@@ -50,6 +50,9 @@ Expected artifacts:
 - `summary.md`
 - `metrics.csv`
 - `verdict.json`
+- `verdict.json.failed_reasons`
+- `verdict.json.top_slow_windows`
+- `verdict.json.resource_peaks`
 
 ## 7. CI profiles
 - PR gate:
@@ -58,6 +61,8 @@ Expected artifacts:
   - `make ci-nightly-full`
 - Weekly soak:
   - `make ci-weekly-soak`
+- Release gate:
+  - `make ci-release-gate`
 
 ## 8. Troubleshooting
 ### 8.1 Bytecode mismatch

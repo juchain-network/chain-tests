@@ -7,10 +7,7 @@
 
 ## 2. Baseline validation
 - [ ] `make precheck`
-- [ ] `make test-smoke`
-- [ ] `make ci-groups`
-- [ ] `make test-fork-all`
-- [ ] `make test-posa-multi`
+- [ ] `make ci-release-gate` (smoke + fork-all + posa)
 
 ## 3. Full regression and reports
 - [ ] `make test-regression-all`

@@ -177,5 +177,9 @@ ci:
     run_smoke: true
     run_fork_all: true
     run_posa: true
+  release_gate:
+    run_smoke: true
+    run_fork_all: true
+    run_posa: true
   weekly_soak:
     enabled: true

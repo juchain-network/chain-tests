@@ -161,6 +161,11 @@ Generated perf artifacts:
 - `metrics.csv`
 - `verdict.json`
 
+`verdict.json` includes:
+- `failed_reasons`
+- `top_slow_windows`
+- `resource_peaks`
+
 ## 6. Key configuration
 
 See `config/test_env.yaml.example` for full options.
@@ -226,4 +231,5 @@ When Congress consensus logic changes (`congress.go`):
 make ci-pr-gate
 make ci-nightly-full
 make ci-weekly-soak
+make ci-release-gate
 ```

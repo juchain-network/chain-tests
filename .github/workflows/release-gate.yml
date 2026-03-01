@@ -1,0 +1,52 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release-gate:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 720
+    env:
+      TEST_ENV_CONFIG: config/test_env.yaml
+      CHAIN_ROOT: ${{ vars.CHAIN_ROOT }}
+      CHAIN_CONTRACT_ROOT: ${{ vars.CHAIN_CONTRACT_ROOT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Prepare config
+        shell: bash
+        run: |
+          cp config/test_env.yaml.example config/test_env.yaml
+          if [[ -n "${CHAIN_ROOT}" ]]; then
+            sed -i "s#^  chain_root: .*#  chain_root: \"${CHAIN_ROOT}\"#" config/test_env.yaml
+          fi
+          if [[ -n "${CHAIN_CONTRACT_ROOT}" ]]; then
+            sed -i "s#^  chain_contract_root: .*#  chain_contract_root: \"${CHAIN_CONTRACT_ROOT}\"#" config/test_env.yaml
+          fi
+          sed -i 's/^  backend: .*/  backend: docker/' config/test_env.yaml
+
+      - name: Release Gate
+        shell: bash
+        run: |
+          make precheck
+          make reset
+          make ci-release-gate
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-reports
+          path: reports/

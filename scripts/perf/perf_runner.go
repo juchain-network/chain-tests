@@ -58,13 +58,35 @@ type tierSummary struct {
 }
 
 type verdict struct {
-	GeneratedAt string         `json:"generated_at"`
-	Mode        string         `json:"mode"`
-	Config      string         `json:"config"`
-	DataDir     string         `json:"data_dir"`
-	Thresholds  map[string]any `json:"thresholds"`
-	Tiers       []tierSummary  `json:"tiers"`
-	Status      string         `json:"status"`
+	GeneratedAt    string         `json:"generated_at"`
+	Mode           string         `json:"mode"`
+	Config         string         `json:"config"`
+	DataDir        string         `json:"data_dir"`
+	Thresholds     map[string]any `json:"thresholds"`
+	Tiers          []tierSummary  `json:"tiers"`
+	FailedReasons  []string       `json:"failed_reasons,omitempty"`
+	TopSlowWindows []slowWindow   `json:"top_slow_windows,omitempty"`
+	ResourcePeaks  resourcePeaks  `json:"resource_peaks"`
+	Status         string         `json:"status"`
+}
+
+type resourcePeaks struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemoryMB   float64 `json:"memory_mb"`
+	DiskMB     float64 `json:"disk_mb"`
+}
+
+type slowWindow struct {
+	Timestamp        string  `json:"timestamp"`
+	TPS              int     `json:"tps"`
+	RPCLatencyMS     float64 `json:"rpc_latency_ms"`
+	StallSeconds     int     `json:"stall_seconds"`
+	HeightLag        uint64  `json:"height_lag"`
+	CPUPercent       float64 `json:"cpu_percent"`
+	MemoryMB         float64 `json:"memory_mb"`
+	DiskMB           float64 `json:"disk_mb"`
+	PrimaryHeight    uint64  `json:"primary_height"`
+	ConsecutiveStall int     `json:"consecutive_stall"`
 }
 
 func parseTPSList(raw string) ([]int, error) {
@@ -197,6 +219,24 @@ func writeSummaryMD(path string, v verdict) error {
 	b.WriteString(fmt.Sprintf("- Config: %s\n", v.Config))
 	b.WriteString(fmt.Sprintf("- DataDir: %s\n", v.DataDir))
 	b.WriteString(fmt.Sprintf("- Status: %s\n\n", v.Status))
+	b.WriteString("## Go/No-Go\n\n")
+	b.WriteString(fmt.Sprintf("- Verdict: **%s**\n", v.Status))
+	if len(v.FailedReasons) == 0 {
+		b.WriteString("- Failed reasons: none\n\n")
+	} else {
+		b.WriteString("- Failed reasons:\n")
+		for _, reason := range v.FailedReasons {
+			b.WriteString(fmt.Sprintf("  - %s\n", reason))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## Resource Peaks\n\n")
+	b.WriteString("| CPU(%) | Memory(MB) | Disk(MB) |\n")
+	b.WriteString("| --- | --- | --- |\n")
+	b.WriteString(fmt.Sprintf("| %.3f | %.3f | %.3f |\n\n", v.ResourcePeaks.CPUPercent, v.ResourcePeaks.MemoryMB, v.ResourcePeaks.DiskMB))
+
+	b.WriteString("## Tier Summary\n\n")
 	b.WriteString("| TPS | Duration(s) | Sent | Accepted | Failed | SuccessRate | HeightGrowth | MaxLag | p95 RPC(ms) | MaxStall | Status |\n")
 	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, t := range v.Tiers {
@@ -204,7 +244,113 @@ func writeSummaryMD(path string, v verdict) error {
 			t.TPS, t.DurationSeconds, t.Sent, t.Accepted, t.Failed, t.SuccessRate, t.HeightGrowth, t.MaxHeightLag, t.P95RPCLatencyMS, t.MaxConsecutiveStall, t.Status,
 		))
 	}
+	b.WriteString("\n## Top Slow Windows\n\n")
+	if len(v.TopSlowWindows) == 0 {
+		b.WriteString("No sample windows captured.\n")
+	} else {
+		b.WriteString("| Timestamp | TPS | RPC(ms) | Stall(s) | HeightLag | CPU(%) | Memory(MB) | Disk(MB) |\n")
+		b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+		for _, w := range v.TopSlowWindows {
+			b.WriteString(fmt.Sprintf("| %s | %d | %.2f | %d | %d | %.3f | %.3f | %.3f |\n",
+				w.Timestamp, w.TPS, w.RPCLatencyMS, w.StallSeconds, w.HeightLag, w.CPUPercent, w.MemoryMB, w.DiskMB,
+			))
+		}
+	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+func collectFailedReasons(summaries []tierSummary) []string {
+	if len(summaries) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, s := range summaries {
+		if s.Status == "PASS" {
+			continue
+		}
+		notes := strings.Split(s.Notes, ";")
+		found := false
+		for _, note := range notes {
+			note = strings.TrimSpace(note)
+			if note == "" {
+				continue
+			}
+			item := fmt.Sprintf("tier %d: %s", s.TPS, note)
+			if _, ok := seen[item]; ok {
+				continue
+			}
+			seen[item] = struct{}{}
+			out = append(out, item)
+			found = true
+		}
+		if !found {
+			item := fmt.Sprintf("tier %d: unknown threshold violation", s.TPS)
+			if _, ok := seen[item]; ok {
+				continue
+			}
+			seen[item] = struct{}{}
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func collectResourcePeaks(samples []sample) resourcePeaks {
+	var peaks resourcePeaks
+	for _, s := range samples {
+		if s.CPUPercent > peaks.CPUPercent {
+			peaks.CPUPercent = s.CPUPercent
+		}
+		if s.MemoryMB > peaks.MemoryMB {
+			peaks.MemoryMB = s.MemoryMB
+		}
+		if s.DiskMB > peaks.DiskMB {
+			peaks.DiskMB = s.DiskMB
+		}
+	}
+	return peaks
+}
+
+func collectTopSlowWindows(samples []sample, sampleInterval time.Duration, limit int) []slowWindow {
+	if len(samples) == 0 || limit <= 0 {
+		return nil
+	}
+	ordered := append([]sample{}, samples...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].RPCLatencyMS == ordered[j].RPCLatencyMS {
+			stallI := ordered[i].ConsecutiveStall
+			stallJ := ordered[j].ConsecutiveStall
+			if stallI == stallJ {
+				if ordered[i].HeightLag == ordered[j].HeightLag {
+					return ordered[i].Timestamp.After(ordered[j].Timestamp)
+				}
+				return ordered[i].HeightLag > ordered[j].HeightLag
+			}
+			return stallI > stallJ
+		}
+		return ordered[i].RPCLatencyMS > ordered[j].RPCLatencyMS
+	})
+	if len(ordered) < limit {
+		limit = len(ordered)
+	}
+	out := make([]slowWindow, 0, limit)
+	for _, s := range ordered[:limit] {
+		stallSeconds := int(math.Round(float64(s.ConsecutiveStall) * sampleInterval.Seconds()))
+		out = append(out, slowWindow{
+			Timestamp:        s.Timestamp.Format(time.RFC3339),
+			TPS:              s.TierTPS,
+			RPCLatencyMS:     s.RPCLatencyMS,
+			StallSeconds:     stallSeconds,
+			HeightLag:        s.HeightLag,
+			CPUPercent:       s.CPUPercent,
+			MemoryMB:         s.MemoryMB,
+			DiskMB:           s.DiskMB,
+			PrimaryHeight:    s.PrimaryHeight,
+			ConsecutiveStall: s.ConsecutiveStall,
+		})
+	}
+	return out
 }
 
 func main() {
@@ -486,12 +632,10 @@ func main() {
 		})
 	}
 
+	failedReasons := collectFailedReasons(summaries)
 	overallStatus := "PASS"
-	for _, s := range summaries {
-		if s.Status != "PASS" {
-			overallStatus = "FAIL"
-			break
-		}
+	if len(failedReasons) > 0 {
+		overallStatus = "FAIL"
 	}
 
 	v := verdict{
@@ -505,8 +649,11 @@ func main() {
 			"max_height_lag":           *maxHeightLag,
 			"rpc_latency_p95_ms_max":   *maxP95LatencyMS,
 		},
-		Tiers:  summaries,
-		Status: overallStatus,
+		Tiers:          summaries,
+		FailedReasons:  failedReasons,
+		TopSlowWindows: collectTopSlowWindows(allSamples, sampleInterval, 10),
+		ResourcePeaks:  collectResourcePeaks(allSamples),
+		Status:         overallStatus,
 	}
 
 	metricsCSV := filepath.Join(*outDir, "metrics.csv")

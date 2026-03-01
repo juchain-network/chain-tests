@@ -7,7 +7,7 @@ SHELL := /bin/bash
         test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
         test-posa-multi test-regression-all test-perf-tiers test-soak-24h \
         ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced \
-        ci-pr-gate ci-nightly-full ci-weekly-soak
+        ci-pr-gate ci-nightly-full ci-weekly-soak ci-release-gate
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -56,6 +56,7 @@ SLOW_THRESHOLD ?=
 SLOW_FAIL ?=
 GROUP_THRESHOLDS ?=
 GROUP_THRESHOLD_FAIL ?=
+MAX_SKIPS ?=
 CI_DEFAULT_GROUPS ?= config,governance,staking,delegation,punish,rewards,epoch
 CI_BUDGET_GROUP_THRESHOLDS ?= config=6m,governance=15m,staking=12m,delegation=12m,punish=16m,rewards=14m,epoch=18m,default=15m
 CI_BUDGET_SLOW_THRESHOLD ?= 45s
@@ -73,7 +74,7 @@ BUDGET_DRIFT_MIN_MS ?= 15000
 # Optional local override generated from historical report analysis
 -include config/ci_budget.local.mk
 
-CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(filter 1 true yes,$(SKIP_SETUP)),-skip-setup,) $(if $(filter 1 true yes,$(SHARED_SETUP)),-shared-setup,) $(if $(SHARED_GROUPS),-shared-groups $(SHARED_GROUPS),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,)
+CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(filter 1 true yes,$(SKIP_SETUP)),-skip-setup,) $(if $(filter 1 true yes,$(SHARED_SETUP)),-shared-setup,) $(if $(SHARED_GROUPS),-shared-groups $(SHARED_GROUPS),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,) $(if $(MAX_SKIPS),-max-skips $(MAX_SKIPS),)
 
 backend_cmd = RUNTIME_BACKEND="$${RUNTIME_BACKEND:-$$(awk '/^[[:space:]]*backend:[[:space:]]*/{print $$2; exit}' "$(TEST_ENV_CONFIG)" 2>/dev/null | sed 's/\"//g')}"; \
 	if [ -z "$$RUNTIME_BACKEND" ]; then RUNTIME_BACKEND=native; fi
@@ -124,6 +125,7 @@ help:
 	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups)"
 	@echo "  ci-nightly-full - Nightly profile (full groups + fork-all + posa)"
 	@echo "  ci-weekly-soak  - Weekly long-soak profile"
+	@echo "  ci-release-gate - Release gate profile (smoke + fork-all + posa)"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
 	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
@@ -161,6 +163,7 @@ help:
 	@echo "  SLOW_FAIL=$(SLOW_FAIL)             # 1/true/yes -> fail when slow threshold exceeded"
 	@echo "  GROUP_THRESHOLDS=$(GROUP_THRESHOLDS) # e.g. config=2m,rewards=3m,default=4m"
 	@echo "  GROUP_THRESHOLD_FAIL=$(GROUP_THRESHOLD_FAIL) # 1/true/yes -> fail on group overrun"
+	@echo "  MAX_SKIPS=$(MAX_SKIPS)             # max skipped tests allowed (-1 disables, 0 forbids skips)"
 	@echo "  CI_BUDGET_GROUP_THRESHOLDS=$(CI_BUDGET_GROUP_THRESHOLDS)"
 	@echo "  CI_BUDGET_SLOW_THRESHOLD=$(CI_BUDGET_SLOW_THRESHOLD)"
 	@echo "  CI_BUDGET_SLOW_TOP=$(CI_BUDGET_SLOW_TOP)"
@@ -515,3 +518,6 @@ ci-nightly-full:
 
 ci-weekly-soak:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/ci/run_profile.sh weekly_soak
+
+ci-release-gate:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/ci/run_profile.sh release_gate

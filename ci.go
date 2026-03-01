@@ -132,6 +132,7 @@ func main() {
 	slowFail := flag.Bool("slow-fail", false, "Fail run when any test exceeds -slow-threshold")
 	groupThresholdsRaw := flag.String("group-thresholds", "", "Comma-separated group thresholds (e.g. config=2m,rewards=3m,default=4m)")
 	groupThresholdFail := flag.Bool("group-threshold-fail", false, "Fail run when any group duration exceeds configured threshold")
+	maxSkips := flag.Int("max-skips", -1, "Maximum allowed skipped test count across all steps (-1 disables)")
 	flag.Parse()
 
 	slowThreshold, err := parseDurationFlag(*slowThresholdRaw)
@@ -343,6 +344,11 @@ func main() {
 	}
 	if *groupThresholdFail && stats.GroupAlerts > 0 {
 		fmt.Printf("Group threshold exceeded: %d group step(s)\n", stats.GroupAlerts)
+		hadFailure = true
+	}
+	totalSkips := countTotalSkips(results)
+	if *maxSkips >= 0 && totalSkips > *maxSkips {
+		fmt.Printf("Skip budget exceeded: total skips=%d > max-skips=%d\n", totalSkips, *maxSkips)
 		hadFailure = true
 	}
 
@@ -1005,6 +1011,14 @@ func printCaseList(label string, items []string) {
 	for _, item := range list {
 		fmt.Printf("  %s: %s\n", label, item)
 	}
+}
+
+func countTotalSkips(results []stepResult) int {
+	total := 0
+	for _, res := range results {
+		total += len(res.SkipTests)
+	}
+	return total
 }
 
 func writeJSONFile(path string, value any) error {

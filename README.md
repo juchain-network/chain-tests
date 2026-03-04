@@ -8,17 +8,20 @@ It validates:
 - critical consensus paths (validator updates, punish, rewards, governance)
 - PoA -> PoSA upgrade fork liveness
 - both `native (pm2)` and `docker compose` runtimes
+- both runtime implementations: `geth` and `reth`
 
 ## 1. Dependency boundary
 
 This repository only consumes **compiled artifacts** from external repos:
 
 - `chain`: geth binary (default: `<chain_root>/build/bin/geth`)
+- `rchain`: reth binary (default: `<reth_root>/target/release/congress-node`)
 - `chain-contract`: compiled contract artifacts (default: `<chain_contract_root>/out`)
 
-So in most cases you only need to configure two paths:
+Common path configuration:
 
 - `paths.chain_root`
+- `paths.reth_root`
 - `paths.chain_contract_root`
 
 ## 2. Requirements
@@ -49,6 +52,13 @@ cd ../chain
 make geth
 ```
 
+Build reth (optional, for `runtime.impl=reth` or mixed mode):
+
+```bash
+cd ../rchain
+cargo build -p congress-node --release
+```
+
 ### 3.2 Initialize config
 
 ```bash
@@ -61,9 +71,15 @@ Edit `config/test_env.yaml`:
 ```yaml
 runtime:
   backend: native # or docker
+  impl_mode: single # single | mixed
+  impl: geth # geth | reth
+
+validator_auth:
+  mode: auto # auto | private_key | keystore
 
 paths:
-  chain_root: ../chain
+  chain_root: ../chain-1.16/chain-1.16
+  reth_root: ../rchain
   chain_contract_root: ../chain-contract
 ```
 
@@ -146,6 +162,8 @@ Optional variables:
 
 ```bash
 make test-posa-multi
+make test-interop-sync
+make test-interop-state-root
 make test-regression-all
 ```
 
@@ -172,6 +190,10 @@ See `config/test_env.yaml.example` for full options.
 Important fields:
 
 - `network.genesis_mode`: `poa | upgrade | posa`
+- `runtime.impl_mode`: `single | mixed`
+- `runtime.impl`: `geth | reth`
+- `runtime_nodes.nodeX`: per-node impl selection in mixed mode
+- `validator_auth.mode`: `auto | private_key | keystore` (reth validator auth)
 - `network.fork_target`:
   - `shanghaiTime | cancunTime | posaTime | fixHeaderTime`
   - `allStaggered` (all four fork timestamps are non-zero and increase by 60s)
@@ -206,6 +228,10 @@ NODE=ju-chain-validator1 make logs
 
 2. geth binary is older than source/artifacts
 - Rebuild geth under `chain_root` and retry.
+
+3. reth keystore startup failure
+- Confirm `data/nodeX/keystore/*.json` and `data/nodeX/password.txt` exist after `make init`.
+- Or set `validator_auth.mode=private_key` to force `--validator-private-key`.
 
 3. Fork config errors (fork ordering / blobSchedule)
 - Regenerate genesis via project scripts (`make init`) instead of manual genesis edits.

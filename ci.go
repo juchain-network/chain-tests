@@ -93,21 +93,26 @@ type runSummary struct {
 }
 
 type runManifest struct {
-	GeneratedAt      string                   `json:"generated_at"`
-	Mode             string                   `json:"mode"`
-	RuntimeBackend   string                   `json:"runtime_backend"`
-	GitCommit        string                   `json:"git_commit"`
-	GethVersion      string                   `json:"geth_version"`
-	GenesisHash      string                   `json:"genesis_hash"`
-	ForkSchedule     map[string]any           `json:"fork_schedule"`
-	CaseList         []string                 `json:"case_list"`
-	ReproCommands    []string                 `json:"repro_commands"`
-	ReportPath       string                   `json:"report_path"`
-	SummaryPath      string                   `json:"summary_path"`
-	Extra            map[string]any           `json:"extra,omitempty"`
-	StepStatus       map[string]string        `json:"step_status"`
-	StepLogs         map[string]string        `json:"step_logs"`
-	StepDurationsSec map[string]time.Duration `json:"step_durations"`
+	GeneratedAt       string                   `json:"generated_at"`
+	Mode              string                   `json:"mode"`
+	RuntimeBackend    string                   `json:"runtime_backend"`
+	RuntimeImpl       string                   `json:"runtime_impl"`
+	RuntimeImplMode   string                   `json:"runtime_impl_mode"`
+	RuntimeNodes      map[string]string        `json:"runtime_nodes,omitempty"`
+	ValidatorAuthMode string                   `json:"validator_auth_mode,omitempty"`
+	GitCommit         string                   `json:"git_commit"`
+	GethVersion       string                   `json:"geth_version"`
+	RethVersion       string                   `json:"reth_version"`
+	GenesisHash       string                   `json:"genesis_hash"`
+	ForkSchedule      map[string]any           `json:"fork_schedule"`
+	CaseList          []string                 `json:"case_list"`
+	ReproCommands     []string                 `json:"repro_commands"`
+	ReportPath        string                   `json:"report_path"`
+	SummaryPath       string                   `json:"summary_path"`
+	Extra             map[string]any           `json:"extra,omitempty"`
+	StepStatus        map[string]string        `json:"step_status"`
+	StepLogs          map[string]string        `json:"step_logs"`
+	StepDurationsSec  map[string]time.Duration `json:"step_durations"`
 }
 
 const nestedRunEnv = "CHAIN_TESTS_NESTED_RUN"
@@ -1109,30 +1114,46 @@ func buildRunManifest(rootDir string, results []stepResult, mode, configPath, re
 	sort.Strings(reproCommands)
 
 	return runManifest{
-		GeneratedAt:      time.Now().Format(time.RFC3339),
-		Mode:             mode,
-		RuntimeBackend:   detectRuntimeBackend(rootDir),
-		GitCommit:        detectGitCommit(rootDir),
-		GethVersion:      detectGethVersion(rootDir),
-		GenesisHash:      detectGenesisHash(rootDir, configPath),
-		ForkSchedule:     loadForkSchedule(configPath),
-		CaseList:         caseList,
-		ReproCommands:    reproCommands,
-		ReportPath:       reportPath,
-		SummaryPath:      summaryPath,
-		StepStatus:       stepStatus,
-		StepLogs:         stepLogs,
-		StepDurationsSec: stepDur,
+		GeneratedAt:       time.Now().Format(time.RFC3339),
+		Mode:              mode,
+		RuntimeBackend:    detectRuntimeBackend(rootDir),
+		RuntimeImpl:       detectRuntimeImpl(rootDir),
+		RuntimeImplMode:   detectRuntimeImplMode(rootDir),
+		RuntimeNodes:      detectRuntimeNodes(rootDir),
+		ValidatorAuthMode: detectValidatorAuthMode(rootDir),
+		GitCommit:         detectGitCommit(rootDir),
+		GethVersion:       detectGethVersion(rootDir),
+		RethVersion:       detectRethVersion(rootDir),
+		GenesisHash:       detectGenesisHash(rootDir, configPath),
+		ForkSchedule:      loadForkSchedule(configPath),
+		CaseList:          caseList,
+		ReproCommands:     reproCommands,
+		ReportPath:        reportPath,
+		SummaryPath:       summaryPath,
+		StepStatus:        stepStatus,
+		StepLogs:          stepLogs,
+		StepDurationsSec:  stepDur,
 	}
 }
 
 type testEnvLite struct {
 	Runtime struct {
-		Backend string `yaml:"backend"`
+		Backend  string `yaml:"backend"`
+		ImplMode string `yaml:"impl_mode"`
+		Impl     string `yaml:"impl"`
 	} `yaml:"runtime"`
-	Paths struct {
+	ValidatorAuth struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"validator_auth"`
+	RuntimeNodes map[string]string `yaml:"runtime_nodes"`
+	Paths        struct {
 		ChainRoot string `yaml:"chain_root"`
+		RethRoot  string `yaml:"reth_root"`
 	} `yaml:"paths"`
+	Binaries struct {
+		GethNative string `yaml:"geth_native"`
+		RethNative string `yaml:"reth_native"`
+	} `yaml:"binaries"`
 }
 
 func loadTestEnvLite(rootDir string) (*testEnvLite, error) {
@@ -1168,6 +1189,53 @@ func detectRuntimeBackend(rootDir string) string {
 	return "native"
 }
 
+func detectRuntimeImpl(rootDir string) string {
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return "geth"
+	}
+	if v := strings.TrimSpace(cfg.Runtime.Impl); v != "" {
+		return v
+	}
+	return "geth"
+}
+
+func detectRuntimeImplMode(rootDir string) string {
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return "single"
+	}
+	if v := strings.TrimSpace(cfg.Runtime.ImplMode); v != "" {
+		return v
+	}
+	return "single"
+}
+
+func detectRuntimeNodes(rootDir string) map[string]string {
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(cfg.RuntimeNodes))
+	for node, impl := range cfg.RuntimeNodes {
+		node = strings.TrimSpace(node)
+		impl = strings.TrimSpace(impl)
+		if node == "" || impl == "" {
+			continue
+		}
+		out[node] = impl
+	}
+	return out
+}
+
+func detectValidatorAuthMode(rootDir string) string {
+	cfg, err := loadTestEnvLite(rootDir)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.ValidatorAuth.Mode)
+}
+
 func detectGitCommit(rootDir string) string {
 	out, err := exec.Command("git", "-C", rootDir, "rev-parse", "HEAD").Output()
 	if err != nil {
@@ -1181,22 +1249,79 @@ func detectGethVersion(rootDir string) string {
 	if err != nil {
 		return ""
 	}
+
+	if explicit := strings.TrimSpace(cfg.Binaries.GethNative); explicit != "" {
+		if !filepath.IsAbs(explicit) {
+			explicit = filepath.Join(rootDir, explicit)
+		}
+		if version := detectBinaryVersion(explicit, "version"); version != "" {
+			return firstLine(version)
+		}
+	}
+
 	chainRoot := strings.TrimSpace(cfg.Paths.ChainRoot)
 	if chainRoot == "" {
-		chainRoot = "../chain"
+		chainRoot = "../chain-1.16/chain-1.16"
 	}
 	if !filepath.IsAbs(chainRoot) {
 		chainRoot = filepath.Join(rootDir, chainRoot)
 	}
 	gethPath := filepath.Join(chainRoot, "build", "bin", "geth")
-	if st, err := os.Stat(gethPath); err != nil || st.Mode()&0o111 == 0 {
+	out := detectBinaryVersion(gethPath, "version")
+	if out == "" {
 		return ""
 	}
-	out, err := exec.Command(gethPath, "version").Output()
+	return firstLine(out)
+}
+
+func detectRethVersion(rootDir string) string {
+	cfg, err := loadTestEnvLite(rootDir)
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	if explicit := strings.TrimSpace(cfg.Binaries.RethNative); explicit != "" {
+		if !filepath.IsAbs(explicit) {
+			explicit = filepath.Join(rootDir, explicit)
+		}
+		if version := detectBinaryVersion(explicit, "--version"); version != "" {
+			return firstLine(version)
+		}
+	}
+
+	rethRoot := strings.TrimSpace(cfg.Paths.RethRoot)
+	if rethRoot == "" {
+		rethRoot = "../rchain"
+	}
+	if !filepath.IsAbs(rethRoot) {
+		rethRoot = filepath.Join(rootDir, rethRoot)
+	}
+	candidates := []string{
+		filepath.Join(rethRoot, "target", "release", "congress-node"),
+		filepath.Join(rethRoot, "target", "debug", "congress-node"),
+	}
+	for _, candidate := range candidates {
+		if version := detectBinaryVersion(candidate, "--version"); version != "" {
+			return firstLine(version)
+		}
+	}
+	return ""
+}
+
+func detectBinaryVersion(bin string, args ...string) string {
+	st, err := os.Stat(bin)
+	if err != nil || st.Mode()&0o111 == 0 {
+		return ""
+	}
+	out, err := exec.Command(bin, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func firstLine(raw string) string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
 	if len(lines) == 0 {
 		return ""
 	}
@@ -1240,6 +1365,12 @@ func loadForkSchedule(configPath string) map[string]any {
 		"target":         cfg.Fork.Target,
 		"scheduled_time": cfg.Fork.ScheduledTime,
 		"delay_seconds":  cfg.Fork.DelaySeconds,
+		"schedule": map[string]any{
+			"shanghai_time":   cfg.Fork.Schedule.ShanghaiTime,
+			"cancun_time":     cfg.Fork.Schedule.CancunTime,
+			"fix_header_time": cfg.Fork.Schedule.FixHeaderTime,
+			"posa_time":       cfg.Fork.Schedule.PosaTime,
+		},
 	}
 	return out
 }

@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/network/lib.sh"
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 CFG_CHAIN_ROOT="$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")"
-CFG_CHAIN_DOCKER_BIN="$(cfg_get "$CONFIG_FILE" "paths.chain_docker_binary" "")"
+CFG_CHAIN_DOCKER_BIN="$(cfg_get "$CONFIG_FILE" "binaries.geth_docker" "$(cfg_get "$CONFIG_FILE" "paths.chain_docker_binary" "")")"
 
 CHAIN_ROOT="$(to_abs_path "${CHAIN_ROOT:-$CFG_CHAIN_ROOT}")"
 CHAIN_DOCKER_BINARY="$(to_abs_path "${CHAIN_DOCKER_BINARY:-$CFG_CHAIN_DOCKER_BIN}")"
@@ -85,4 +85,3 @@ echo "  2) CHAIN_DOCKER_BINARY env"
 echo ""
 echo "Note: this repo does not compile chain source; it only consumes compiled binaries."
 exit 1
-

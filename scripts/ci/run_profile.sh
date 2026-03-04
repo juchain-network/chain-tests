@@ -33,10 +33,11 @@ run_pr() {
 run_nightly() {
   local groups
   groups="$(cfg_get "$CONFIG_FILE" "ci.nightly.groups" "${CI_NIGHTLY_GROUPS:-config,governance,staking,delegation,punish,rewards,epoch}")"
-  local run_smoke run_fork run_posa
+  local run_smoke run_fork run_posa run_reth_keystore
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke" "true")"
   run_fork="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_fork_all" "true")"
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_posa" "true")"
+  run_reth_keystore="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_reth_keystore_smoke" "false")"
 
   if is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke
@@ -47,6 +48,9 @@ run_nightly() {
   fi
   if is_true "$run_posa"; then
     make -C "$ROOT_DIR" test-posa-multi
+  fi
+  if is_true "$run_reth_keystore"; then
+    run_reth_keystore_smoke
   fi
 }
 
@@ -75,6 +79,31 @@ run_release_gate() {
   if is_true "$run_posa"; then
     make -C "$ROOT_DIR" test-posa-multi
   fi
+}
+
+run_reth_keystore_smoke() {
+  local tmp_cfg
+  tmp_cfg="$(mktemp "${TMPDIR:-/tmp}/chain-tests-reth-XXXX.yaml")"
+  trap 'rm -f "$tmp_cfg" "${tmp_cfg}.next"' RETURN
+  cp "$CONFIG_FILE" "$tmp_cfg"
+  awk '
+    /^runtime:/ { in_runtime=1; in_validator_auth=0; print; next }
+    /^validator_auth:/ { in_runtime=0; in_validator_auth=1; print; next }
+    /^[^[:space:]]/ && $0 !~ /^runtime:/ && $0 !~ /^validator_auth:/ { in_runtime=0; in_validator_auth=0 }
+    in_runtime && /^  backend:/ { print "  backend: native"; next }
+    in_runtime && /^  impl_mode:/ { print "  impl_mode: single"; next }
+    in_runtime && /^  impl:/ { print "  impl: reth"; next }
+    in_validator_auth && /^  mode:/ { print "  mode: keystore"; next }
+    { print }
+  ' "$tmp_cfg" > "${tmp_cfg}.next"
+  mv "${tmp_cfg}.next" "$tmp_cfg"
+
+  TEST_ENV_CONFIG="$CONFIG_FILE" RUNTIME_BACKEND=docker "$ROOT_DIR/scripts/network/dispatch.sh" down || true
+  TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" reset
+  TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" test-smoke
+  TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" stop || true
+  trap - RETURN
+  rm -f "$tmp_cfg"
 }
 
 case "$PROFILE" in

@@ -12,6 +12,7 @@ jobs:
     env:
       TEST_ENV_CONFIG: config/test_env.yaml
       CHAIN_ROOT: ${{ vars.CHAIN_ROOT }}
+      RETH_ROOT: ${{ vars.RETH_ROOT }}
       CHAIN_CONTRACT_ROOT: ${{ vars.CHAIN_CONTRACT_ROOT }}
     steps:
       - name: Checkout
@@ -36,6 +37,9 @@ jobs:
           fi
           if [[ -n "${CHAIN_CONTRACT_ROOT}" ]]; then
             sed -i "s#^  chain_contract_root: .*#  chain_contract_root: \"${CHAIN_CONTRACT_ROOT}\"#" config/test_env.yaml
+          fi
+          if [[ -n "${RETH_ROOT}" ]]; then
+            sed -i "s#^  reth_root: .*#  reth_root: \"${RETH_ROOT}\"#" config/test_env.yaml
           fi
 
       - name: Weekly Soak

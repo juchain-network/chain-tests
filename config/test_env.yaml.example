@@ -2,14 +2,50 @@
 runtime:
   # Options: docker | native
   backend: native
+  # Runtime implementation mode:
+  # - single: all nodes use runtime.impl
+  # - mixed:  per-node implementation from runtime_nodes.nodeX
+  impl_mode: single
+  # Default implementation when impl_mode=single (or runtime_nodes fallback):
+  # geth | reth
+  impl: geth
 
 paths:
   # Supports relative paths, resolved from chain-tests repo root.
-  chain_root: "../chain"
+  chain_root: "../chain-1.16/chain-1.16"
+  reth_root: "../rchain"
   chain_contract_root: "../chain-contract"
+  reth_bytecode_file: "../rchain/crates/congress-core/src/bytecode.rs"
   # Other paths are derived by default:
   # - geth binary: <chain_root>/build/bin/geth
+  # - reth binary: <reth_root>/target/release/congress-node
   # - contracts out: <chain_contract_root>/out
+
+binaries:
+  # Optional explicit binary overrides. Empty means auto-detect from paths.* roots.
+  geth_native: ""
+  reth_native: ""
+  geth_docker: ""
+  reth_docker: ""
+
+# Optional per-node implementation mapping for runtime.impl_mode=mixed.
+runtime_nodes:
+  node0: geth
+  node1: geth
+  node2: geth
+  node3: reth
+
+# Validator credential policy used by reth nodes.
+validator_auth:
+  # auto: keystore first, fallback to private key
+  # private_key: force --validator-private-key
+  # keystore: force --keystore-* args
+  mode: auto
+  keystore:
+    # If empty, default: data/nodeX/password.txt
+    password_file: ""
+    # Optional fallback env var name for keystore pass when password_file not set.
+    password_env: ""
 
 # Blacklist test/runtime toggles.
 # mode:
@@ -177,6 +213,8 @@ ci:
     run_smoke: true
     run_fork_all: true
     run_posa: true
+    # Required compatibility path: reth + keystore mode.
+    run_reth_keystore_smoke: true
   release_gate:
     run_smoke: true
     run_fork_all: true

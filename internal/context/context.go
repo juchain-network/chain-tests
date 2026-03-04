@@ -372,6 +372,17 @@ func (c *CIContext) GetConfigValue(cid int64) (*big.Int, error) {
 }
 
 func (c *CIContext) autoInitialize() error {
+	if len(c.GenesisValidators) == 0 {
+		return fmt.Errorf("no genesis validators configured")
+	}
+
+	pickValidator := func(idx int) *ecdsa.PrivateKey {
+		if idx < len(c.GenesisValidators) {
+			return c.GenesisValidators[idx]
+		}
+		return c.GenesisValidators[len(c.GenesisValidators)-1]
+	}
+
 	// Robust check: if MinValidatorStake is default (100k JU), we need setup.
 	minStake, err := c.Proposal.MinValidatorStake(nil)
 	if err == nil && minStake.Cmp(big.NewInt(1000000000000000000)) == 0 {
@@ -388,7 +399,7 @@ func (c *CIContext) autoInitialize() error {
 		}
 
 		// 1. Initialize Proposal
-		opts, _ := c.GetTransactor(c.GenesisValidators[0])
+		opts, _ := c.GetTransactor(pickValidator(0))
 		opts.GasLimit = 1000000
 		fmt.Printf("  > Initializing Proposal...\n")
 		tx, err := c.Proposal.Initialize(opts, valAddrs, ValidatorsAddr, new(big.Int).SetUint64(c.configuredEpoch()))
@@ -397,7 +408,7 @@ func (c *CIContext) autoInitialize() error {
 		}
 
 		// 2. Initialize Staking with Validators
-		opts, _ = c.GetTransactor(c.GenesisValidators[1])
+		opts, _ = c.GetTransactor(pickValidator(1))
 		opts.GasLimit = 2000000
 		fmt.Printf("  > Initializing Staking with Validators...\n")
 		tx, err = c.Staking.InitializeWithValidators(opts, ValidatorsAddr, ProposalAddr, PunishAddr, valAddrs, big.NewInt(1000))
@@ -406,7 +417,7 @@ func (c *CIContext) autoInitialize() error {
 		}
 
 		// 3. Initialize Validators
-		opts, _ = c.GetTransactor(c.GenesisValidators[2])
+		opts, _ = c.GetTransactor(pickValidator(2))
 		opts.GasLimit = 1000000
 		fmt.Printf("  > Initializing Validators...\n")
 		tx, err = c.Validators.Initialize(opts, valAddrs, ProposalAddr, PunishAddr, StakingAddr)

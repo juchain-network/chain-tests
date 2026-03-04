@@ -24,6 +24,7 @@ FORK_TEST_TIMEOUT="${FORK_TEST_TIMEOUT:-20m}"
 FORK_REPORT_DIR="${FORK_REPORT_DIR:-$PROJECT_ROOT/reports/fork_$(date +%Y%m%d_%H%M%S)}"
 TEST_CONFIG_FILE="$PROJECT_ROOT/data/test_config.yaml"
 COLLECTOR_SCRIPT="$PROJECT_ROOT/scripts/fork/collect_matrix_report.sh"
+HEALTH_SCRIPT="$PROJECT_ROOT/scripts/report/assert_chain_health.sh"
 
 mkdir -p "$FORK_REPORT_DIR"
 RESULTS_TSV="$FORK_REPORT_DIR/matrix_results.tsv"
@@ -104,6 +105,10 @@ run_case() {
     if [[ $rc -eq 0 ]]; then
       (cd "$PROJECT_ROOT" && env "${init_env[@]}" go test ./tests/fork -v -run "^TestF_ForkLiveness$" -count=1 -parallel=1 -p 1 -timeout "$FORK_TEST_TIMEOUT" -config "$TEST_CONFIG_FILE")
       rc=$?
+    fi
+
+    if [[ $rc -eq 0 ]] && [[ -x "$HEALTH_SCRIPT" ]]; then
+      env "${init_env[@]}" "$HEALTH_SCRIPT" || rc=$?
     fi
 
     if [[ "$TOPOLOGY" == "single" ]]; then

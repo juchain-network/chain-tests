@@ -139,7 +139,11 @@ func smokeObserveDuration(cfg *config.Config) time.Duration {
 }
 
 func openSmokeNodes(cfg *config.Config) ([]smokeNode, error) {
-	endpoints, err := resolveSmokeNodeEndpoints(cfg)
+	return openSmokeNodesWithBounds(cfg, 4, 4)
+}
+
+func openSmokeNodesWithBounds(cfg *config.Config, minRequired int, maxNodes int) ([]smokeNode, error) {
+	endpoints, err := resolveSmokeNodeEndpoints(cfg, minRequired, maxNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +170,7 @@ func closeSmokeNodes(nodes []smokeNode) {
 	}
 }
 
-func resolveSmokeNodeEndpoints(cfg *config.Config) ([]smokeNode, error) {
+func resolveSmokeNodeEndpoints(cfg *config.Config, minRequired int, maxNodes int) ([]smokeNode, error) {
 	type endpoint struct {
 		name   string
 		rpcURL string
@@ -206,11 +210,11 @@ func resolveSmokeNodeEndpoints(cfg *config.Config) ([]smokeNode, error) {
 		add(fmt.Sprintf("rpc%d", i+1), rpc)
 	}
 
-	if len(out) < 4 {
-		return nil, fmt.Errorf("need at least 4 unique RPC endpoints (3 validators + 1 sync), got %d", len(out))
+	if minRequired > 0 && len(out) < minRequired {
+		return nil, fmt.Errorf("need at least %d unique RPC endpoints, got %d", minRequired, len(out))
 	}
-	if len(out) > 4 {
-		out = out[:4]
+	if maxNodes > 0 && len(out) > maxNodes {
+		out = out[:maxNodes]
 	}
 
 	resolved := make([]smokeNode, 0, len(out))

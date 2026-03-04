@@ -21,18 +21,30 @@ ENV_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/nati
 PM2_NAMESPACE="$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")"
 RPC_URL="$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")")"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
+NODE_COUNT="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+VALIDATOR_COUNT="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
 
 [[ -f "$INIT_SCRIPT" ]] || die "init script not found: $INIT_SCRIPT"
 [[ -f "$ECOSYSTEM_FILE" ]] || die "ecosystem file not found: $ECOSYSTEM_FILE"
 
 command -v "$MANAGER" >/dev/null 2>&1 || die "$MANAGER is required for native backend"
 
-PM2_PROCS=(
-  "${PM2_NAMESPACE}-validator1"
-  "${PM2_NAMESPACE}-validator2"
-  "${PM2_NAMESPACE}-validator3"
-  "${PM2_NAMESPACE}-syncnode"
-)
+if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$VALIDATOR_COUNT" =~ ^[0-9]+$ ]]; then
+  die "network.node_count and network.validator_count must be integers"
+fi
+
+PM2_PROCS=()
+for ((i=1; i<=VALIDATOR_COUNT; i++)); do
+  PM2_PROCS+=("${PM2_NAMESPACE}-validator${i}")
+done
+for ((i=VALIDATOR_COUNT+1; i<=NODE_COUNT; i++)); do
+  sync_idx=$((i-VALIDATOR_COUNT))
+  if (( sync_idx == 1 )); then
+    PM2_PROCS+=("${PM2_NAMESPACE}-syncnode")
+  else
+    PM2_PROCS+=("${PM2_NAMESPACE}-syncnode${sync_idx}")
+  fi
+done
 
 pm2_delete_known() {
   local proc
@@ -46,6 +58,10 @@ pm2_delete_known() {
 pm2_start_all() {
   log "pm2 start using $ECOSYSTEM_FILE (staged startup)"
 
+  if [[ ${#PM2_PROCS[@]} -eq 0 ]]; then
+    die "no pm2 processes configured"
+  fi
+
   # Start primary validator first to avoid early clique fork races.
   PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[0]}" --update-env >/dev/null
 
@@ -58,12 +74,12 @@ pm2_start_all() {
     wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
   fi
 
-  # Bring up remaining validators/sync node after chain head is moving.
-  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[1]}" --update-env >/dev/null
-  sleep 1
-  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[2]}" --update-env >/dev/null
-  sleep 1
-  PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[3]}" --update-env >/dev/null
+  # Bring up remaining validators/sync nodes after primary head is available.
+  local idx
+  for ((idx=1; idx<${#PM2_PROCS[@]}; idx++)); do
+    PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[$idx]}" --update-env >/dev/null
+    sleep 1
+  done
 }
 
 pm2_status() {

@@ -151,7 +151,7 @@ func queryHeights(clients []*ethclient.Client) (max uint64, min uint64, primary 
 }
 
 func sampleResources(dataDir string) (cpu float64, memMB float64, diskMB float64) {
-	psCmd := exec.Command("/bin/sh", "-lc", `ps -Ao comm,pcpu,rss | awk '/(geth|juchain)/ {cpu+=$2; rss+=$3} END {printf "%.3f %.3f", cpu, rss/1024.0}'`)
+	psCmd := exec.Command("/bin/sh", "-lc", `ps -Ao comm,pcpu,rss | awk '/(geth|juchain|congress-node|reth)/ {cpu+=$2; rss+=$3} END {printf "%.3f %.3f", cpu, rss/1024.0}'`)
 	if out, err := psCmd.Output(); err == nil {
 		fields := strings.Fields(string(out))
 		if len(fields) >= 2 {

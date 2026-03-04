@@ -22,12 +22,40 @@ file_mtime() {
   fi
 }
 
+resolve_binary() {
+  local candidate
+  for candidate in "$@"; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+normalize_impl() {
+  local impl="${1:-}"
+  case "$impl" in
+    geth|reth) echo "$impl" ;;
+    *) diep "unsupported runtime impl: $impl (expected geth|reth)" ;;
+  esac
+}
+
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")}"
 GENESIS_MODE="${GENESIS_MODE:-$(cfg_get "$CONFIG_FILE" "network.genesis_mode" "posa")}"
 
 CHAIN_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")"
 CHAIN_ROOT="$(to_abs_path "$CHAIN_ROOT_CFG")"
+RETH_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.reth_root" "../rchain")"
+RETH_ROOT="$(to_abs_path "$RETH_ROOT_CFG")"
+RETH_BYTECODE_FILE_CFG="$(cfg_get "$CONFIG_FILE" "paths.reth_bytecode_file" "")"
+if [[ -n "$RETH_BYTECODE_FILE_CFG" ]]; then
+  RETH_BYTECODE_FILE="$(to_abs_path "$RETH_BYTECODE_FILE_CFG")"
+else
+  RETH_BYTECODE_FILE="$RETH_ROOT/crates/congress-core/src/bytecode.rs"
+fi
 
 CHAIN_CONTRACT_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.chain_contract_root" "../chain-contract")"
 CHAIN_CONTRACT_ROOT="$(to_abs_path "$CHAIN_CONTRACT_ROOT_CFG")"
@@ -42,55 +70,138 @@ fi
 BYTECODE_GO="$CHAIN_ROOT/consensus/congress/bytecode.go"
 CHECK_SCRIPT="$SCRIPT_DIR/check_bytecode_consistency.js"
 
+RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
+DEFAULT_RUNTIME_IMPL="$(normalize_impl "$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")")"
+NODE_COUNT="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+
+if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 || NODE_COUNT > 4 )); then
+  diep "invalid network.node_count: $NODE_COUNT"
+fi
+
+need_geth=false
+need_reth=false
+for ((i=0; i<NODE_COUNT; i++)); do
+  node_cfg="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node${i}" "")"
+  case "$RUNTIME_IMPL_MODE" in
+    single)
+      impl="$DEFAULT_RUNTIME_IMPL"
+      ;;
+    mixed)
+      if [[ -n "$node_cfg" ]]; then
+        impl="$(normalize_impl "$node_cfg")"
+      else
+        impl="$DEFAULT_RUNTIME_IMPL"
+      fi
+      ;;
+    *)
+      diep "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+      ;;
+  esac
+
+  if [[ "$impl" == "geth" ]]; then
+    need_geth=true
+  else
+    need_reth=true
+  fi
+done
+
 [[ -f "$CHECK_SCRIPT" ]] || diep "missing checker script: $CHECK_SCRIPT"
-[[ -d "$CHAIN_ROOT" ]] || diep "chain root not found: $CHAIN_ROOT"
-[[ -f "$BYTECODE_GO" ]] || diep "missing consensus bytecode file: $BYTECODE_GO"
+if $need_geth; then
+  [[ -d "$CHAIN_ROOT" ]] || diep "chain root not found: $CHAIN_ROOT"
+fi
+if $need_reth; then
+  [[ -d "$RETH_ROOT" ]] || diep "reth root not found: $RETH_ROOT"
+fi
+
+bytecode_impl=""
+if $need_geth && $need_reth; then
+  bytecode_impl="mixed"
+elif $need_geth; then
+  bytecode_impl="geth"
+elif $need_reth; then
+  bytecode_impl="reth"
+fi
+
 if [[ "$GENESIS_MODE" == "posa" ]]; then
   [[ -d "$CHAIN_CONTRACT_OUT" ]] || diep "chain-contract out dir not found: $CHAIN_CONTRACT_OUT"
   command -v node >/dev/null 2>&1 || diep "node is required for bytecode consistency checks"
-  logp "checking bytecode consistency..."
-  node "$CHECK_SCRIPT" --out-dir "$CHAIN_CONTRACT_OUT" --bytecode-go "$BYTECODE_GO"
+
+  check_args=(--out-dir "$CHAIN_CONTRACT_OUT" --impl "$bytecode_impl")
+  if $need_geth; then
+    [[ -f "$BYTECODE_GO" ]] || diep "missing consensus bytecode file: $BYTECODE_GO"
+    check_args+=(--bytecode-go "$BYTECODE_GO")
+  fi
+  if $need_reth; then
+    [[ -f "$RETH_BYTECODE_FILE" ]] || diep "missing reth bytecode file: $RETH_BYTECODE_FILE"
+    check_args+=(--bytecode-rs "$RETH_BYTECODE_FILE")
+  fi
+
+  logp "checking bytecode consistency (impl=$bytecode_impl)..."
+  node "$CHECK_SCRIPT" "${check_args[@]}"
 else
   logp "skip bytecode consistency check for genesis_mode=$GENESIS_MODE"
 fi
 
 if [[ "$BACKEND" == "native" ]]; then
-  GETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")"
-  CANDIDATES=()
-  if [[ -n "$GETH_BIN_CFG" ]]; then
-    CANDIDATES+=("$(to_abs_path "$GETH_BIN_CFG")")
-  fi
-  CANDIDATES+=("$CHAIN_ROOT/build/bin/geth")
+  GETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
+  RETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_native" "$(cfg_get "$CONFIG_FILE" "native.reth_binary" "")")"
 
   GETH_BIN=""
-  for candidate in "${CANDIDATES[@]}"; do
-    if [[ -x "$candidate" ]]; then
-      GETH_BIN="$candidate"
-      break
+  RETH_BIN=""
+  if $need_geth; then
+    if ! GETH_BIN="$(resolve_binary "$(to_abs_path "$GETH_BIN_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+      diep "native geth binary not found. tried: $(to_abs_path "$GETH_BIN_CFG") $CHAIN_ROOT/build/bin/geth"
     fi
-  done
-  if [[ -z "$GETH_BIN" ]]; then
-    diep "native.geth_binary not found. Tried: ${CANDIDATES[*]}"
+  fi
+  if $need_reth; then
+    if ! RETH_BIN="$(resolve_binary "$(to_abs_path "$RETH_BIN_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
+      diep "native reth binary not found. tried: $(to_abs_path "$RETH_BIN_CFG") $RETH_ROOT/target/release/congress-node $RETH_ROOT/target/debug/congress-node"
+    fi
   fi
 
-  newest_ref="$BYTECODE_GO"
-  newest_ts="$(file_mtime "$BYTECODE_GO")"
   if [[ "$GENESIS_MODE" == "posa" ]]; then
+    newest_artifact_ref=""
+    newest_artifact_ts=0
     for contract in Validators Proposal Punish Staking; do
       artifact="$CHAIN_CONTRACT_OUT/${contract}.sol/${contract}.json"
       [[ -f "$artifact" ]] || diep "missing artifact: $artifact"
       artifact_ts="$(file_mtime "$artifact")"
-      if (( artifact_ts > newest_ts )); then
-        newest_ts="$artifact_ts"
-        newest_ref="$artifact"
+      if (( artifact_ts > newest_artifact_ts )); then
+        newest_artifact_ts="$artifact_ts"
+        newest_artifact_ref="$artifact"
       fi
     done
-  fi
 
-  geth_ts="$(file_mtime "$GETH_BIN")"
-  if (( geth_ts < newest_ts )); then
-    diep "native geth binary is older than $newest_ref. Rebuild with: make -C $CHAIN_ROOT geth"
+    if $need_geth; then
+      newest_ref="$BYTECODE_GO"
+      newest_ts="$(file_mtime "$BYTECODE_GO")"
+      if (( newest_artifact_ts > newest_ts )); then
+        newest_ts="$newest_artifact_ts"
+        newest_ref="$newest_artifact_ref"
+      fi
+      geth_ts="$(file_mtime "$GETH_BIN")"
+      if (( geth_ts < newest_ts )); then
+        diep "native geth binary is older than $newest_ref. rebuild geth binary."
+      fi
+    fi
+
+    if $need_reth; then
+      newest_ref="$RETH_BYTECODE_FILE"
+      newest_ts="$(file_mtime "$RETH_BYTECODE_FILE")"
+      if (( newest_artifact_ts > newest_ts )); then
+        newest_ts="$newest_artifact_ts"
+        newest_ref="$newest_artifact_ref"
+      fi
+      reth_ts="$(file_mtime "$RETH_BIN")"
+      if (( reth_ts < newest_ts )); then
+        diep "native reth binary is older than $newest_ref. rebuild reth binary."
+      fi
+    fi
   fi
+fi
+
+if [[ "$BACKEND" == "docker" ]] && $need_reth; then
+  diep "docker backend currently supports geth runtime only; set runtime.impl=geth or switch runtime.backend=native for reth"
 fi
 
 logp "environment consistency OK."

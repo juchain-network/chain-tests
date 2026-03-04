@@ -3,9 +3,10 @@ SHELL := /bin/bash
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
-        test-smoke test-config test-governance test-staking test-delegation test-punish \
+        test-smoke test-smoke-single test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
-        test-posa-multi test-regression-all test-perf-tiers test-soak-24h \
+        test-posa-multi test-interop-sync test-interop-state-root test-interop-all \
+        test-regression-all test-perf-tiers test-soak-24h \
         ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced \
         ci-pr-gate ci-nightly-full ci-weekly-soak ci-release-gate
 
@@ -105,10 +106,14 @@ help:
 	@echo "  test            - Run full suite in single pass (no setup)"
 	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
 	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
+	@echo "  test-smoke-single - Single-node smoke (native single topology)"
 	@echo "  test-fork-single - Fork liveness matrix on native single-node topology"
 	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
 	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
 	@echo "  test-posa-multi - Deep PoSA multi-node regression scenarios"
+	@echo "  test-interop-sync - Interop sync catch-up checks (mixed geth/reth friendly)"
+	@echo "  test-interop-state-root - Interop checkpoint stateRoot parity checks"
+	@echo "  test-interop-all - Run interop sync + stateRoot checks"
 	@echo "  test-regression-all - One-shot full regression orchestration + aggregate report"
 	@echo "  test-perf-tiers - Run TPS tier perf profile and summary"
 	@echo "  test-soak-24h   - Run long-soak profile and verdict report"
@@ -301,6 +306,11 @@ test-smoke:
 	echo "⏱ smoke epoch=$$epoch"; \
 	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/smoke -run "TestS_SmokeChainLivenessAllNodes"
 
+test-smoke-single:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		SMOKE_SINGLE_OBSERVE_SECONDS="$(if $(SMOKE_SINGLE_OBSERVE_SECONDS),$(SMOKE_SINGLE_OBSERVE_SECONDS),60)" \
+		bash ./scripts/smoke/run_single.sh
+
 test-fork-single:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		FORK_CASES="$(FORK_CASES)" \
@@ -357,7 +367,22 @@ test-posa-multi:
 	@set -e; \
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups posa)"; \
 	echo "⏱ posa epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"; \
+	bash ./scripts/report/assert_chain_health.sh
+
+test-interop-sync:
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+	echo "⏱ interop-sync epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_SyncCatchUp"
+
+test-interop-state-root:
+	@set -e; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+	echo "⏱ interop-state-root epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_StateRootCheckpoint"
+
+test-interop-all: test-interop-sync test-interop-state-root
 
 test-perf-tiers:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
@@ -386,6 +411,7 @@ test-regression-all:
 	$(MAKE) REPORT_DIR="$$ci_dir" ci-groups GROUPS="$(CI_DEFAULT_GROUPS)"; \
 	$(MAKE) FORK_REPORT_DIR="$$fork_dir" test-fork-all; \
 	$(MAKE) REPORT_DIR="$$ci_dir" test-posa-multi; \
+	$(MAKE) REPORT_DIR="$$ci_dir" test-interop-all; \
 	python3 ./scripts/report/aggregate_reports.py --output-dir "$$reg_dir" --ci-dir "$$ci_dir" --fork-dir "$$fork_dir"
 
 test-all:

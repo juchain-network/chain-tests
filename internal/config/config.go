@@ -25,7 +25,25 @@ type Config struct {
 		Target        string `yaml:"target"`
 		ScheduledTime int64  `yaml:"scheduled_time"`
 		DelaySeconds  int64  `yaml:"delay_seconds"`
+		Schedule      struct {
+			ShanghaiTime  int64 `yaml:"shanghai_time"`
+			CancunTime    int64 `yaml:"cancun_time"`
+			FixHeaderTime int64 `yaml:"fix_header_time"`
+			PosaTime      int64 `yaml:"posa_time"`
+		} `yaml:"schedule"`
 	} `yaml:"fork"`
+
+	Runtime struct {
+		Backend  string `yaml:"backend"`
+		ImplMode string `yaml:"impl_mode"`
+		Impl     string `yaml:"impl"`
+	} `yaml:"runtime"`
+
+	ValidatorAuth struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"validator_auth"`
+
+	RuntimeNodes []RuntimeNode `yaml:"runtime_nodes"`
 
 	Blacklist struct {
 		Enabled         bool   `yaml:"enabled"`
@@ -77,6 +95,12 @@ type NodeRPC struct {
 	Name string `yaml:"name"`
 	Role string `yaml:"role"`
 	URL  string `yaml:"url"`
+}
+
+type RuntimeNode struct {
+	Name string `yaml:"name"`
+	Role string `yaml:"role"`
+	Impl string `yaml:"impl"`
 }
 
 func LoadConfig(path string) (*Config, error) {

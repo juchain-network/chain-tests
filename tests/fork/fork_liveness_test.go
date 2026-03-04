@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 
 	"juchain.org/chain/tools/ci/internal/config"
 )
@@ -273,6 +276,9 @@ func TestF_ForkLiveness(t *testing.T) {
 	if len(nodes) > 1 && maxFinal-minFinal > maxHeightLag {
 		t.Fatalf("node height lag too large: max=%d min=%d lag=%d", maxFinal, minFinal, maxFinal-minFinal)
 	}
+
+	verifyHistoricalBlocks(t, nodes[0], startHeights[nodes[0].name], maxHeights[nodes[0].name])
+	verifyCancunFields(t, nodes[0])
 	t.Logf("fork traffic summary: sent=%d failed=%d mode=%s target=%s", sent, failed, cfg.Fork.Mode, cfg.Fork.Target)
 }
 
@@ -430,4 +436,138 @@ func latestHead(client *ethclient.Client) (headInfo, error) {
 		number:    header.Number.Uint64(),
 		timestamp: header.Time,
 	}, nil
+}
+
+func parseUint64Hex(raw string) (uint64, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || value == "0x" {
+		return 0, nil
+	}
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		return strconv.ParseUint(value[2:], 16, 64)
+	}
+	return strconv.ParseUint(value, 10, 64)
+}
+
+func parseCheckpointHeights(start, end uint64) ([]uint64, error) {
+	spec := strings.TrimSpace(os.Getenv("FORK_HISTORY_CHECKPOINTS"))
+	if spec == "" {
+		mid := start
+		if end > start {
+			mid = start + (end-start)/2
+		}
+		return []uint64{0, mid, end}, nil
+	}
+
+	parts := strings.Split(spec, ",")
+	heights := make([]uint64, 0, len(parts))
+	for _, item := range parts {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if strings.EqualFold(item, "latest") {
+			heights = append(heights, end)
+			continue
+		}
+		height, err := strconv.ParseUint(item, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid checkpoint %q: %w", item, err)
+		}
+		heights = append(heights, height)
+	}
+	if len(heights) == 0 {
+		return nil, errors.New("no checkpoint heights resolved")
+	}
+	return heights, nil
+}
+
+func verifyHistoricalBlocks(t *testing.T, node forkNode, startHeight, endHeight uint64) {
+	t.Helper()
+
+	checkpoints, err := parseCheckpointHeights(startHeight, endHeight)
+	if err != nil {
+		t.Fatalf("parse fork history checkpoints failed: %v", err)
+	}
+
+	rpcClient, err := rpc.DialContext(context.Background(), node.rpcURL)
+	if err != nil {
+		t.Fatalf("dial rpc for history checks failed: %v", err)
+	}
+	defer rpcClient.Close()
+
+	for _, height := range checkpoints {
+		tag := fmt.Sprintf("0x%x", height)
+		var block map[string]any
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := rpcClient.CallContext(ctx, &block, "eth_getBlockByNumber", tag, false)
+		cancel()
+		if err != nil {
+			t.Fatalf("eth_getBlockByNumber(%s) failed: %v", tag, err)
+		}
+		if block == nil {
+			t.Fatalf("eth_getBlockByNumber(%s) returned nil", tag)
+		}
+		hash, _ := block["hash"].(string)
+		stateRoot, _ := block["stateRoot"].(string)
+		if strings.TrimSpace(hash) == "" || strings.EqualFold(hash, "null") {
+			t.Fatalf("missing block hash at height=%d", height)
+		}
+		if strings.TrimSpace(stateRoot) == "" || strings.EqualFold(stateRoot, "null") {
+			t.Fatalf("missing stateRoot at height=%d", height)
+		}
+	}
+}
+
+func verifyCancunFields(t *testing.T, node forkNode) {
+	t.Helper()
+
+	expectCancun := false
+	if strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "1") || strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "true") {
+		expectCancun = true
+	}
+	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
+		expectCancun = true
+	}
+	if !expectCancun {
+		return
+	}
+
+	rpcClient, err := rpc.DialContext(context.Background(), node.rpcURL)
+	if err != nil {
+		t.Fatalf("dial rpc for cancun checks failed: %v", err)
+	}
+	defer rpcClient.Close()
+
+	var block map[string]any
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = rpcClient.CallContext(ctx, &block, "eth_getBlockByNumber", "latest", false)
+	cancel()
+	if err != nil {
+		t.Fatalf("eth_getBlockByNumber(latest) failed: %v", err)
+	}
+	if block == nil {
+		t.Fatalf("latest block response is nil")
+	}
+
+	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
+		tsRaw, _ := block["timestamp"].(string)
+		ts, parseErr := parseUint64Hex(tsRaw)
+		if parseErr == nil && int64(ts) < cfg.Fork.Schedule.CancunTime {
+			t.Logf("skip cancun field assertion: latest timestamp=%d < cancun_time=%d", ts, cfg.Fork.Schedule.CancunTime)
+			return
+		}
+	}
+
+	required := []string{"blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot"}
+	for _, field := range required {
+		value, exists := block[field]
+		if !exists || value == nil {
+			t.Fatalf("missing Cancun field %s in latest block", field)
+		}
+		str, _ := value.(string)
+		if strings.TrimSpace(str) == "" || strings.EqualFold(str, "null") {
+			t.Fatalf("empty Cancun field %s in latest block", field)
+		}
+	}
 }

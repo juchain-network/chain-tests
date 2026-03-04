@@ -33,13 +33,16 @@ run_pr() {
 run_nightly() {
   local groups
   groups="$(cfg_get "$CONFIG_FILE" "ci.nightly.groups" "${CI_NIGHTLY_GROUPS:-config,governance,staking,delegation,punish,rewards,epoch}")"
-  local run_smoke run_fork run_posa run_reth_keystore
+  local run_smoke run_smoke_matrix run_fork run_posa run_reth_keystore
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke" "true")"
+  run_smoke_matrix="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke_matrix" "true")"
   run_fork="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_fork_all" "true")"
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_posa" "true")"
   run_reth_keystore="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_reth_keystore_smoke" "false")"
 
-  if is_true "$run_smoke"; then
+  if is_true "$run_smoke_matrix"; then
+    make -C "$ROOT_DIR" test-smoke-matrix-all
+  elif is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke
   fi
   GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci-groups GROUPS="$groups"
@@ -65,12 +68,15 @@ run_weekly_soak() {
 }
 
 run_release_gate() {
-  local run_smoke run_fork run_posa
+  local run_smoke run_smoke_matrix run_fork run_posa
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_smoke" "true")"
+  run_smoke_matrix="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_smoke_matrix" "true")"
   run_fork="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_fork_all" "true")"
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_posa" "true")"
 
-  if is_true "$run_smoke"; then
+  if is_true "$run_smoke_matrix"; then
+    make -C "$ROOT_DIR" test-smoke-matrix-all
+  elif is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke
   fi
   if is_true "$run_fork"; then

@@ -16,6 +16,7 @@ elif [[ "${SMOKE_SINGLE_IMPL:-geth}" == "reth" ]]; then
 else
   SMOKE_GENESIS_MODE="poa"
 fi
+SMOKE_SINGLE_FORK_TARGET="${SMOKE_SINGLE_FORK_TARGET:-${FORK_TARGET:-}}"
 SMOKE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-60}"
 SMOKE_TIMEOUT="${SMOKE_SINGLE_TEST_TIMEOUT:-12m}"
 SMOKE_GOCACHE="${GOCACHE:-/tmp/gocache}"
@@ -29,6 +30,10 @@ case "$SMOKE_AUTH_MODE" in
   auto|private_key|keystore) ;;
   *) die "SMOKE_SINGLE_AUTH_MODE must be auto|private_key|keystore, got: $SMOKE_AUTH_MODE" ;;
 esac
+
+if [[ "$SMOKE_GENESIS_MODE" == "smoke" && -z "$SMOKE_SINGLE_FORK_TARGET" ]]; then
+  die "SMOKE_SINGLE_FORK_TARGET is required when SMOKE_SINGLE_GENESIS_MODE=smoke"
+fi
 
 TMP_CFG="$(mktemp "${TMPDIR:-/tmp}/chain-tests-smoke-single-XXXX.yaml")"
 cp "$CONFIG_FILE" "$TMP_CFG"
@@ -46,10 +51,10 @@ awk -v impl="$SMOKE_IMPL" -v auth_mode="$SMOKE_AUTH_MODE" '
 ' "$TMP_CFG" > "${TMP_CFG}.next"
 mv "${TMP_CFG}.next" "$TMP_CFG"
 
-echo "[smoke-single] config=$TMP_CFG impl=$SMOKE_IMPL auth_mode=$SMOKE_AUTH_MODE genesis_mode=$SMOKE_GENESIS_MODE"
+echo "[smoke-single] config=$TMP_CFG impl=$SMOKE_IMPL auth_mode=$SMOKE_AUTH_MODE genesis_mode=$SMOKE_GENESIS_MODE fork_target=${SMOKE_SINGLE_FORK_TARGET:-<none>}"
 
 TEST_ENV_CONFIG="$TMP_CFG" make -C "$ROOT_DIR" clean
-TEST_ENV_CONFIG="$TMP_CFG" GENESIS_MODE="$SMOKE_GENESIS_MODE" TEST_NETWORK_NODE_COUNT=1 TEST_NETWORK_VALIDATOR_COUNT=1 make -C "$ROOT_DIR" init
+TEST_ENV_CONFIG="$TMP_CFG" GENESIS_MODE="$SMOKE_GENESIS_MODE" FORK_TARGET="$SMOKE_SINGLE_FORK_TARGET" TEST_NETWORK_NODE_COUNT=1 TEST_NETWORK_VALIDATOR_COUNT=1 make -C "$ROOT_DIR" init
 TEST_ENV_CONFIG="$TMP_CFG" "$ROOT_DIR/scripts/network/native_single.sh" up "$TMP_CFG"
 TEST_ENV_CONFIG="$TMP_CFG" "$ROOT_DIR/scripts/network/native_single.sh" ready "$TMP_CFG"
 

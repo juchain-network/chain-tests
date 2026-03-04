@@ -523,8 +523,12 @@ func verifyCancunFields(t *testing.T, node forkNode) {
 	t.Helper()
 
 	expectCancun := false
+	expectFixHeader := false
 	if strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "1") || strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "true") {
 		expectCancun = true
+	}
+	if strings.EqualFold(os.Getenv("EXPECT_FIXHEADER_FIELDS"), "1") || strings.EqualFold(os.Getenv("EXPECT_FIXHEADER_FIELDS"), "true") {
+		expectFixHeader = true
 	}
 	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
 		expectCancun = true
@@ -550,16 +554,23 @@ func verifyCancunFields(t *testing.T, node forkNode) {
 		t.Fatalf("latest block response is nil")
 	}
 
+	tsRaw, _ := block["timestamp"].(string)
+	ts, parseErr := parseUint64Hex(tsRaw)
+	if parseErr != nil {
+		t.Fatalf("parse latest block timestamp failed: %v", parseErr)
+	}
+
 	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
-		tsRaw, _ := block["timestamp"].(string)
-		ts, parseErr := parseUint64Hex(tsRaw)
-		if parseErr == nil && int64(ts) < cfg.Fork.Schedule.CancunTime {
+		if int64(ts) < cfg.Fork.Schedule.CancunTime {
 			t.Logf("skip cancun field assertion: latest timestamp=%d < cancun_time=%d", ts, cfg.Fork.Schedule.CancunTime)
 			return
 		}
 	}
+	if cfg != nil && cfg.Fork.Schedule.FixHeaderTime > 0 && int64(ts) >= cfg.Fork.Schedule.FixHeaderTime {
+		expectFixHeader = true
+	}
 
-	required := []string{"blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot"}
+	required := []string{"blobGasUsed", "excessBlobGas"}
 	for _, field := range required {
 		value, exists := block[field]
 		if !exists || value == nil {
@@ -569,5 +580,21 @@ func verifyCancunFields(t *testing.T, node forkNode) {
 		if strings.TrimSpace(str) == "" || strings.EqualFold(str, "null") {
 			t.Fatalf("empty Cancun field %s in latest block", field)
 		}
+	}
+
+	if !expectFixHeader {
+		return
+	}
+
+	value, exists := block["parentBeaconBlockRoot"]
+	if !exists || value == nil {
+		t.Fatalf("missing fixHeader field parentBeaconBlockRoot in latest block")
+	}
+	root, _ := value.(string)
+	if strings.TrimSpace(root) == "" || strings.EqualFold(root, "null") {
+		t.Fatalf("empty fixHeader field parentBeaconBlockRoot in latest block")
+	}
+	if !strings.EqualFold(root, "0x0000000000000000000000000000000000000000000000000000000000000000") {
+		t.Fatalf("invalid parentBeaconBlockRoot post-fixHeaderTime: have=%s", root)
 	}
 }

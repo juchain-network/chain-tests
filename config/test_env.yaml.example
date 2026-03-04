@@ -70,12 +70,21 @@ network:
   # - poa: start from PoA system contracts
   # - upgrade: start from PoA and schedule one fork-time transition
   # - posa: direct PoSA startup
+  # - smoke: static fork profile for smoke matrix (requires fork_target)
   genesis_mode: "posa"
   # Used only when genesis_mode=upgrade.
   # Valid values:
   # - shanghaiTime | cancunTime | posaTime | fixHeaderTime
   # - allStaggered  -> shanghai/cancun/fixHeader/posa all non-zero and +60s increment
   # - allSame       -> shanghai/cancun/fixHeader/posa all equal and non-zero
+  #
+  # Used only when genesis_mode=smoke.
+  # Valid values:
+  # - poa
+  # - poa_shanghai
+  # - poa_shanghai_cancun
+  # - poa_shanghai_cancun_fixheader
+  # - poa_shanghai_cancun_fixheader_posa
   fork_target: ""
   # Fork activation delay from init time (seconds), upgrade mode only.
   fork_delay_seconds: 120
@@ -211,12 +220,14 @@ ci:
   nightly:
     groups: "config,governance,staking,delegation,punish,rewards,epoch"
     run_smoke: true
+    run_smoke_matrix: true
     run_fork_all: true
     run_posa: true
     # Required compatibility path: reth + keystore mode.
     run_reth_keystore_smoke: true
   release_gate:
     run_smoke: true
+    run_smoke_matrix: true
     run_fork_all: true
     run_posa: true
   weekly_soak:

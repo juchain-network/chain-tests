@@ -252,15 +252,41 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 		}
 	}
 
-	// Auto-Initialize if needed
-	err = c.autoInitialize()
-	if err != nil {
-		fmt.Printf("⚠️ autoInitialize failed: %v\n", err)
+	// Auto-Initialize only when the selected fork profile expects POSA system contracts.
+	if c.shouldAutoInitialize() {
+		if err := c.autoInitialize(); err != nil {
+			return nil, fmt.Errorf("autoInitialize failed: %w", err)
+		}
+	} else {
+		fmt.Printf("ℹ️ skip auto-initialization for fork mode=%s target=%s\n", cfg.Fork.Mode, cfg.Fork.Target)
 	}
 	// Keep generated test accounts unique across sequential runs that share one chain.
 	c.seedAccountIndexFromFunderNonce()
 
 	return c, nil
+}
+
+func (c *CIContext) shouldAutoInitialize() bool {
+	if c == nil || c.Config == nil {
+		return true
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(c.Config.Fork.Mode))
+	target := strings.ToLower(strings.TrimSpace(c.Config.Fork.Target))
+
+	switch mode {
+	case "poa", "upgrade":
+		// POA address space does not expose POSA proposal config ids used by autoInitialize().
+		return false
+	case "smoke":
+		// Static smoke matrix: only *_posa profile should use POSA auto-init path.
+		return strings.Contains(target, "posa")
+	case "posa":
+		return true
+	default:
+		// Keep backward compatibility for legacy configs that omit fork.mode.
+		return true
+	}
 }
 
 func (c *CIContext) WaitForBlockProgress(minIncrements int, timeout time.Duration) error {

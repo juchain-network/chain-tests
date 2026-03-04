@@ -118,7 +118,19 @@ make net-ready
 
 ```bash
 make test-smoke
+make test-smoke-single
+make test-smoke-matrix-single
+make test-smoke-matrix-multi
+make test-smoke-matrix-all
 ```
+
+Smoke matrix is **static genesis fork-profile liveness** (no runtime upgrade scheduling).
+Default `SMOKE_CASES`:
+- `poa`
+- `poa_shanghai`
+- `poa_shanghai_cancun`
+- `poa_shanghai_cancun_fixheader`
+- `poa_shanghai_cancun_fixheader_posa`
 
 ### 5.2 Grouped tests
 
@@ -143,7 +155,7 @@ Notes:
 - `test-all` runs all non-smoke tests case-by-case (smoke is separate)
 - `make test` runs a single-pass `go test -run .` and expects network already ready
 
-### 5.4 Fork/upgrade liveness matrix
+### 5.4 Fork/upgrade liveness matrix (dynamic)
 
 ```bash
 make test-fork-single
@@ -189,12 +201,15 @@ Generated perf artifacts:
 See `config/test_env.yaml.example` for full options.
 Important fields:
 
-- `network.genesis_mode`: `poa | upgrade | posa`
+- `network.genesis_mode`: `poa | upgrade | posa | smoke`
 - `runtime.impl_mode`: `single | mixed`
 - `runtime.impl`: `geth | reth`
 - `runtime_nodes.nodeX`: per-node impl selection in mixed mode
 - `validator_auth.mode`: `auto | private_key | keystore` (reth validator auth)
 - `network.fork_target`:
+  - smoke static profiles:
+    - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa`
+  - upgrade dynamic targets:
   - `shanghaiTime | cancunTime | posaTime | fixHeaderTime`
   - `allStaggered` (all four fork timestamps are non-zero and increase by 60s)
   - `allSame` (all four fork timestamps are equal and non-zero)
@@ -212,6 +227,7 @@ Important fields:
 - machine-readable run summary: `reports/ci_<timestamp>/summary.json`
 - machine-readable run manifest: `reports/ci_<timestamp>/manifest.json`
 - fork matrix report: `reports/fork_<timestamp>/matrix.md` + `matrix.json`
+- smoke matrix report: `reports/smoke_matrix_<timestamp>/**/matrix.md` + `matrix.json`
 - full regression index: `reports/regression_<timestamp>/index.md` + `index.json`
 
 View logs:

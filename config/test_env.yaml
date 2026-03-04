@@ -140,11 +140,13 @@ ci:
   nightly:
     groups: "config,governance,staking,delegation,punish,rewards,epoch"
     run_smoke: true
+    run_smoke_matrix: true
     run_fork_all: true
     run_posa: true
     run_reth_keystore_smoke: true
   release_gate:
     run_smoke: true
+    run_smoke_matrix: true
     run_fork_all: true
     run_posa: true
   weekly_soak:

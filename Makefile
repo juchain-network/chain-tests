@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready test test-all test-all-legacy \
-        test-smoke test-smoke-single test-config test-governance test-staking test-delegation test-punish \
+        test-smoke test-smoke-single test-smoke-matrix-single test-smoke-matrix-multi test-smoke-matrix-all test-config test-governance test-staking test-delegation test-punish \
         test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
         test-posa-multi test-interop-sync test-interop-state-root test-interop-all \
         test-regression-all test-perf-tiers test-soak-24h \
@@ -39,6 +39,9 @@ FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
 FORK_UPGRADE_STARTUP_BUFFER_MULTI ?= 30
 FORK_TEST_TIMEOUT ?= 20m
 FORK_REPORT_DIR ?=
+SMOKE_CASES ?= poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa
+SMOKE_TOPOLOGY ?= multi
+SMOKE_REPORT_DIR ?=
 PERF_TPS_TIERS ?= 10,30,60
 PERF_TIER_DURATION ?= 90s
 PERF_SAMPLE_INTERVAL ?= 2s
@@ -107,6 +110,9 @@ help:
 	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
 	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
 	@echo "  test-smoke-single - Single-node smoke (native single topology)"
+	@echo "  test-smoke-matrix-single - Static fork-genesis smoke matrix on single topology"
+	@echo "  test-smoke-matrix-multi - Static fork-genesis smoke matrix on multi topology"
+	@echo "  test-smoke-matrix-all - Run static fork-genesis smoke matrix on single + multi topology"
 	@echo "  test-fork-single - Fork liveness matrix on native single-node topology"
 	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
 	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
@@ -128,9 +134,9 @@ help:
 	@echo "CI Targets:"
 	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-drift-check ci-budget-selftest ci-budget-enforced"
 	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups)"
-	@echo "  ci-nightly-full - Nightly profile (full groups + fork-all + posa)"
+	@echo "  ci-nightly-full - Nightly profile (smoke-matrix + full groups + fork-all + posa)"
 	@echo "  ci-weekly-soak  - Weekly long-soak profile"
-	@echo "  ci-release-gate - Release gate profile (smoke + fork-all + posa)"
+	@echo "  ci-release-gate - Release gate profile (smoke-matrix + fork-all + posa)"
 	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
 	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
 	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
@@ -152,6 +158,9 @@ help:
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_MULTI=$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)"
 	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT)"
 	@echo "  FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
+	@echo "  SMOKE_CASES=$(SMOKE_CASES)       # poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa"
+	@echo "  SMOKE_TOPOLOGY=$(SMOKE_TOPOLOGY) # single|multi (for scripts/smoke/run_matrix.sh)"
+	@echo "  SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
 	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS)"
 	@echo "  PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
 	@echo "  PERF_SAMPLE_INTERVAL=$(PERF_SAMPLE_INTERVAL)"
@@ -310,6 +319,27 @@ test-smoke-single:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		SMOKE_SINGLE_OBSERVE_SECONDS="$(if $(SMOKE_SINGLE_OBSERVE_SECONDS),$(SMOKE_SINGLE_OBSERVE_SECONDS),60)" \
 		bash ./scripts/smoke/run_single.sh
+
+test-smoke-matrix-single:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		SMOKE_CASES="$(SMOKE_CASES)" \
+		SMOKE_TOPOLOGY="single" \
+		SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
+		bash ./scripts/smoke/run_matrix.sh single
+
+test-smoke-matrix-multi:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		SMOKE_CASES="$(SMOKE_CASES)" \
+		SMOKE_TOPOLOGY="multi" \
+		SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
+		bash ./scripts/smoke/run_matrix.sh multi
+
+test-smoke-matrix-all:
+	@set -e; \
+		report_root="$(if $(SMOKE_REPORT_DIR),$(SMOKE_REPORT_DIR),reports/smoke_matrix_$$(date +%Y%m%d_%H%M%S))"; \
+		echo "📦 smoke matrix report dir=$$report_root"; \
+		$(MAKE) SMOKE_REPORT_DIR="$$report_root/single" test-smoke-matrix-single; \
+		$(MAKE) SMOKE_REPORT_DIR="$$report_root/multi" test-smoke-matrix-multi
 
 test-fork-single:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \

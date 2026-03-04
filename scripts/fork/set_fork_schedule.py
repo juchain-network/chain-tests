@@ -11,6 +11,13 @@ UPGRADE_DEPENDENCIES = {
     "posaTime": ("shanghaiTime", "posaTime"),
 }
 STAGGER_STEP_SECONDS = 60
+SMOKE_STATIC_CASES = {
+    "poa": (),
+    "poa_shanghai": ("shanghaiTime",),
+    "poa_shanghai_cancun": ("shanghaiTime", "cancunTime"),
+    "poa_shanghai_cancun_fixheader": ("shanghaiTime", "cancunTime", "fixHeaderTime"),
+    "poa_shanghai_cancun_fixheader_posa": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
+}
 DEFAULT_BLOB_SCHEDULE = {
     "cancun": {
         "target": 3,
@@ -43,6 +50,22 @@ def canonical_target(raw: str) -> str:
     return aliases.get(value, "")
 
 
+def canonical_smoke_case(raw: str) -> str:
+    value = (raw or "").strip().lower()
+    aliases = {
+        "poa": "poa",
+        "poa_shanghai": "poa_shanghai",
+        "poa-shanghai": "poa_shanghai",
+        "poa_shanghai_cancun": "poa_shanghai_cancun",
+        "poa-shanghai-cancun": "poa_shanghai_cancun",
+        "poa_shanghai_cancun_fixheader": "poa_shanghai_cancun_fixheader",
+        "poa-shanghai-cancun-fixheader": "poa_shanghai_cancun_fixheader",
+        "poa_shanghai_cancun_fixheader_posa": "poa_shanghai_cancun_fixheader_posa",
+        "poa-shanghai-cancun-fixheader-posa": "poa_shanghai_cancun_fixheader_posa",
+    }
+    return aliases.get(value, "")
+
+
 def ensure_blob_schedule(cfg: dict) -> None:
     blob_schedule = cfg.get("blobSchedule")
     if not isinstance(blob_schedule, dict):
@@ -55,7 +78,7 @@ def ensure_blob_schedule(cfg: dict) -> None:
 def main() -> int:
     if len(sys.argv) < 3:
         print(
-            "usage: set_fork_schedule.py <genesis.json> <poa|posa|upgrade> [target] [delay_sec]",
+            "usage: set_fork_schedule.py <genesis.json> <poa|posa|upgrade|smoke> [target] [delay_sec]",
             file=sys.stderr,
         )
         return 1
@@ -116,6 +139,23 @@ def main() -> int:
             return 1
         if cfg.get("cancunTime", 0) > 0:
             ensure_blob_schedule(cfg)
+    elif mode == "smoke":
+        effective_target = canonical_smoke_case(target_raw)
+        if not effective_target:
+            print(
+                "smoke mode requires target in {poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa}",
+                file=sys.stderr,
+            )
+            return 1
+        for key in FORK_FIELDS:
+            cfg.pop(key, None)
+        cfg.pop("blobSchedule", None)
+
+        for key in SMOKE_STATIC_CASES[effective_target]:
+            cfg[key] = 0
+        if "cancunTime" in SMOKE_STATIC_CASES[effective_target]:
+            ensure_blob_schedule(cfg)
+        effective_delay_seconds = 0
     else:
         print(f"unsupported mode: {mode}", file=sys.stderr)
         return 1

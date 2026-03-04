@@ -204,6 +204,8 @@ echo "Using runtime impl: mode=$RUNTIME_IMPL_MODE default=$DEFAULT_RUNTIME_IMPL 
 echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
+elif [ "$GENESIS_MODE" = "smoke" ]; then
+    echo "Using smoke static fork case: $FORK_TARGET"
 fi
 
 # 1. Generate Keys helper (using a temporary Go program)
@@ -381,10 +383,10 @@ if ! [[ "$BLACKLIST_CONTRACT_ADDR" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
     die "blacklist.contract_address must be a hex address, got: $BLACKLIST_CONTRACT_ADDR"
 fi
 case "$GENESIS_MODE" in
-    poa|posa|upgrade)
+    poa|posa|upgrade|smoke)
         ;;
     *)
-        die "network.genesis_mode must be one of poa|posa|upgrade, got: $GENESIS_MODE"
+        die "network.genesis_mode must be one of poa|posa|upgrade|smoke, got: $GENESIS_MODE"
         ;;
 esac
 if [ "$GENESIS_MODE" = "upgrade" ]; then
@@ -393,6 +395,15 @@ if [ "$GENESIS_MODE" = "upgrade" ]; then
             ;;
         *)
             die "FORK_TARGET must be one of shanghaiTime|cancunTime|posaTime|fixHeaderTime|allStaggered|allSame when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
+            ;;
+    esac
+fi
+if [ "$GENESIS_MODE" = "smoke" ]; then
+    case "$FORK_TARGET" in
+        poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa)
+            ;;
+        *)
+            die "FORK_TARGET must be one of poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa when GENESIS_MODE=smoke, got: ${FORK_TARGET:-<empty>}"
             ;;
     esac
 fi
@@ -514,7 +525,27 @@ echo "Building genesis.json..."
 
 # Generate System Contracts Alloc using the helper script
 echo "Generating system contracts alloc..."
-if [ "$GENESIS_MODE" = "poa" ] || [ "$GENESIS_MODE" = "upgrade" ]; then
+USE_POA_ALLOC=false
+case "$GENESIS_MODE" in
+    poa|upgrade)
+        USE_POA_ALLOC=true
+        ;;
+    smoke)
+        case "$FORK_TARGET" in
+            poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader)
+                USE_POA_ALLOC=true
+                ;;
+            poa_shanghai_cancun_fixheader_posa)
+                USE_POA_ALLOC=false
+                ;;
+            *)
+                die "unsupported smoke fork target for alloc selection: ${FORK_TARGET:-<empty>}"
+                ;;
+        esac
+        ;;
+esac
+
+if [ "$USE_POA_ALLOC" = true ]; then
     if [ ! -f "$POA_ALLOC_TEMPLATE" ]; then
         die "missing PoA alloc template: $POA_ALLOC_TEMPLATE"
     fi

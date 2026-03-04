@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=scripts/network/lib.sh
@@ -47,6 +47,16 @@ FORK_TARGET="${FORK_TARGET:-$(cfg_get "$CONFIG_FILE" "network.fork_target" "")}"
 FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
 FORK_SCHEDULER_SCRIPT="$SCRIPT_DIR/fork/set_fork_schedule.py"
 POA_ALLOC_TEMPLATE="$(to_abs_path "./templates/alloc_poa_system_contracts.json")"
+RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
+DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
+VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
+VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
+VALIDATOR_KEYSTORE_PASSWORD_ENV="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
+
+NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
+NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1" "")"
+NODE2_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2" "")"
+NODE3_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3" "")"
 BLACKLIST_ENABLED_RAW="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
 BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
 BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
@@ -62,6 +72,33 @@ BLACKLIST_MOCK_PREDEPLOY=false
 if is_true "$BLACKLIST_ENABLED_RAW"; then BLACKLIST_ENABLED=true; fi
 if is_true "$BLACKLIST_ALERT_FAIL_OPEN_RAW"; then BLACKLIST_ALERT_FAIL_OPEN=true; fi
 if is_true "$BLACKLIST_MOCK_PREDEPLOY_RAW"; then BLACKLIST_MOCK_PREDEPLOY=true; fi
+
+normalize_impl() {
+    local impl="${1:-}"
+    case "$impl" in
+        "" ) echo "" ;;
+        geth|reth) echo "$impl" ;;
+        *) die "unsupported runtime implementation: $impl (expected geth|reth)" ;;
+    esac
+}
+
+resolve_node_impl() {
+    local idx="$1"
+    local node_cfg="$2"
+    local resolved=""
+    case "$RUNTIME_IMPL_MODE" in
+        single)
+            resolved="$DEFAULT_RUNTIME_IMPL"
+            ;;
+        mixed)
+            resolved="${node_cfg:-$DEFAULT_RUNTIME_IMPL}"
+            ;;
+        *)
+            die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+            ;;
+    esac
+    normalize_impl "$resolved"
+}
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -105,6 +142,35 @@ if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
     die "network.epoch must be a positive integer, got: $NETWORK_EPOCH"
 fi
 
+DEFAULT_RUNTIME_IMPL="$(normalize_impl "$DEFAULT_RUNTIME_IMPL")"
+case "$RUNTIME_IMPL_MODE" in
+    single|mixed)
+        ;;
+    *)
+        die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+        ;;
+esac
+case "$VALIDATOR_AUTH_MODE" in
+    auto|private_key|keystore)
+        ;;
+    *)
+        die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE"
+        ;;
+esac
+
+VALIDATOR_KEYSTORE_PASSWORD_VALUE="${VALIDATOR_KEYSTORE_PASSWORD_VALUE:-}"
+if [ -z "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" ] && [ -n "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG" ]; then
+    VALIDATOR_KEYSTORE_PASSWORD_FILE_ABS="$(to_abs_path "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG")"
+    [ -f "$VALIDATOR_KEYSTORE_PASSWORD_FILE_ABS" ] || die "validator_auth.keystore.password_file not found: $VALIDATOR_KEYSTORE_PASSWORD_FILE_ABS"
+    VALIDATOR_KEYSTORE_PASSWORD_VALUE="$(tr -d '\r' < "$VALIDATOR_KEYSTORE_PASSWORD_FILE_ABS" | head -n 1)"
+fi
+if [ -z "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" ] && [ -n "$VALIDATOR_KEYSTORE_PASSWORD_ENV" ]; then
+    VALIDATOR_KEYSTORE_PASSWORD_VALUE="$(printenv "$VALIDATOR_KEYSTORE_PASSWORD_ENV" || true)"
+fi
+if [ -z "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" ]; then
+    VALIDATOR_KEYSTORE_PASSWORD_VALUE="123456"
+fi
+
 for v in \
     "$PROFILE_PROPOSAL_COOLDOWN" \
     "$PROFILE_UNBONDING_PERIOD" \
@@ -134,6 +200,7 @@ echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
 echo "Using test profile: $TEST_PROFILE"
 echo "Using genesis mode: $GENESIS_MODE"
+echo "Using runtime impl: mode=$RUNTIME_IMPL_MODE default=$DEFAULT_RUNTIME_IMPL auth=$VALIDATOR_AUTH_MODE"
 echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
@@ -177,16 +244,83 @@ EOF
 
 # Initialize go module for genkeys if explicitly requested
 if [ "${RUN_GO_MOD_TIDY:-}" = "1" ]; then
-    pushd "$TEST_INT_DIR" > /dev/null
+    pushd "$ROOT_DIR" > /dev/null
     go mod tidy
     popd > /dev/null
 fi
+
+cat > "$DATA_DIR/genkeystore.go" <<EOF
+package main
+
+import (
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/crypto"
+)
+
+func main() {
+	if len(os.Args) != 5 {
+		fmt.Fprintf(os.Stderr, "usage: genkeystore <hex-privkey> <password> <output-dir> <address-file>\\n")
+		os.Exit(2)
+	}
+
+	privHex := os.Args[1]
+	pass := os.Args[2]
+	outDir := os.Args[3]
+	addressFile := os.Args[4]
+
+	keyBytes, err := hex.DecodeString(privHex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "decode privkey: %v\\n", err)
+		os.Exit(1)
+	}
+	priv, err := crypto.ToECDSA(keyBytes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "to ecdsa: %v\\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir keystore dir: %v\\n", err)
+		os.Exit(1)
+	}
+	ks := keystore.NewKeyStore(outDir, keystore.StandardScryptN, keystore.StandardScryptP)
+	acc, err := ks.ImportECDSA(priv, pass)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "import ecdsa: %v\\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(addressFile, []byte(acc.Address.Hex()+"\\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "write address file: %v\\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(filepath.Clean(acc.URL.Path))
+}
+EOF
 
 generate_key() {
     local seed="$1"
     local output
     if ! output=$(cd "$ROOT_DIR" && go run "$DATA_DIR/genkeys.go" "$seed"); then
         echo "❌ genkeys failed for seed '${seed}'" >&2
+        exit 1
+    fi
+    echo "$output"
+}
+
+generate_keystore() {
+    local priv="$1"
+    local password="$2"
+    local out_dir="$3"
+    local address_file="$4"
+    local output
+    if ! output=$(cd "$ROOT_DIR" && go run "$DATA_DIR/genkeystore.go" "$priv" "$password" "$out_dir" "$address_file"); then
+        echo "❌ genkeystore failed for out_dir '${out_dir}'" >&2
         exit 1
     fi
     echo "$output"
@@ -217,6 +351,9 @@ VAL_ADDRS=()
 VAL_PRIVS=()
 ENODES=()
 NODE_PUBS=()
+RUNTIME_NODE_IMPLS=()
+VAL_KEYSTORE_FILES=()
+VAL_KEYSTORE_ADDRS=()
 
 if ! [[ "$NUM_VALIDATORS" =~ ^[0-9]+$ ]] || [ "$NUM_VALIDATORS" -le 0 ]; then
     die "network.validator_count must be a positive integer, got: $NUM_VALIDATORS"
@@ -260,6 +397,16 @@ if [ "$GENESIS_MODE" = "upgrade" ]; then
     esac
 fi
 
+NODE_IMPL_CONFIGS=("$NODE0_IMPL_CFG" "$NODE1_IMPL_CFG" "$NODE2_IMPL_CFG" "$NODE3_IMPL_CFG")
+for i in $(seq 0 $((NUM_NODES-1))); do
+    node_cfg=""
+    if [ "$i" -lt "${#NODE_IMPL_CONFIGS[@]}" ]; then
+        node_cfg="${NODE_IMPL_CONFIGS[$i]}"
+    fi
+    node_impl="$(resolve_node_impl "$i" "$node_cfg")"
+    RUNTIME_NODE_IMPLS+=("$node_impl")
+done
+
 # We generate for 0..3 (4 nodes). 0-2 are validators, 3 is sync.
 for i in $(seq 0 $((NUM_NODES-1))); do
     # Create node directory
@@ -269,7 +416,7 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     # Node P2P Key
     IFS=',' read -r NODE_ADDR NODE_PRIV NODE_PUB <<< "$(generate_key "node-p2p-$i")"
     [ -n "$NODE_PRIV" ] || die "failed to generate p2p key for node$i"
-    echo "$NODE_PRIV" > "$DATA_DIR/node$i/nodekey"
+    printf '%s' "$NODE_PRIV" > "$DATA_DIR/node$i/nodekey"
     echo "$NODE_PUB" > "$DATA_DIR/node$i/nodepub"
     NODE_PUBS+=("$NODE_PUB")
     
@@ -285,13 +432,51 @@ for i in $(seq 0 $((NUM_NODES-1))); do
         IFS=',' read -r ADDR PRIV PUB <<< "$(generate_key "validator-$i")"
         ADDR=$(echo "$ADDR" | tr -d '[:space:]')
         [ -n "$ADDR" ] || die "failed to generate validator key for node$i"
-        VAL_ADDRS+=($ADDR)
-        VAL_PRIVS+=($PRIV)
+        VAL_ADDRS+=("$ADDR")
+        VAL_PRIVS+=("$PRIV")
         echo "Validator $i: $ADDR"
         echo "$PRIV" > "$DATA_DIR/node$i/validator.key"
         echo "$ADDR" > "$DATA_DIR/node$i/validator.addr"
+        printf '%s\n' "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" > "$DATA_DIR/node$i/password.txt"
+
+        keystore_file="$(generate_keystore "$PRIV" "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" "$DATA_DIR/node$i/keystore" "$DATA_DIR/node$i/keystore.addr")"
+        VAL_KEYSTORE_FILES+=("$keystore_file")
+        VAL_KEYSTORE_ADDRS+=("$(tr -d '[:space:]' < "$DATA_DIR/node$i/keystore.addr")")
     else
         echo "Node $i: Sync Node (No validator key)"
+    fi
+done
+
+cat > "$DATA_DIR/runtime_nodes.yaml" <<EOF
+runtime:
+  impl_mode: "$RUNTIME_IMPL_MODE"
+  impl: "$DEFAULT_RUNTIME_IMPL"
+validator_auth:
+  mode: "$VALIDATOR_AUTH_MODE"
+nodes:
+EOF
+
+for i in $(seq 0 $((NUM_NODES-1))); do
+    impl="${RUNTIME_NODE_IMPLS[$i]}"
+    role="sync"
+    if [ "$i" -lt "$NUM_VALIDATORS" ]; then
+        role="validator"
+    fi
+    cat >> "$DATA_DIR/runtime_nodes.yaml" <<EOF
+  node$i:
+    role: "$role"
+    impl: "$impl"
+    datadir: "$DATA_DIR/node$i"
+    nodekey: "$DATA_DIR/node$i/nodekey"
+EOF
+    if [ "$i" -lt "$NUM_VALIDATORS" ]; then
+        cat >> "$DATA_DIR/runtime_nodes.yaml" <<EOF
+    validator_key: "$DATA_DIR/node$i/validator.key"
+    validator_address: "$(tr -d '[:space:]' < "$DATA_DIR/node$i/validator.addr")"
+    keystore_file: "${VAL_KEYSTORE_FILES[$i]}"
+    keystore_address: "${VAL_KEYSTORE_ADDRS[$i]}"
+    password_file: "$DATA_DIR/node$i/password.txt"
+EOF
     fi
 done
 
@@ -506,7 +691,32 @@ blacklist:
     predeploy: $BLACKLIST_MOCK_PREDEPLOY
     code_file: "$BLACKLIST_MOCK_CODE_FILE"
     abi_file: "$BLACKLIST_MOCK_ABI_FILE"
+
+runtime:
+  backend: "$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")"
+  impl_mode: "$RUNTIME_IMPL_MODE"
+  impl: "$DEFAULT_RUNTIME_IMPL"
+
+validator_auth:
+  mode: "$VALIDATOR_AUTH_MODE"
+  keystore:
+    password_env: "$VALIDATOR_KEYSTORE_PASSWORD_ENV"
+    password_file: "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG"
+
+runtime_nodes:
 EOF
+
+for i in $(seq 0 $((NUM_NODES-1))); do
+    role="sync"
+    if [ "$i" -lt "$NUM_VALIDATORS" ]; then
+        role="validator"
+    fi
+    cat >> "$DATA_DIR/test_config.yaml" <<EOF
+  - name: "node$i"
+    role: "$role"
+    impl: "${RUNTIME_NODE_IMPLS[$i]}"
+EOF
+done
 
 awk \
   -v v1_http="$V1_HTTP" -v v1_ws="$V1_WS" -v v1_p2p="$V1_P2P" \

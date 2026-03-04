@@ -153,7 +153,7 @@ wait_for_rpc_ready() {
     fi
 
     sleep 1
-    ((i++))
+    i=$((i + 1))
   done
 
   die "RPC not ready within ${timeout}s: $rpc_url"

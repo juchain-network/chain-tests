@@ -13,26 +13,79 @@ function loadEnvFile(file) {
     if (idx <= 0) continue;
     const key = trimmed.slice(0, idx).trim();
     const val = trimmed.slice(idx + 1).trim();
-    if (!process.env[key]) {
+    if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
       process.env[key] = val;
     }
   }
 }
+
 loadEnvFile(envFile);
 
 const ns = process.env.PM2_NAMESPACE || 'ju-chain';
-const geth = process.env.GETH_BINARY || path.resolve(__dirname, '../docker/juchain');
+const gethBinary = process.env.GETH_BINARY || path.resolve(__dirname, '../docker/juchain');
+const rethBinary = process.env.RETH_BINARY || path.resolve(__dirname, '../../rchain/target/release/congress-node');
 const logDir = process.env.NATIVE_LOG_DIR || path.resolve(__dirname, '../data/native-logs');
 const networkId = process.env.NETWORK_ID || '666666';
 const bootnodes = process.env.BOOTNODES || '';
 const stateScheme = process.env.STATE_SCHEME || '';
 const historyState = process.env.HISTORY_STATE || '';
+const validatorAuthMode = (process.env.VALIDATOR_AUTH_MODE || 'auto').toLowerCase();
+const defaultImpl = (process.env.DEFAULT_RUNTIME_IMPL || 'geth').toLowerCase();
+const genesisFile = process.env.GENESIS_FILE;
 
 function nameOf(suffix) {
   return `${ns}-${suffix}`;
 }
 
-function commonArgs(opts) {
+function appConfig(name, script, args, logPrefix) {
+  return {
+    name: nameOf(name),
+    script,
+    args,
+    cwd: process.cwd(),
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '2G',
+    env: Object.assign({}, process.env, {
+      NODE_ENV: 'production'
+    }),
+    error_file: path.join(logDir, `${logPrefix}-error.log`),
+    out_file: path.join(logDir, `${logPrefix}-out.log`),
+    log_file: path.join(logDir, `${logPrefix}-combined.log`),
+    time: true,
+    merge_logs: true,
+    kill_timeout: 30000,
+    restart_delay: 3000,
+    max_restarts: 10,
+    min_uptime: '10s'
+  };
+}
+
+function readTrimmed(filePath) {
+  if (!filePath) return '';
+  try {
+    return fs.readFileSync(filePath, 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function normalizedPrivateKey(filePath) {
+  const raw = readTrimmed(filePath).replace(/^0x/i, '');
+  if (!raw) return '';
+  return `0x${raw}`;
+}
+
+function resolveNodeImpl(index) {
+  const raw = (process.env[`NODE${index}_IMPL`] || defaultImpl || 'geth').toLowerCase();
+  if (raw !== 'geth' && raw !== 'reth') {
+    throw new Error(`unsupported NODE${index}_IMPL=${raw}`);
+  }
+  return raw;
+}
+
+function gethCommonArgs(opts) {
   const args = [
     '--networkid', networkId,
     '--txpool.nolocals',
@@ -83,91 +136,167 @@ function commonArgs(opts) {
   return args;
 }
 
-function appConfig(appName, args, logPrefix) {
-  return {
-    name: nameOf(appName),
-    script: geth,
-    args,
-    cwd: process.cwd(),
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '2G',
-    env: Object.assign({}, process.env, {
-      NODE_ENV: 'production'
-    }),
-    error_file: path.join(logDir, `${logPrefix}-error.log`),
-    out_file: path.join(logDir, `${logPrefix}-out.log`),
-    log_file: path.join(logDir, `${logPrefix}-combined.log`),
-    time: true,
-    merge_logs: true,
-    kill_timeout: 30000,
-    restart_delay: 3000,
-    max_restarts: 10,
-    min_uptime: '10s'
-  };
+function resolveRethValidatorAuthArgs(index) {
+  if (!index) return [];
+
+  const keyFile = process.env[`VALIDATOR${index}_PRIVATE_KEY_FILE`];
+  const keystorePath = process.env[`VALIDATOR${index}_KEYSTORE_PATH`];
+  const keystoreDir = process.env[`VALIDATOR${index}_KEYSTORE_DIR`];
+  const keystoreAddress = process.env[`VALIDATOR${index}_KEYSTORE_ADDRESS`];
+  const passFile = process.env[`VALIDATOR${index}_PASSWORD`];
+  const passEnvName = process.env.KEYSTORE_PASSWORD_ENV_NAME || '';
+
+  const privateKey = normalizedPrivateKey(keyFile);
+  const hasKeystore = Boolean((keystorePath && fs.existsSync(keystorePath)) || (keystoreDir && fs.existsSync(keystoreDir)));
+
+  const useKeystore =
+    validatorAuthMode === 'keystore' ||
+    (validatorAuthMode === 'auto' && hasKeystore);
+
+  if (useKeystore) {
+    const args = [];
+    if (keystorePath && fs.existsSync(keystorePath)) {
+      args.push('--keystore-path', keystorePath);
+    } else if (keystoreDir && fs.existsSync(keystoreDir)) {
+      args.push('--keystore-dir', keystoreDir);
+    }
+
+    if (passFile && fs.existsSync(passFile)) {
+      args.push('--keystore-pass-file', passFile);
+    } else if (passEnvName && process.env[passEnvName]) {
+      args.push('--keystore-pass', `env:${passEnvName}`);
+    }
+
+    if (keystoreAddress) {
+      args.push('--keystore-address', keystoreAddress);
+    }
+
+    if (args.length > 0) {
+      return args;
+    }
+  }
+
+  if (privateKey) {
+    return ['--validator-private-key', privateKey];
+  }
+
+  return [];
 }
 
+function rethCommonArgs(opts) {
+  if (!genesisFile) {
+    throw new Error('GENESIS_FILE is required for reth runtime');
+  }
+  const args = [
+    'node',
+    '--chain', genesisFile,
+    '--datadir', opts.datadir,
+    '--http',
+    '--http.addr', '0.0.0.0',
+    '--http.port', String(opts.httpPort),
+    '--http.api', 'all',
+    '--ws',
+    '--ws.addr', '0.0.0.0',
+    '--ws.port', String(opts.wsPort),
+    '--ws.api', 'all',
+    '--authrpc.port', String(opts.enginePort),
+    '--port', String(opts.p2pPort),
+    '--discovery.port', String(opts.p2pPort),
+    '--p2p-secret-key', opts.nodekey,
+    '--log.file.directory', logDir
+  ];
+
+  if (bootnodes) {
+    args.push('--bootnodes', bootnodes, '--trusted-peers', bootnodes);
+  }
+
+  if (opts.validatorIndex) {
+    args.push(...resolveRethValidatorAuthArgs(opts.validatorIndex));
+  }
+
+  return args;
+}
+
+function binaryForImpl(impl) {
+  if (impl === 'geth') return gethBinary;
+  if (impl === 'reth') return rethBinary;
+  throw new Error(`unsupported impl: ${impl}`);
+}
+
+function argsForNode(node) {
+  const impl = resolveNodeImpl(node.index);
+  if (impl === 'geth') {
+    return gethCommonArgs(node);
+  }
+  return rethCommonArgs(node);
+}
+
+function scriptForNode(node) {
+  return binaryForImpl(resolveNodeImpl(node.index));
+}
+
+const nodeDefs = [
+  {
+    name: 'validator1',
+    logPrefix: 'validator1',
+    index: 0,
+    validatorIndex: 1,
+    datadir: process.env.NODE0_DATADIR,
+    nodekey: process.env.NODE0_NODEKEY,
+    httpPort: process.env.VALIDATOR1_HTTP_PORT || '18545',
+    wsPort: process.env.VALIDATOR1_WS_PORT || '18546',
+    enginePort: process.env.VALIDATOR1_ENGINE_PORT || '18550',
+    p2pPort: process.env.VALIDATOR1_P2P_PORT || '30301',
+    mine: true,
+    address: process.env.VALIDATOR1_ADDRESS,
+    passwordFile: process.env.VALIDATOR1_PASSWORD
+  },
+  {
+    name: 'validator2',
+    logPrefix: 'validator2',
+    index: 1,
+    validatorIndex: 2,
+    datadir: process.env.NODE1_DATADIR,
+    nodekey: process.env.NODE1_NODEKEY,
+    httpPort: process.env.VALIDATOR2_HTTP_PORT || '18547',
+    wsPort: process.env.VALIDATOR2_WS_PORT || '18548',
+    enginePort: process.env.VALIDATOR2_ENGINE_PORT || '18552',
+    p2pPort: process.env.VALIDATOR2_P2P_PORT || '30303',
+    mine: true,
+    address: process.env.VALIDATOR2_ADDRESS,
+    passwordFile: process.env.VALIDATOR2_PASSWORD
+  },
+  {
+    name: 'validator3',
+    logPrefix: 'validator3',
+    index: 2,
+    validatorIndex: 3,
+    datadir: process.env.NODE2_DATADIR,
+    nodekey: process.env.NODE2_NODEKEY,
+    httpPort: process.env.VALIDATOR3_HTTP_PORT || '18549',
+    wsPort: process.env.VALIDATOR3_WS_PORT || '18553',
+    enginePort: process.env.VALIDATOR3_ENGINE_PORT || '18554',
+    p2pPort: process.env.VALIDATOR3_P2P_PORT || '30305',
+    mine: true,
+    address: process.env.VALIDATOR3_ADDRESS,
+    passwordFile: process.env.VALIDATOR3_PASSWORD
+  },
+  {
+    name: 'syncnode',
+    logPrefix: 'syncnode',
+    index: 3,
+    validatorIndex: 0,
+    datadir: process.env.NODE3_DATADIR,
+    nodekey: process.env.NODE3_NODEKEY,
+    httpPort: process.env.SYNCNODE_HTTP_PORT || '18551',
+    wsPort: process.env.SYNCNODE_WS_PORT || '18555',
+    enginePort: process.env.SYNCNODE_ENGINE_PORT || '18556',
+    p2pPort: process.env.SYNCNODE_P2P_PORT || '30307',
+    mine: false,
+    cache: '2048'
+  }
+];
+
 module.exports = {
-  apps: [
-    appConfig(
-      'validator1',
-      commonArgs({
-        datadir: process.env.NODE0_DATADIR,
-        nodekey: process.env.NODE0_NODEKEY,
-        httpPort: process.env.VALIDATOR1_HTTP_PORT || '18545',
-        wsPort: process.env.VALIDATOR1_WS_PORT || '18546',
-        enginePort: process.env.VALIDATOR1_ENGINE_PORT || '18550',
-        p2pPort: process.env.VALIDATOR1_P2P_PORT || '30301',
-        mine: true,
-        address: process.env.VALIDATOR1_ADDRESS,
-        passwordFile: process.env.VALIDATOR1_PASSWORD
-      }),
-      'validator1'
-    ),
-    appConfig(
-      'validator2',
-      commonArgs({
-        datadir: process.env.NODE1_DATADIR,
-        nodekey: process.env.NODE1_NODEKEY,
-        httpPort: process.env.VALIDATOR2_HTTP_PORT || '18547',
-        wsPort: process.env.VALIDATOR2_WS_PORT || '18548',
-        enginePort: process.env.VALIDATOR2_ENGINE_PORT || '18552',
-        p2pPort: process.env.VALIDATOR2_P2P_PORT || '30303',
-        mine: true,
-        address: process.env.VALIDATOR2_ADDRESS,
-        passwordFile: process.env.VALIDATOR2_PASSWORD
-      }),
-      'validator2'
-    ),
-    appConfig(
-      'validator3',
-      commonArgs({
-        datadir: process.env.NODE2_DATADIR,
-        nodekey: process.env.NODE2_NODEKEY,
-        httpPort: process.env.VALIDATOR3_HTTP_PORT || '18549',
-        wsPort: process.env.VALIDATOR3_WS_PORT || '18553',
-        enginePort: process.env.VALIDATOR3_ENGINE_PORT || '18554',
-        p2pPort: process.env.VALIDATOR3_P2P_PORT || '30305',
-        mine: true,
-        address: process.env.VALIDATOR3_ADDRESS,
-        passwordFile: process.env.VALIDATOR3_PASSWORD
-      }),
-      'validator3'
-    ),
-    appConfig(
-      'syncnode',
-      commonArgs({
-        datadir: process.env.NODE3_DATADIR,
-        nodekey: process.env.NODE3_NODEKEY,
-        httpPort: process.env.SYNCNODE_HTTP_PORT || '18551',
-        wsPort: process.env.SYNCNODE_WS_PORT || '18555',
-        enginePort: process.env.SYNCNODE_ENGINE_PORT || '18556',
-        p2pPort: process.env.SYNCNODE_P2P_PORT || '30307',
-        mine: false,
-        cache: '2048'
-      }),
-      'syncnode'
-    )
-  ]
+  apps: nodeDefs.map((node) => appConfig(node.name, scriptForNode(node), argsForNode(node), node.logPrefix))
 };

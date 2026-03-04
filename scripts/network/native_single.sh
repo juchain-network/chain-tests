@@ -17,12 +17,24 @@ CONFIG_FILE="${2:-}"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 GENESIS_FILE="$DATA_DIR/genesis.json"
 CHAIN_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")")"
-GETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")"
+RETH_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.reth_root" "../rchain")")"
+GETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
+RETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_native" "$(cfg_get "$CONFIG_FILE" "native.reth_binary" "")")"
 NETWORK_ID="$(cfg_get "$CONFIG_FILE" "native.network_id" "666666")"
 STATE_SCHEME="$(cfg_get "$CONFIG_FILE" "native.state_scheme" "$(cfg_get "$CONFIG_FILE" "network.state_scheme" "hash")")"
 HISTORY_STATE="$(cfg_get "$CONFIG_FILE" "native.history_state" "$(cfg_get "$CONFIG_FILE" "network.history_state" "")")"
 BLACKLIST_ENABLED="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
 BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
+BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
+BLACKLIST_ALERT_FAIL_OPEN="$(cfg_get "$CONFIG_FILE" "blacklist.alert_fail_open" "true")"
+BLACKLIST_REFRESH_SECONDS="$(cfg_get "$CONFIG_FILE" "blacklist.refresh_interval_seconds" "")"
+VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
+KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
+KEYSTORE_PASSWORD_ENV_NAME="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
+RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
+DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
+NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
+
 RPC_HOST="0.0.0.0"
 RPC_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 WS_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
@@ -32,39 +44,60 @@ RPC_URL="http://127.0.0.1:${RPC_PORT}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 
 SINGLE_DIR="$DATA_DIR/native-single"
-PID_FILE="$SINGLE_DIR/geth.pid"
-LOG_FILE="$SINGLE_DIR/geth.log"
+PID_FILE="$SINGLE_DIR/node.pid"
+LOG_FILE="$SINGLE_DIR/node.log"
 PASSWORD_FILE="$DATA_DIR/node0/password.txt"
 NODE_DATADIR="$DATA_DIR/node0"
 NODE_KEY="$DATA_DIR/node0/nodekey"
 VALIDATOR_KEY="$DATA_DIR/node0/validator.key"
 VALIDATOR_ADDR_FILE="$DATA_DIR/node0/validator.addr"
+KEYSTORE_DIR="$DATA_DIR/node0/keystore"
+KEYSTORE_ADDR_FILE="$DATA_DIR/node0/keystore.addr"
 
-GETH_CANDIDATES=()
-if [[ -n "$GETH_BINARY_CFG" ]]; then
-  GETH_CANDIDATES+=("$(to_abs_path "$GETH_BINARY_CFG")")
-fi
-GETH_CANDIDATES+=("$CHAIN_ROOT/build/bin/geth")
+normalize_impl() {
+  local impl="${1:-}"
+  case "$impl" in
+    geth|reth) echo "$impl" ;;
+    *) die "unsupported runtime implementation: $impl (expected geth|reth)" ;;
+  esac
+}
 
-GETH_BINARY=""
-for candidate in "${GETH_CANDIDATES[@]}"; do
-  if [[ -x "$candidate" ]]; then
-    GETH_BINARY="$candidate"
-    break
-  fi
-done
+resolve_binary() {
+  local candidate
+  for candidate in "$@"; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
 
-[[ -x "$GETH_BINARY" ]] || die "geth binary not found. tried: ${GETH_CANDIDATES[*]}"
-[[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
-[[ -d "$NODE_DATADIR" ]] || die "missing node data dir: $NODE_DATADIR (run make init first)"
-[[ -f "$NODE_KEY" ]] || die "missing node key: $NODE_KEY"
-[[ -f "$VALIDATOR_KEY" ]] || die "missing validator key: $VALIDATOR_KEY"
-[[ -f "$VALIDATOR_ADDR_FILE" ]] || die "missing validator addr: $VALIDATOR_ADDR_FILE"
+resolve_node_impl() {
+  case "$RUNTIME_IMPL_MODE" in
+    single)
+      normalize_impl "$DEFAULT_RUNTIME_IMPL"
+      ;;
+    mixed)
+      if [[ -n "$NODE0_IMPL_CFG" ]]; then
+        normalize_impl "$NODE0_IMPL_CFG"
+      else
+        normalize_impl "$DEFAULT_RUNTIME_IMPL"
+      fi
+      ;;
+    *)
+      die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+      ;;
+  esac
+}
 
-mkdir -p "$SINGLE_DIR"
-
-validator_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE")"
-[[ -n "$validator_addr" ]] || die "empty validator address in $VALIDATOR_ADDR_FILE"
+resolve_validator_auth_mode() {
+  case "$VALIDATOR_AUTH_MODE" in
+    auto|private_key|keystore) echo "$VALIDATOR_AUTH_MODE" ;;
+    *) die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE" ;;
+  esac
+}
 
 is_running() {
   if [[ ! -f "$PID_FILE" ]]; then
@@ -76,7 +109,31 @@ is_running() {
   kill -0 "$pid" >/dev/null 2>&1
 }
 
-init_node() {
+validator_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE" 2>/dev/null || true)"
+if [[ -z "$validator_addr" && -f "$VALIDATOR_ADDR_FILE" ]]; then
+  validator_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE")"
+fi
+
+if ! GETH_BINARY="$(resolve_binary "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+  GETH_BINARY=""
+fi
+if ! RETH_BINARY="$(resolve_binary "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
+  RETH_BINARY=""
+fi
+NODE_IMPL="$(resolve_node_impl)"
+AUTH_MODE="$(resolve_validator_auth_mode)"
+
+[[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
+[[ -d "$NODE_DATADIR" ]] || die "missing node data dir: $NODE_DATADIR (run make init first)"
+[[ -f "$NODE_KEY" ]] || die "missing node key: $NODE_KEY"
+[[ -f "$VALIDATOR_KEY" ]] || die "missing validator key: $VALIDATOR_KEY"
+[[ -f "$VALIDATOR_ADDR_FILE" ]] || die "missing validator addr: $VALIDATOR_ADDR_FILE"
+[[ -n "$validator_addr" ]] || die "empty validator address in $VALIDATOR_ADDR_FILE"
+
+mkdir -p "$SINGLE_DIR"
+
+init_geth() {
+  [[ -n "$GETH_BINARY" ]] || die "geth binary not found"
   local init_args=("--datadir" "$NODE_DATADIR")
   if [[ -n "$STATE_SCHEME" ]]; then
     init_args+=("--state.scheme=$STATE_SCHEME")
@@ -85,18 +142,85 @@ init_node() {
     "$GETH_BINARY" "${init_args[@]}" init "$GENESIS_FILE" >/dev/null
   fi
 
-  echo "123456" > "$PASSWORD_FILE"
+  if [[ ! -f "$PASSWORD_FILE" ]]; then
+    printf '%s\n' "123456" > "$PASSWORD_FILE"
+  fi
   if ! "$GETH_BINARY" account list --datadir "$NODE_DATADIR" 2>/dev/null | grep -qi "${validator_addr#0x}"; then
     "$GETH_BINARY" account import --datadir "$NODE_DATADIR" --password "$PASSWORD_FILE" "$VALIDATOR_KEY" >/dev/null
   fi
 }
 
-start_node() {
-  if is_running; then
-    log "single node already running (pid=$(cat "$PID_FILE"))"
+init_reth() {
+  [[ -n "$RETH_BINARY" ]] || die "reth binary not found"
+  if [[ ! -d "$NODE_DATADIR/db" ]]; then
+    CONGRESS_GENESIS="$GENESIS_FILE" \
+    "$RETH_BINARY" init --chain "$GENESIS_FILE" --datadir "$NODE_DATADIR" \
+      --log.file.directory "$SINGLE_DIR" >/dev/null
+  fi
+}
+
+resolve_reth_auth_args() {
+  local mode="$1"
+  local key_hex
+  key_hex="$(tr -d '[:space:]' < "$VALIDATOR_KEY")"
+  key_hex="${key_hex#0x}"
+  local private_key="0x${key_hex}"
+  local pass_file="$PASSWORD_FILE"
+  local env_pass=""
+
+  if [[ -n "$KEYSTORE_PASSWORD_FILE_CFG" ]]; then
+    pass_file="$(to_abs_path "$KEYSTORE_PASSWORD_FILE_CFG")"
+  elif [[ ! -f "$pass_file" && -n "$KEYSTORE_PASSWORD_ENV_NAME" ]]; then
+    env_pass="$(printenv "$KEYSTORE_PASSWORD_ENV_NAME" || true)"
+    if [[ -n "$env_pass" ]]; then
+      printf '%s\n' "$env_pass" > "$pass_file"
+    fi
+  fi
+
+  local keystore_file=""
+  if [[ -d "$KEYSTORE_DIR" ]]; then
+    keystore_file="$(find "$KEYSTORE_DIR" -type f | head -n 1 || true)"
+  fi
+  local keystore_addr=""
+  if [[ -f "$KEYSTORE_ADDR_FILE" ]]; then
+    keystore_addr="$(tr -d '[:space:]' < "$KEYSTORE_ADDR_FILE")"
+  fi
+
+  if [[ "$mode" == "private_key" ]]; then
+    echo "--validator-private-key $private_key"
     return 0
   fi
 
+  local use_keystore=false
+  if [[ "$mode" == "keystore" ]]; then
+    use_keystore=true
+  elif [[ "$mode" == "auto" && -n "$keystore_file" ]]; then
+    use_keystore=true
+  fi
+
+  if $use_keystore; then
+    local out=""
+    if [[ -n "$keystore_file" ]]; then
+      out+="--keystore-path $keystore_file"
+    else
+      out+="--keystore-dir $KEYSTORE_DIR"
+    fi
+    if [[ -f "$pass_file" ]]; then
+      out+=" --keystore-pass-file $pass_file"
+    elif [[ -n "$KEYSTORE_PASSWORD_ENV_NAME" ]]; then
+      out+=" --keystore-pass env:$KEYSTORE_PASSWORD_ENV_NAME"
+    fi
+    if [[ -n "$keystore_addr" ]]; then
+      out+=" --keystore-address $keystore_addr"
+    fi
+    echo "$out"
+    return 0
+  fi
+
+  echo "--validator-private-key $private_key"
+}
+
+start_geth() {
   local args=(
     "--networkid" "$NETWORK_ID"
     "--datadir" "$NODE_DATADIR"
@@ -135,8 +259,72 @@ start_node() {
     args+=("--history.state=$HISTORY_STATE")
   fi
 
-  BLACKLIST_ENABLED="$BLACKLIST_ENABLED" BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
+  BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \
+  BLACKLIST_MODE="$BLACKLIST_MODE" \
+  BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
+  BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
+  nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
   echo "$!" > "$PID_FILE"
+}
+
+start_reth() {
+  local args=(
+    node
+    --chain "$GENESIS_FILE"
+    --datadir "$NODE_DATADIR"
+    --http
+    --http.addr "$RPC_HOST"
+    --http.port "$RPC_PORT"
+    --http.api all
+    --ws
+    --ws.addr "$RPC_HOST"
+    --ws.port "$WS_PORT"
+    --ws.api all
+    --authrpc.port "$ENGINE_PORT"
+    --port "$P2P_PORT"
+    --discovery.port "$P2P_PORT"
+    --p2p-secret-key "$NODE_KEY"
+    --log.file.directory "$SINGLE_DIR"
+  )
+
+  auth_extra="$(resolve_reth_auth_args "$AUTH_MODE")"
+  if [[ -n "$auth_extra" ]]; then
+    # shellcheck disable=SC2206
+    auth_args=( $auth_extra )
+    args+=("${auth_args[@]}")
+  fi
+
+  BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
+  BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \
+  BLACKLIST_MODE="$BLACKLIST_MODE" \
+  BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
+  BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
+  CONGRESS_GENESIS="$GENESIS_FILE" \
+  nohup "$RETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  echo "$!" > "$PID_FILE"
+}
+
+start_node() {
+  if is_running; then
+    log "single node already running (pid=$(cat "$PID_FILE"))"
+    return 0
+  fi
+
+  case "$NODE_IMPL" in
+    geth)
+      init_geth
+      start_geth
+      ;;
+    reth)
+      init_reth
+      start_reth
+      ;;
+    *)
+      die "unsupported node impl: $NODE_IMPL"
+      ;;
+  esac
+
   sleep 1
   if ! is_running; then
     die "failed to start native single node (see $LOG_FILE)"
@@ -160,7 +348,7 @@ show_status() {
   if is_running; then
     local pid
     pid="$(cat "$PID_FILE")"
-    log "native single node running pid=$pid rpc=$RPC_URL"
+    log "native single node running pid=$pid impl=$NODE_IMPL rpc=$RPC_URL"
   else
     log "native single node is stopped"
   fi
@@ -179,10 +367,13 @@ show_logs() {
 
 case "$ACTION" in
   init)
-    init_node
+    if [[ "$NODE_IMPL" == "geth" ]]; then
+      init_geth
+    else
+      init_reth
+    fi
     ;;
   up)
-    init_node
     start_node
     ;;
   down)
@@ -190,7 +381,6 @@ case "$ACTION" in
     ;;
   reset)
     stop_node
-    init_node
     start_node
     wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
     ;;

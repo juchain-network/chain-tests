@@ -7,17 +7,31 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/network/lib.sh"
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
-SMOKE_IMPL="${SMOKE_SINGLE_IMPL:-geth}"
-SMOKE_AUTH_MODE="${SMOKE_SINGLE_AUTH_MODE:-auto}"
+CFG_RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
+CFG_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
+CFG_NODE0_IMPL="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
+CFG_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
+CFG_GENESIS_MODE="$(cfg_get "$CONFIG_FILE" "network.genesis_mode" "")"
+CFG_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
+
+CFG_SINGLE_IMPL="$CFG_RUNTIME_IMPL"
+if [[ "$CFG_RUNTIME_IMPL_MODE" == "mixed" && -n "$CFG_NODE0_IMPL" ]]; then
+  CFG_SINGLE_IMPL="$CFG_NODE0_IMPL"
+fi
+
+SMOKE_IMPL="${SMOKE_SINGLE_IMPL:-$CFG_SINGLE_IMPL}"
+SMOKE_AUTH_MODE="${SMOKE_SINGLE_AUTH_MODE:-$CFG_AUTH_MODE}"
 if [[ -n "${SMOKE_SINGLE_GENESIS_MODE:-}" ]]; then
   SMOKE_GENESIS_MODE="$SMOKE_SINGLE_GENESIS_MODE"
-elif [[ "${SMOKE_SINGLE_IMPL:-geth}" == "reth" ]]; then
+elif [[ -n "$CFG_GENESIS_MODE" ]]; then
+  SMOKE_GENESIS_MODE="$CFG_GENESIS_MODE"
+elif [[ "$SMOKE_IMPL" == "reth" ]]; then
   SMOKE_GENESIS_MODE="posa"
 else
   SMOKE_GENESIS_MODE="poa"
 fi
 SMOKE_SINGLE_FORK_TARGET="${SMOKE_SINGLE_FORK_TARGET:-${FORK_TARGET:-}}"
-SMOKE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-60}"
+SMOKE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-$CFG_OBSERVE_SECONDS}"
 SMOKE_TIMEOUT="${SMOKE_SINGLE_TEST_TIMEOUT:-12m}"
 SMOKE_GOCACHE="${GOCACHE:-/tmp/gocache}"
 

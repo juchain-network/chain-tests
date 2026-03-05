@@ -6,7 +6,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$PROJECT_ROOT/scripts/network/lib.sh"
 
-TOPOLOGY="${1:-${SMOKE_TOPOLOGY:-multi}}"
+CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
+TOPOLOGY="${1:-${SMOKE_TOPOLOGY:-}}"
+if [[ -z "$TOPOLOGY" ]]; then
+  cfg_nodes="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+  cfg_validators="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
+  if [[ "$cfg_nodes" == "1" && "$cfg_validators" == "1" ]]; then
+    TOPOLOGY="single"
+  else
+    TOPOLOGY="multi"
+  fi
+fi
 case "$TOPOLOGY" in
   single|multi) ;;
   *)
@@ -15,9 +25,8 @@ case "$TOPOLOGY" in
     ;;
 esac
 
-CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SMOKE_CASES="${SMOKE_CASES:-poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa}"
-SMOKE_SINGLE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-60}"
+SMOKE_SINGLE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")}"
 SMOKE_REPORT_DIR="${SMOKE_REPORT_DIR:-$PROJECT_ROOT/reports/smoke_matrix_${TOPOLOGY}_$(date +%Y%m%d_%H%M%S)}"
 COLLECTOR_SCRIPT="$PROJECT_ROOT/scripts/smoke/collect_matrix_report.sh"
 

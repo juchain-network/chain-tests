@@ -17,7 +17,7 @@ esac
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 FORK_CASES="${FORK_CASES:-poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,upgrade:allStaggered,upgrade:allSame,posa}"
-FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-120}"
+FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
 FORK_UPGRADE_STARTUP_BUFFER_SINGLE="${FORK_UPGRADE_STARTUP_BUFFER_SINGLE:-5}"
 FORK_UPGRADE_STARTUP_BUFFER_MULTI="${FORK_UPGRADE_STARTUP_BUFFER_MULTI:-30}"
 FORK_TEST_TIMEOUT="${FORK_TEST_TIMEOUT:-20m}"

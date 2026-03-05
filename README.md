@@ -139,6 +139,9 @@ make net-ready
 Lifecycle commands are bound to the latest initialized runtime session object; editing
 `config/test_env.yaml` after `make init` does not change the active object until next `make init`.
 
+Override rule: if a Make variable is not explicitly passed, commands use `config/test_env.yaml`.
+CLI variables act only as temporary overrides for that invocation.
+
 ## 5. Common test commands
 
 ### 5.1 Smoke (standalone)
@@ -153,17 +156,17 @@ make test-smoke-matrix-all
 
 `test-smoke-single` key variables:
 
-- `SMOKE_SINGLE_IMPL`: `geth | reth` (default `geth`)
-- `SMOKE_SINGLE_AUTH_MODE`: `auto | private_key | keystore` (default `auto`)
+- `SMOKE_SINGLE_IMPL`: optional override `geth | reth` (empty -> use `config/test_env.yaml` runtime settings)
+- `SMOKE_SINGLE_AUTH_MODE`: optional override `auto | private_key | keystore` (empty -> use `config/test_env.yaml` validator_auth.mode)
 - `SMOKE_SINGLE_GENESIS_MODE`: optional `poa | posa | smoke | upgrade`
 - `SMOKE_SINGLE_FORK_TARGET`: required when `SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade`
-- `SMOKE_SINGLE_OBSERVE_SECONDS`: liveness observe window (default `60`)
+- `SMOKE_SINGLE_OBSERVE_SECONDS`: optional liveness observe window override (empty -> use `tests.smoke.observe_seconds` from config)
 - `SMOKE_SINGLE_TEST_TIMEOUT`: test timeout (default `12m`)
 
 Examples:
 
 ```bash
-# single-node smoke with defaults (geth + poa)
+# single-node smoke using config defaults (runtime/backend/auth from test_env.yaml)
 make test-smoke-single
 
 # single-node smoke on reth

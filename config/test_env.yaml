@@ -1,14 +1,13 @@
 runtime:
   backend: native
   impl_mode: single
-  impl: geth
+  impl: reth
 
 paths:
-  chain_root: "/Users/litian/code/work/github/chain-1.16/chain-1.16"
-  reth_root: "/Users/litian/code/my/rchain"
-  chain_contract_root: "/Users/litian/code/work/github/chain-contract"
-  reth_bytecode_file: "/Users/litian/code/my/rchain/crates/congress-core/src/bytecode.rs"
-  # chain_root: "/Users/litian/code/work/github/chain"
+  chain_root: "../chain-1.16/chain-1.16"
+  reth_root: "../../../my/rchain"
+  chain_contract_root: "../chain-contract"
+  reth_bytecode_file: "../../../my/rchain/crates/congress-core/src/bytecode.rs"
 
 binaries:
   geth_native: ""
@@ -17,10 +16,10 @@ binaries:
   reth_docker: ""
 
 runtime_nodes:
-  node0: geth
-  node1: geth
-  node2: geth
-  node3: geth
+  node0: reth
+  node1: reth
+  node2: reth
+  node3: reth
 
 validator_auth:
   mode: auto

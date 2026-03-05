@@ -32,6 +32,7 @@ const historyState = process.env.HISTORY_STATE || '';
 const validatorAuthMode = (process.env.VALIDATOR_AUTH_MODE || 'auto').toLowerCase();
 const defaultImpl = (process.env.DEFAULT_RUNTIME_IMPL || 'geth').toLowerCase();
 const genesisFile = process.env.GENESIS_FILE;
+const rethTrustedOnly = (process.env.RETH_TRUSTED_ONLY || 'true').toLowerCase();
 
 function nameOf(suffix) {
   return `${ns}-${suffix}`;
@@ -208,6 +209,9 @@ function rethCommonArgs(opts) {
 
   if (bootnodes) {
     args.push('--bootnodes', bootnodes, '--trusted-peers', bootnodes);
+  }
+  if (rethTrustedOnly === '1' || rethTrustedOnly === 'true' || rethTrustedOnly === 'yes' || rethTrustedOnly === 'on') {
+    args.push('--trusted-only');
   }
 
   if (opts.validatorIndex) {

@@ -61,7 +61,25 @@ pm2_delete_known() {
   done
 }
 
+all_nodes_reth() {
+  local idx impl
+  for ((idx=0; idx<NODE_COUNT; idx++)); do
+    impl="$(awk -F= -v key="NODE${idx}_IMPL" '$1==key {print $2; exit}' "$ENV_FILE" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -z "$impl" || "$impl" != "reth" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 pm2_start_all() {
+  if all_nodes_reth; then
+    log "pm2 start using $ECOSYSTEM_FILE (all-reth parallel startup)"
+    PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --update-env >/dev/null
+    wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
+    return 0
+  fi
+
   log "pm2 start using $ECOSYSTEM_FILE (staged startup)"
 
   if [[ ${#PM2_PROCS[@]} -eq 0 ]]; then

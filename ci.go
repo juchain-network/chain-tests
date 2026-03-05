@@ -181,7 +181,11 @@ func main() {
 	}
 
 	runID := time.Now().Format("20060102_150405")
-	runDir := filepath.Join(rootDir, *reportDir, "ci_"+runID)
+	reportBase := *reportDir
+	if !filepath.IsAbs(reportBase) {
+		reportBase = filepath.Join(rootDir, reportBase)
+	}
+	runDir := filepath.Join(reportBase, "ci_"+runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		fmt.Printf("Failed to create report dir: %v\n", err)
 		os.Exit(1)

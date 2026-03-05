@@ -83,6 +83,9 @@ paths:
   chain_contract_root: ../chain-contract
 ```
 
+Path fields support absolute paths and relative paths. Relative paths are resolved
+from the repository root (`chain-tests/`), not from `config/`.
+
 ### 3.3 Start network
 
 ```bash
@@ -101,6 +104,11 @@ TOPOLOGY=multi INIT_MODE=upgrade INIT_TARGET=cancunTime INIT_DELAY_SECONDS=60 ma
 Notes:
 
 - `TOPOLOGY/INIT_MODE/INIT_TARGET/INIT_DELAY_SECONDS` only affect `make init`.
+- `TOPOLOGY`: `single | multi`
+- `INIT_MODE`: `poa | posa | smoke | upgrade`
+- `INIT_TARGET`:
+  - when `INIT_MODE=smoke`: `poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa`
+  - when `INIT_MODE=upgrade`: `shanghaiTime | cancunTime | posaTime | fixHeaderTime | allStaggered | allSame`
 - After `make init`, lifecycle commands operate on the generated runtime session snapshot:
   - default snapshot path: `data/runtime_session.yaml`
   - machine-readable copy: `data/runtime_session.json`
@@ -143,6 +151,31 @@ make test-smoke-matrix-multi
 make test-smoke-matrix-all
 ```
 
+`test-smoke-single` key variables:
+
+- `SMOKE_SINGLE_IMPL`: `geth | reth` (default `geth`)
+- `SMOKE_SINGLE_AUTH_MODE`: `auto | private_key | keystore` (default `auto`)
+- `SMOKE_SINGLE_GENESIS_MODE`: optional `poa | posa | smoke | upgrade`
+- `SMOKE_SINGLE_FORK_TARGET`: required when `SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade`
+- `SMOKE_SINGLE_OBSERVE_SECONDS`: liveness observe window (default `60`)
+- `SMOKE_SINGLE_TEST_TIMEOUT`: test timeout (default `12m`)
+
+Examples:
+
+```bash
+# single-node smoke with defaults (geth + poa)
+make test-smoke-single
+
+# single-node smoke on reth
+SMOKE_SINGLE_IMPL=reth make test-smoke-single
+
+# single-node smoke on reth + keystore auth
+SMOKE_SINGLE_IMPL=reth SMOKE_SINGLE_AUTH_MODE=keystore make test-smoke-single
+
+# single-node static-fork genesis smoke
+SMOKE_SINGLE_GENESIS_MODE=smoke SMOKE_SINGLE_FORK_TARGET=poa_shanghai_cancun make test-smoke-single
+```
+
 Smoke matrix is **static genesis fork-profile liveness** (no runtime upgrade scheduling).
 Default `SMOKE_CASES`:
 - `poa`
@@ -150,6 +183,19 @@ Default `SMOKE_CASES`:
 - `poa_shanghai_cancun`
 - `poa_shanghai_cancun_fixheader`
 - `poa_shanghai_cancun_fixheader_posa`
+
+Matrix examples:
+
+```bash
+# multi topology with selected static-fork cases
+SMOKE_CASES=poa,poa_shanghai_cancun make test-smoke-matrix-multi
+
+# single topology static-fork matrix
+SMOKE_CASES=poa,poa_shanghai,poa_shanghai_cancun make test-smoke-matrix-single
+
+# single + multi matrix with explicit report directory
+SMOKE_REPORT_DIR=reports/smoke_matrix_custom make test-smoke-matrix-all
+```
 
 ### 5.2 Grouped tests
 
@@ -161,6 +207,18 @@ make test-delegation
 make test-punish
 make test-rewards
 make test-epoch
+```
+
+Run only selected groups:
+
+```bash
+GROUPS=config,governance,staking make ci-groups
+```
+
+Run specific tests by pattern/package:
+
+```bash
+make ci-tests RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
 ```
 
 ### 5.3 Full regression
@@ -188,6 +246,19 @@ Optional variables:
 - `FORK_DELAY_SECONDS`
 - `FORK_TEST_TIMEOUT`
 - `FORK_REPORT_DIR`
+
+Examples:
+
+```bash
+# only POA and one dynamic upgrade target
+FORK_CASES=poa,upgrade:cancunTime make test-fork-all
+
+# custom upgrade delay and timeout
+FORK_CASES=upgrade:allStaggered FORK_DELAY_SECONDS=60 FORK_TEST_TIMEOUT=30m make test-fork-multi
+
+# fixed report output directory
+FORK_REPORT_DIR=reports/fork_custom make test-fork-single
+```
 
 ### 5.5 PoSA / full regression
 
@@ -238,6 +309,28 @@ Important fields:
 - `tests.epoch_overrides`: group/special-case epoch overrides for speed and stability
 - `perf.*`: tier/soak defaults and thresholds
 - `ci.*`: PR/nightly/weekly profile defaults
+
+## 6.1 Lifecycle quick recipes
+
+```bash
+# 1) single-node static PoA object
+TOPOLOGY=single INIT_MODE=poa make init
+make run
+make status
+
+# 2) multi-node static smoke object (fixed genesis fork profile)
+TOPOLOGY=multi INIT_MODE=smoke INIT_TARGET=poa_shanghai_cancun make init
+make run
+
+# 3) multi-node dynamic upgrade object
+TOPOLOGY=multi INIT_MODE=upgrade INIT_TARGET=allStaggered INIT_DELAY_SECONDS=60 make init
+make run
+```
+
+Important:
+
+- lifecycle commands always operate on the object created by the latest `make init`
+- editing `config/test_env.yaml` does not change the active object until next `make init`
 
 ## 7. Reports and logs
 

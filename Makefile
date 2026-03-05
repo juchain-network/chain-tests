@@ -47,6 +47,12 @@ FORK_REPORT_DIR ?=
 SMOKE_CASES ?= poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa
 SMOKE_TOPOLOGY ?= multi
 SMOKE_REPORT_DIR ?=
+SMOKE_SINGLE_IMPL ?= geth
+SMOKE_SINGLE_AUTH_MODE ?= auto
+SMOKE_SINGLE_GENESIS_MODE ?=
+SMOKE_SINGLE_FORK_TARGET ?=
+SMOKE_SINGLE_OBSERVE_SECONDS ?= 60
+SMOKE_SINGLE_TEST_TIMEOUT ?= 12m
 PERF_TPS_TIERS ?= 10,30,60
 PERF_TIER_DURATION ?= 90s
 PERF_SAMPLE_INTERVAL ?= 2s
@@ -114,7 +120,7 @@ help:
 	@echo "  test            - Run full suite in single pass (no setup)"
 	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
 	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
-	@echo "  test-smoke-single - Single-node smoke (native single topology)"
+	@echo "  test-smoke-single - Single-node smoke (native single topology; impl/auth/fork via SMOKE_SINGLE_*)"
 	@echo "  test-smoke-matrix-single - Static fork-genesis smoke matrix on single topology"
 	@echo "  test-smoke-matrix-multi - Static fork-genesis smoke matrix on multi topology"
 	@echo "  test-smoke-matrix-all - Run static fork-genesis smoke matrix on single + multi topology"
@@ -171,6 +177,12 @@ help:
 	@echo "  SMOKE_CASES=$(SMOKE_CASES)       # poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa"
 	@echo "  SMOKE_TOPOLOGY=$(SMOKE_TOPOLOGY) # single|multi (for scripts/smoke/run_matrix.sh)"
 	@echo "  SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
+	@echo "  SMOKE_SINGLE_IMPL=$(SMOKE_SINGLE_IMPL) # geth|reth (default geth; overrides runtime.impl for test-smoke-single)"
+	@echo "  SMOKE_SINGLE_AUTH_MODE=$(SMOKE_SINGLE_AUTH_MODE) # auto|private_key|keystore"
+	@echo "  SMOKE_SINGLE_GENESIS_MODE=$(SMOKE_SINGLE_GENESIS_MODE) # optional: poa|posa|smoke|upgrade"
+	@echo "  SMOKE_SINGLE_FORK_TARGET=$(SMOKE_SINGLE_FORK_TARGET) # required when SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade"
+	@echo "  SMOKE_SINGLE_OBSERVE_SECONDS=$(SMOKE_SINGLE_OBSERVE_SECONDS) # single-smoke observe window seconds"
+	@echo "  SMOKE_SINGLE_TEST_TIMEOUT=$(SMOKE_SINGLE_TEST_TIMEOUT) # single-smoke go test timeout"
 	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS)"
 	@echo "  PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
 	@echo "  PERF_SAMPLE_INTERVAL=$(PERF_SAMPLE_INTERVAL)"
@@ -332,7 +344,12 @@ test-smoke:
 
 test-smoke-single:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		SMOKE_SINGLE_OBSERVE_SECONDS="$(if $(SMOKE_SINGLE_OBSERVE_SECONDS),$(SMOKE_SINGLE_OBSERVE_SECONDS),60)" \
+		SMOKE_SINGLE_IMPL="$(SMOKE_SINGLE_IMPL)" \
+		SMOKE_SINGLE_AUTH_MODE="$(SMOKE_SINGLE_AUTH_MODE)" \
+		SMOKE_SINGLE_GENESIS_MODE="$(SMOKE_SINGLE_GENESIS_MODE)" \
+		SMOKE_SINGLE_FORK_TARGET="$(SMOKE_SINGLE_FORK_TARGET)" \
+		SMOKE_SINGLE_OBSERVE_SECONDS="$(SMOKE_SINGLE_OBSERVE_SECONDS)" \
+		SMOKE_SINGLE_TEST_TIMEOUT="$(SMOKE_SINGLE_TEST_TIMEOUT)" \
 		bash ./scripts/smoke/run_single.sh
 
 test-smoke-matrix-single:

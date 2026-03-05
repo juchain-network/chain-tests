@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 ACTION="${1:-}"
 CONFIG_FILE="${2:-}"
+SESSION_FILE="${3:-}"
 
 [[ -n "$ACTION" ]] || {
   usage_common
@@ -14,10 +15,15 @@ CONFIG_FILE="${2:-}"
 }
 [[ -n "$CONFIG_FILE" ]] || die "missing config file"
 
-RUNTIME_COMPOSE="$(cfg_get "$CONFIG_FILE" "docker.runtime_compose_file" "./data/docker-compose.runtime.yml")"
-BASE_COMPOSE="$(cfg_get "$CONFIG_FILE" "docker.compose_file" "./docker/docker-compose.yml")"
-PROJECT_NAME="$(cfg_get "$CONFIG_FILE" "docker.project_name" "juchain-it")"
-RPC_URL="$(cfg_get "$CONFIG_FILE" "docker.external_rpc" "$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")")"
+SOURCE_FILE="$CONFIG_FILE"
+if [[ -n "$SESSION_FILE" && -f "$SESSION_FILE" && "$ACTION" != "init" ]]; then
+  SOURCE_FILE="$SESSION_FILE"
+fi
+
+RUNTIME_COMPOSE="$(cfg_get "$SOURCE_FILE" "docker.runtime_compose_file" "./data/docker-compose.runtime.yml")"
+BASE_COMPOSE="$(cfg_get "$SOURCE_FILE" "docker.compose_file" "./docker/docker-compose.yml")"
+PROJECT_NAME="$(cfg_get "$SOURCE_FILE" "docker.project_name" "juchain-it")"
+RPC_URL="$(cfg_get "$SOURCE_FILE" "docker.external_rpc" "$(cfg_get "$SOURCE_FILE" "network.external_rpc" "http://localhost:18545")")"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 
 RUNTIME_COMPOSE_ABS="$(to_abs_path "$RUNTIME_COMPOSE")"

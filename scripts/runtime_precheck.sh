@@ -43,24 +43,33 @@ normalize_impl() {
 }
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
-BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")}"
-GENESIS_MODE="${GENESIS_MODE:-$(cfg_get "$CONFIG_FILE" "network.genesis_mode" "posa")}"
+SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
+SOURCE_FILE="$CONFIG_FILE"
+if [[ -f "$SESSION_FILE" ]]; then
+  SOURCE_FILE="$SESSION_FILE"
+fi
+if [[ "${RUNTIME_SESSION_REQUIRED:-}" == "1" && ! -f "$SESSION_FILE" ]]; then
+  diep "runtime session not found: $SESSION_FILE. Run 'make init' first."
+fi
 
-CHAIN_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")"
+BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$SOURCE_FILE" "runtime.backend" "native")}"
+GENESIS_MODE="${GENESIS_MODE:-$(cfg_get "$SOURCE_FILE" "network.genesis_mode" "posa")}"
+
+CHAIN_ROOT_CFG="$(cfg_get "$SOURCE_FILE" "paths.chain_root" "../chain")"
 CHAIN_ROOT="$(to_abs_path "$CHAIN_ROOT_CFG")"
-RETH_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.reth_root" "../rchain")"
+RETH_ROOT_CFG="$(cfg_get "$SOURCE_FILE" "paths.reth_root" "../rchain")"
 RETH_ROOT="$(to_abs_path "$RETH_ROOT_CFG")"
-RETH_BYTECODE_FILE_CFG="$(cfg_get "$CONFIG_FILE" "paths.reth_bytecode_file" "")"
+RETH_BYTECODE_FILE_CFG="$(cfg_get "$SOURCE_FILE" "paths.reth_bytecode_file" "")"
 if [[ -n "$RETH_BYTECODE_FILE_CFG" ]]; then
   RETH_BYTECODE_FILE="$(to_abs_path "$RETH_BYTECODE_FILE_CFG")"
 else
   RETH_BYTECODE_FILE="$RETH_ROOT/crates/congress-core/src/bytecode.rs"
 fi
 
-CHAIN_CONTRACT_ROOT_CFG="$(cfg_get "$CONFIG_FILE" "paths.chain_contract_root" "../chain-contract")"
+CHAIN_CONTRACT_ROOT_CFG="$(cfg_get "$SOURCE_FILE" "paths.chain_contract_root" "../chain-contract")"
 CHAIN_CONTRACT_ROOT="$(to_abs_path "$CHAIN_CONTRACT_ROOT_CFG")"
 
-CHAIN_CONTRACT_OUT_CFG="$(cfg_get "$CONFIG_FILE" "paths.chain_contract_out" "")"
+CHAIN_CONTRACT_OUT_CFG="$(cfg_get "$SOURCE_FILE" "paths.chain_contract_out" "")"
 if [[ -n "$CHAIN_CONTRACT_OUT_CFG" ]]; then
   CHAIN_CONTRACT_OUT="$(to_abs_path "$CHAIN_CONTRACT_OUT_CFG")"
 else
@@ -70,9 +79,9 @@ fi
 BYTECODE_GO="$CHAIN_ROOT/consensus/congress/bytecode.go"
 CHECK_SCRIPT="$SCRIPT_DIR/check_bytecode_consistency.js"
 
-RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
-DEFAULT_RUNTIME_IMPL="$(normalize_impl "$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")")"
-NODE_COUNT="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+RUNTIME_IMPL_MODE="$(cfg_get "$SOURCE_FILE" "runtime.impl_mode" "single")"
+DEFAULT_RUNTIME_IMPL="$(normalize_impl "$(cfg_get "$SOURCE_FILE" "runtime.impl" "geth")")"
+NODE_COUNT="$(cfg_get "$SOURCE_FILE" "network.node_count" "4")"
 
 if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || (( NODE_COUNT < 1 || NODE_COUNT > 4 )); then
   diep "invalid network.node_count: $NODE_COUNT"
@@ -81,7 +90,7 @@ fi
 need_geth=false
 need_reth=false
 for ((i=0; i<NODE_COUNT; i++)); do
-  node_cfg="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node${i}" "")"
+  node_cfg="$(cfg_get "$SOURCE_FILE" "runtime_nodes.node${i}" "")"
   case "$RUNTIME_IMPL_MODE" in
     single)
       impl="$DEFAULT_RUNTIME_IMPL"
@@ -143,8 +152,8 @@ else
 fi
 
 if [[ "$BACKEND" == "native" ]]; then
-  GETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
-  RETH_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_native" "$(cfg_get "$CONFIG_FILE" "native.reth_binary" "")")"
+  GETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.geth_native" "$(cfg_get "$SOURCE_FILE" "native.geth_binary" "")")"
+  RETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.reth_native" "$(cfg_get "$SOURCE_FILE" "native.reth_binary" "")")"
 
   GETH_BIN=""
   RETH_BIN=""

@@ -19,6 +19,7 @@ EPOCH_RESOLVER := $(SCRIPTS_DIR)/resolve_epoch.sh
 
 # Runtime/backend config (docker/native selection)
 TEST_ENV_CONFIG ?= config/test_env.yaml
+RUNTIME_SESSION_FILE ?=
 
 # Test runner config consumed by ci.go
 TEST_CONFIG ?= data/test_config.yaml
@@ -33,6 +34,10 @@ CI_LOG ?=
 PKGS ?=
 ARGS ?=
 EPOCH ?=
+TOPOLOGY ?=
+INIT_MODE ?=
+INIT_TARGET ?=
+INIT_DELAY_SECONDS ?=
 FORK_CASES ?=
 FORK_DELAY_SECONDS ?= 120
 FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
@@ -148,10 +153,15 @@ help:
 	@echo ""
 	@echo "Variables:"
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
+	@echo "  RUNTIME_SESSION_FILE=$(RUNTIME_SESSION_FILE) # optional override for runtime session snapshot path"
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
 	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
 	@echo "                                    # also overrides group/special epoch config when set"
 	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
+	@echo "  TOPOLOGY=$(TOPOLOGY)             # init-only: single|multi"
+	@echo "  INIT_MODE=$(INIT_MODE)           # init-only: poa|posa|smoke|upgrade"
+	@echo "  INIT_TARGET=$(INIT_TARGET)       # init-only: smoke/upgrade target case"
+	@echo "  INIT_DELAY_SECONDS=$(INIT_DELAY_SECONDS) # init-only: upgrade delay seconds"
 	@echo "  FORK_CASES=$(FORK_CASES)         # e.g. poa,upgrade:shanghaiTime,upgrade:allStaggered,upgrade:allSame,posa"
 	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS)"
 	@echo "  FORK_UPGRADE_STARTUP_BUFFER_SINGLE=$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)"
@@ -211,7 +221,16 @@ image:
 
 init:
 	@echo "⚙️  Generating network config/genesis..."
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" TEST_NETWORK_EPOCH="$(EPOCH)" bash $(SCRIPTS_DIR)/gen_network_config.sh
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		TEST_NETWORK_EPOCH="$(EPOCH)" \
+		TOPOLOGY="$(TOPOLOGY)" \
+		INIT_MODE="$(INIT_MODE)" \
+		INIT_TARGET="$(INIT_TARGET)" \
+		INIT_DELAY_SECONDS="$(INIT_DELAY_SECONDS)" \
+		RUNTIME_BACKEND="$(RUNTIME_BACKEND)" \
+		bash $(SCRIPTS_DIR)/gen_network_config.sh; \
+	session_cfg="$${RUNTIME_SESSION_FILE:-data/runtime_session.yaml}"; \
+	TEST_ENV_CONFIG="$$session_cfg" RUNTIME_SESSION_FILE="$$session_cfg" "$(NETWORK_DISPATCH)" init
 
 precheck:
 	@echo "🔎 Running compile precheck..."
@@ -227,30 +246,32 @@ run:
 	if [ -z "$(SKIP_PRECHECK)" ]; then \
 		$(MAKE) precheck; \
 	fi; \
-	$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" bash $(SCRIPTS_DIR)/runtime_precheck.sh; \
-	echo "🚀 Starting network backend=$$RUNTIME_BACKEND"; \
-	if [ "$$RUNTIME_BACKEND" = "docker" ]; then \
-		bash $(SCRIPTS_DIR)/build_docker.sh; \
+	resolved_backend="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" resolve-backend)"; \
+	session_cfg="$${RUNTIME_SESSION_FILE:-data/runtime_session.yaml}"; \
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" RUNTIME_SESSION_REQUIRED=1 bash $(SCRIPTS_DIR)/runtime_precheck.sh; \
+	echo "🚀 Starting network backend=$$resolved_backend"; \
+	if [ "$$resolved_backend" = "docker" ]; then \
+		TEST_ENV_CONFIG="$$session_cfg" bash $(SCRIPTS_DIR)/build_docker.sh; \
 	fi; \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" up; \
-	if [ "$$RUNTIME_BACKEND" = "docker" ]; then \
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" up; \
+	if [ "$$resolved_backend" = "docker" ]; then \
 		bash $(SCRIPTS_DIR)/ensure_miners.sh || true; \
 	fi; \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" ready
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" ready
 
 ready:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" ready
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" ready
 
 stop:
-	@$(backend_cmd); \
-	echo "🛑 Stopping network backend=$$RUNTIME_BACKEND"; \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" down
+	@set -e; \
+	resolved_backend="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" resolve-backend)"; \
+	echo "🛑 Stopping network backend=$$resolved_backend"; \
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" down
 
 reset: clean init run ready
 
-clean: stop
+clean:
+	@$(MAKE) --no-print-directory stop >/dev/null 2>&1 || true
 	@echo "🧹 Cleaning local runtime artifacts..."
 	@if [ -d "$(DATA_DIR)" ]; then \
 		rm -rf "$(DATA_DIR)" 2>/dev/null || true; \
@@ -262,28 +283,22 @@ clean: stop
 	@echo "✅ Clean complete."
 
 logs:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" NODE="$(NODE)" "$(NETWORK_DISPATCH)" logs
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" NODE="$(NODE)" "$(NETWORK_DISPATCH)" logs
 
 status:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" status
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" status
 
 net-up:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" up
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" up
 
 net-down:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" down
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" down
 
 net-reset:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" reset
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" reset
 
 net-ready:
-	@$(backend_cmd); \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" "$(NETWORK_DISPATCH)" ready
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" ready
 
 # Punish tests run in two isolated chunks to balance startup overhead and state stability.
 test-punish:

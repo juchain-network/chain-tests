@@ -90,6 +90,22 @@ make reset
 make status
 ```
 
+Initialization supports runtime object parameters (init-only):
+
+```bash
+TOPOLOGY=single INIT_MODE=poa make init
+TOPOLOGY=multi INIT_MODE=smoke INIT_TARGET=poa_shanghai_cancun make init
+TOPOLOGY=multi INIT_MODE=upgrade INIT_TARGET=cancunTime INIT_DELAY_SECONDS=60 make init
+```
+
+Notes:
+
+- `TOPOLOGY/INIT_MODE/INIT_TARGET/INIT_DELAY_SECONDS` only affect `make init`.
+- After `make init`, lifecycle commands operate on the generated runtime session snapshot:
+  - default snapshot path: `data/runtime_session.yaml`
+  - machine-readable copy: `data/runtime_session.json`
+- If no runtime session exists, lifecycle commands (`run/stop/status/logs/net-*`) fail and require `make init` first.
+
 ### 3.4 Run tests
 
 ```bash
@@ -111,6 +127,9 @@ make net-down
 make net-reset
 make net-ready
 ```
+
+Lifecycle commands are bound to the latest initialized runtime session object; editing
+`config/test_env.yaml` after `make init` does not change the active object until next `make init`.
 
 ## 5. Common test commands
 

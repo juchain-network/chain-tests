@@ -9,6 +9,7 @@ CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEMPLATE_GENESIS="$(to_abs_path "./templates/genesis.tpl.json")"
 PRIMARY_RPC="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
+RUNTIME_SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
 
 is_true() {
     case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
@@ -42,16 +43,48 @@ PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
 PREFUND_STAKING_INITIAL_STAKE="$(cfg_get "$CONFIG_FILE" "network.prefund_staking_initial_stake" "true")"
 MIN_VALIDATOR_STAKE_WEI="$(cfg_get "$CONFIG_FILE" "network.min_validator_stake_wei" "1000000000000000000")"
+TOPOLOGY="${TOPOLOGY:-${INIT_TOPOLOGY:-}}"
+INIT_MODE="${INIT_MODE:-}"
+INIT_TARGET="${INIT_TARGET:-}"
+INIT_DELAY_SECONDS="${INIT_DELAY_SECONDS:-}"
 GENESIS_MODE="${GENESIS_MODE:-$(cfg_get "$CONFIG_FILE" "network.genesis_mode" "posa")}"
 FORK_TARGET="${FORK_TARGET:-$(cfg_get "$CONFIG_FILE" "network.fork_target" "")}"
 FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
+if [ -n "$INIT_MODE" ]; then
+    GENESIS_MODE="$INIT_MODE"
+fi
+if [ -n "$INIT_TARGET" ]; then
+    FORK_TARGET="$INIT_TARGET"
+fi
+if [ -n "$INIT_DELAY_SECONDS" ]; then
+    FORK_DELAY_SECONDS="$INIT_DELAY_SECONDS"
+fi
 FORK_SCHEDULER_SCRIPT="$SCRIPT_DIR/fork/set_fork_schedule.py"
 POA_ALLOC_TEMPLATE="$(to_abs_path "./templates/alloc_poa_system_contracts.json")"
 RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
 DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
+SESSION_BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")}"
 VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
 VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
 VALIDATOR_KEYSTORE_PASSWORD_ENV="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
+
+CHAIN_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")")"
+RETH_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.reth_root" "../rchain")")"
+RETH_BYTECODE_FILE_CFG="$(cfg_get "$CONFIG_FILE" "paths.reth_bytecode_file" "")"
+if [ -n "$RETH_BYTECODE_FILE_CFG" ]; then
+    RETH_BYTECODE_FILE="$(to_abs_path "$RETH_BYTECODE_FILE_CFG")"
+else
+    RETH_BYTECODE_FILE="$RETH_ROOT/crates/congress-core/src/bytecode.rs"
+fi
+
+GETH_NATIVE_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
+RETH_NATIVE_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_native" "$(cfg_get "$CONFIG_FILE" "native.reth_binary" "")")"
+GETH_DOCKER_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_docker" "$(cfg_get "$CONFIG_FILE" "paths.chain_docker_binary" "")")"
+RETH_DOCKER_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_docker" "")"
+
+REPORTS_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.reports_dir" "./reports")")"
+DOCKER_COMPOSE_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "docker.compose_file" "./docker/docker-compose.yml")")"
+DOCKER_RUNTIME_COMPOSE_FILE="$DATA_DIR/docker-compose.runtime.yml"
 
 NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
 NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1" "")"
@@ -143,6 +176,23 @@ if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
 fi
 
 DEFAULT_RUNTIME_IMPL="$(normalize_impl "$DEFAULT_RUNTIME_IMPL")"
+case "$SESSION_BACKEND" in
+    native|docker)
+        ;;
+    *)
+        die "runtime backend must be native|docker, got: $SESSION_BACKEND"
+        ;;
+esac
+case "$TOPOLOGY" in
+    ""|single|multi)
+        ;;
+    *)
+        die "TOPOLOGY must be one of single|multi, got: $TOPOLOGY"
+        ;;
+esac
+if [ "$TOPOLOGY" = "single" ] && [ "$SESSION_BACKEND" = "docker" ]; then
+    die "single topology currently supports native backend only; set runtime.backend=native or use TOPOLOGY=multi"
+fi
 case "$RUNTIME_IMPL_MODE" in
     single|mixed)
         ;;
@@ -199,8 +249,10 @@ export GOMODCACHE="${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
 echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
 echo "Using test profile: $TEST_PROFILE"
+echo "Requested topology: ${TOPOLOGY:-auto}"
 echo "Using genesis mode: $GENESIS_MODE"
 echo "Using runtime impl: mode=$RUNTIME_IMPL_MODE default=$DEFAULT_RUNTIME_IMPL auth=$VALIDATOR_AUTH_MODE"
+echo "Using runtime backend: $SESSION_BACKEND"
 echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
@@ -338,16 +390,28 @@ FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
 echo "Funder: $FUNDER_ADDR"
 
 # Validators + sync node
-if [ -n "${TEST_NETWORK_VALIDATOR_COUNT:-}" ]; then
+if [ "$TOPOLOGY" = "single" ]; then
+    NUM_VALIDATORS=1
+    NUM_NODES=1
+elif [ "$TOPOLOGY" = "multi" ]; then
+    NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
+    NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+elif [ -n "${TEST_NETWORK_VALIDATOR_COUNT:-}" ]; then
     NUM_VALIDATORS="$TEST_NETWORK_VALIDATOR_COUNT"
+    if [ -n "${TEST_NETWORK_NODE_COUNT:-}" ]; then
+        NUM_NODES="$TEST_NETWORK_NODE_COUNT"
+    else
+        NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
+    fi
+elif [ -n "${TEST_NETWORK_NODE_COUNT:-}" ]; then
+    NUM_NODES="$TEST_NETWORK_NODE_COUNT"
+    NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
 else
     NUM_VALIDATORS="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
-fi
-if [ -n "${TEST_NETWORK_NODE_COUNT:-}" ]; then
-    NUM_NODES="$TEST_NETWORK_NODE_COUNT"
-else
     NUM_NODES="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
 fi
+
+TOPOLOGY_MODE=""
 NODE_IPS=("172.28.0.10" "172.28.0.11" "172.28.0.12" "172.28.0.13")
 VAL_ADDRS=()
 VAL_PRIVS=()
@@ -366,6 +430,11 @@ fi
 if [ "$NUM_NODES" -gt 4 ]; then
     die "network.node_count currently supports up to 4 nodes, got: $NUM_NODES"
 fi
+TOPOLOGY_MODE="multi"
+if [ "$NUM_NODES" -eq 1 ] && [ "$NUM_VALIDATORS" -eq 1 ]; then
+    TOPOLOGY_MODE="single"
+fi
+echo "Resolved topology: $TOPOLOGY_MODE (nodes=$NUM_NODES, validators=$NUM_VALIDATORS)"
 if ! [[ "$MIN_VALIDATOR_STAKE_WEI" =~ ^[0-9]+$ ]]; then
     die "network.min_validator_stake_wei must be an unsigned integer in wei, got: $MIN_VALIDATOR_STAKE_WEI"
 fi
@@ -841,4 +910,235 @@ awk \
 ' "$DATA_DIR/docker-compose.runtime.yml" > "$DATA_DIR/docker-compose.runtime.with_blacklist.yml"
 mv "$DATA_DIR/docker-compose.runtime.with_blacklist.yml" "$DATA_DIR/docker-compose.runtime.yml"
 
+SESSION_ID="$(date +%Y%m%d_%H%M%S)_$RANDOM"
+SESSION_CREATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+SESSION_TOPOLOGY="$TOPOLOGY_MODE"
+if [ -z "$SESSION_TOPOLOGY" ]; then
+    SESSION_TOPOLOGY="multi"
+fi
+
+mkdir -p "$(dirname "$RUNTIME_SESSION_FILE")"
+SESSION_JSON_FILE="${RUNTIME_SESSION_FILE%.yaml}.json"
+if [ "$SESSION_JSON_FILE" = "$RUNTIME_SESSION_FILE" ]; then
+    SESSION_JSON_FILE="${RUNTIME_SESSION_FILE}.json"
+fi
+
+cat > "$RUNTIME_SESSION_FILE" <<EOF
+session:
+  id: "$SESSION_ID"
+  created_at: "$SESSION_CREATED_AT"
+  source_config: "$CONFIG_FILE"
+
+runtime:
+  backend: "$SESSION_BACKEND"
+  topology: "$SESSION_TOPOLOGY"
+  impl_mode: "$RUNTIME_IMPL_MODE"
+  impl: "$DEFAULT_RUNTIME_IMPL"
+
+network:
+  node_count: $NUM_NODES
+  validator_count: $NUM_VALIDATORS
+  epoch: $NETWORK_EPOCH
+  external_rpc: "$PRIMARY_RPC"
+  data_dir: "$DATA_DIR"
+  reports_dir: "$REPORTS_DIR"
+  genesis_mode: "$GENESIS_MODE"
+  fork_target: "$FORK_EFFECTIVE_TARGET"
+  fork_delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
+
+fork:
+  mode: "$GENESIS_MODE"
+  target: "$FORK_EFFECTIVE_TARGET"
+  scheduled_time: $FORK_SCHEDULED_TIME
+  delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
+  schedule:
+    shanghai_time: $FORK_SHANGHAI_TIME
+    cancun_time: $FORK_CANCUN_TIME
+    fix_header_time: $FORK_FIX_HEADER_TIME
+    posa_time: $FORK_POSA_TIME
+
+paths:
+  chain_root: "$CHAIN_ROOT"
+  reth_root: "$RETH_ROOT"
+  chain_contract_root: "$CHAIN_CONTRACT_ROOT"
+  chain_contract_out: "$CONTRACT_OUT_DIR"
+  reth_bytecode_file: "$RETH_BYTECODE_FILE"
+
+binaries:
+  geth_native: "$(to_abs_path "$GETH_NATIVE_BIN_CFG")"
+  reth_native: "$(to_abs_path "$RETH_NATIVE_BIN_CFG")"
+  geth_docker: "$(to_abs_path "$GETH_DOCKER_BIN_CFG")"
+  reth_docker: "$(to_abs_path "$RETH_DOCKER_BIN_CFG")"
+
+runtime_nodes:
+EOF
+
+for i in $(seq 0 $((NUM_NODES-1))); do
+cat >> "$RUNTIME_SESSION_FILE" <<EOF
+  node$i: "${RUNTIME_NODE_IMPLS[$i]}"
+EOF
+done
+
+cat >> "$RUNTIME_SESSION_FILE" <<EOF
+
+validator_auth:
+  mode: "$VALIDATOR_AUTH_MODE"
+  keystore:
+    password_env: "$VALIDATOR_KEYSTORE_PASSWORD_ENV"
+    password_file: "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG"
+
+native:
+  manager: "$(cfg_get "$CONFIG_FILE" "native.manager" "pm2")"
+  init_script: "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.init_script" "./scripts/native/pm2_init.sh")")"
+  ecosystem_file: "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.ecosystem_file" "./native/ecosystem.config.js")")"
+  env_file: "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
+  pm2_namespace: "$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")"
+  external_rpc: "$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$PRIMARY_RPC")"
+
+docker:
+  compose_file: "$DOCKER_COMPOSE_FILE"
+  runtime_compose_file: "$DOCKER_RUNTIME_COMPOSE_FILE"
+  project_name: "$(cfg_get "$CONFIG_FILE" "docker.project_name" "juchain-it")"
+  external_rpc: "$(cfg_get "$CONFIG_FILE" "docker.external_rpc" "$PRIMARY_RPC")"
+
+artifacts:
+  genesis_file: "$DATA_DIR/genesis.json"
+  test_config_file: "$DATA_DIR/test_config.yaml"
+  runtime_nodes_file: "$DATA_DIR/runtime_nodes.yaml"
+  runtime_session_json: "$SESSION_JSON_FILE"
+EOF
+
+RUNTIME_NODES_JSON='{}'
+for i in $(seq 0 $((NUM_NODES-1))); do
+    RUNTIME_NODES_JSON="$(printf '%s' "$RUNTIME_NODES_JSON" | jq -c --arg key "node$i" --arg val "${RUNTIME_NODE_IMPLS[$i]}" '. + {($key): $val}')"
+done
+
+jq -n \
+  --arg session_id "$SESSION_ID" \
+  --arg created_at "$SESSION_CREATED_AT" \
+  --arg source_config "$CONFIG_FILE" \
+  --arg backend "$SESSION_BACKEND" \
+  --arg topology "$SESSION_TOPOLOGY" \
+  --arg impl_mode "$RUNTIME_IMPL_MODE" \
+  --arg impl "$DEFAULT_RUNTIME_IMPL" \
+  --arg external_rpc "$PRIMARY_RPC" \
+  --arg data_dir "$DATA_DIR" \
+  --arg reports_dir "$REPORTS_DIR" \
+  --arg genesis_mode "$GENESIS_MODE" \
+  --arg fork_target "$FORK_EFFECTIVE_TARGET" \
+  --arg chain_root "$CHAIN_ROOT" \
+  --arg reth_root "$RETH_ROOT" \
+  --arg chain_contract_root "$CHAIN_CONTRACT_ROOT" \
+  --arg chain_contract_out "$CONTRACT_OUT_DIR" \
+  --arg reth_bytecode_file "$RETH_BYTECODE_FILE" \
+  --arg geth_native "$(to_abs_path "$GETH_NATIVE_BIN_CFG")" \
+  --arg reth_native "$(to_abs_path "$RETH_NATIVE_BIN_CFG")" \
+  --arg geth_docker "$(to_abs_path "$GETH_DOCKER_BIN_CFG")" \
+  --arg reth_docker "$(to_abs_path "$RETH_DOCKER_BIN_CFG")" \
+  --arg validator_auth_mode "$VALIDATOR_AUTH_MODE" \
+  --arg validator_password_env "$VALIDATOR_KEYSTORE_PASSWORD_ENV" \
+  --arg validator_password_file "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG" \
+  --arg native_manager "$(cfg_get "$CONFIG_FILE" "native.manager" "pm2")" \
+  --arg native_init_script "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.init_script" "./scripts/native/pm2_init.sh")")" \
+  --arg native_ecosystem_file "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.ecosystem_file" "./native/ecosystem.config.js")")" \
+  --arg native_env_file "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")" \
+  --arg native_pm2_namespace "$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")" \
+  --arg native_external_rpc "$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$PRIMARY_RPC")" \
+  --arg docker_compose_file "$DOCKER_COMPOSE_FILE" \
+  --arg docker_runtime_compose_file "$DOCKER_RUNTIME_COMPOSE_FILE" \
+  --arg docker_project_name "$(cfg_get "$CONFIG_FILE" "docker.project_name" "juchain-it")" \
+  --arg docker_external_rpc "$(cfg_get "$CONFIG_FILE" "docker.external_rpc" "$PRIMARY_RPC")" \
+  --arg genesis_file "$DATA_DIR/genesis.json" \
+  --arg test_config_file "$DATA_DIR/test_config.yaml" \
+  --arg runtime_nodes_file "$DATA_DIR/runtime_nodes.yaml" \
+  --arg runtime_session_json "$SESSION_JSON_FILE" \
+  --argjson node_count "$NUM_NODES" \
+  --argjson validator_count "$NUM_VALIDATORS" \
+  --argjson epoch "$NETWORK_EPOCH" \
+  --argjson fork_scheduled_time "$FORK_SCHEDULED_TIME" \
+  --argjson fork_delay_seconds "$FORK_EFFECTIVE_DELAY_SECONDS" \
+  --argjson shanghai_time "$FORK_SHANGHAI_TIME" \
+  --argjson cancun_time "$FORK_CANCUN_TIME" \
+  --argjson fix_header_time "$FORK_FIX_HEADER_TIME" \
+  --argjson posa_time "$FORK_POSA_TIME" \
+  --argjson runtime_nodes "$RUNTIME_NODES_JSON" \
+  '{
+    session: {
+      id: $session_id,
+      created_at: $created_at,
+      source_config: $source_config
+    },
+    runtime: {
+      backend: $backend,
+      topology: $topology,
+      impl_mode: $impl_mode,
+      impl: $impl
+    },
+    network: {
+      node_count: $node_count,
+      validator_count: $validator_count,
+      epoch: $epoch,
+      external_rpc: $external_rpc,
+      data_dir: $data_dir,
+      reports_dir: $reports_dir,
+      genesis_mode: $genesis_mode,
+      fork_target: $fork_target,
+      fork_delay_seconds: $fork_delay_seconds
+    },
+    fork: {
+      mode: $genesis_mode,
+      target: $fork_target,
+      scheduled_time: $fork_scheduled_time,
+      delay_seconds: $fork_delay_seconds,
+      schedule: {
+        shanghai_time: $shanghai_time,
+        cancun_time: $cancun_time,
+        fix_header_time: $fix_header_time,
+        posa_time: $posa_time
+      }
+    },
+    paths: {
+      chain_root: $chain_root,
+      reth_root: $reth_root,
+      chain_contract_root: $chain_contract_root,
+      chain_contract_out: $chain_contract_out,
+      reth_bytecode_file: $reth_bytecode_file
+    },
+    binaries: {
+      geth_native: $geth_native,
+      reth_native: $reth_native,
+      geth_docker: $geth_docker,
+      reth_docker: $reth_docker
+    },
+    runtime_nodes: $runtime_nodes,
+    validator_auth: {
+      mode: $validator_auth_mode,
+      keystore: {
+        password_env: $validator_password_env,
+        password_file: $validator_password_file
+      }
+    },
+    native: {
+      manager: $native_manager,
+      init_script: $native_init_script,
+      ecosystem_file: $native_ecosystem_file,
+      env_file: $native_env_file,
+      pm2_namespace: $native_pm2_namespace,
+      external_rpc: $native_external_rpc
+    },
+    docker: {
+      compose_file: $docker_compose_file,
+      runtime_compose_file: $docker_runtime_compose_file,
+      project_name: $docker_project_name,
+      external_rpc: $docker_external_rpc
+    },
+    artifacts: {
+      genesis_file: $genesis_file,
+      test_config_file: $test_config_file,
+      runtime_nodes_file: $runtime_nodes_file,
+      runtime_session_json: $runtime_session_json
+    }
+  }' > "$SESSION_JSON_FILE"
+
 echo "✅ Configuration generated at $DATA_DIR"
+echo "✅ Runtime session snapshot: $RUNTIME_SESSION_FILE"

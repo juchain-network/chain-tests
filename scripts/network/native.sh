@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 ACTION="${1:-}"
 CONFIG_FILE="${2:-}"
+SESSION_FILE="${3:-}"
 
 [[ -n "$ACTION" ]] || {
   usage_common
@@ -14,15 +15,20 @@ CONFIG_FILE="${2:-}"
 }
 [[ -n "$CONFIG_FILE" ]] || die "missing config file"
 
-MANAGER="$(cfg_get "$CONFIG_FILE" "native.manager" "pm2")"
-INIT_SCRIPT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.init_script" "./scripts/native/pm2_init.sh")")"
-ECOSYSTEM_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.ecosystem_file" "./native/ecosystem.config.js")")"
-ENV_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
-PM2_NAMESPACE="$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")"
-RPC_URL="$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")")"
+SOURCE_FILE="$CONFIG_FILE"
+if [[ -n "$SESSION_FILE" && -f "$SESSION_FILE" && "$ACTION" != "init" ]]; then
+  SOURCE_FILE="$SESSION_FILE"
+fi
+
+MANAGER="$(cfg_get "$SOURCE_FILE" "native.manager" "pm2")"
+INIT_SCRIPT="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.init_script" "./scripts/native/pm2_init.sh")")"
+ECOSYSTEM_FILE="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.ecosystem_file" "./native/ecosystem.config.js")")"
+ENV_FILE="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.env_file" "./data/native/.env")")"
+PM2_NAMESPACE="$(cfg_get "$SOURCE_FILE" "native.pm2_namespace" "ju-chain")"
+RPC_URL="$(cfg_get "$SOURCE_FILE" "native.external_rpc" "$(cfg_get "$SOURCE_FILE" "network.external_rpc" "http://localhost:18545")")"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
-NODE_COUNT="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
-VALIDATOR_COUNT="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
+NODE_COUNT="$(cfg_get "$SOURCE_FILE" "network.node_count" "4")"
+VALIDATOR_COUNT="$(cfg_get "$SOURCE_FILE" "network.validator_count" "3")"
 
 [[ -f "$INIT_SCRIPT" ]] || die "init script not found: $INIT_SCRIPT"
 [[ -f "$ECOSYSTEM_FILE" ]] || die "ecosystem file not found: $ECOSYSTEM_FILE"
@@ -105,9 +111,7 @@ run_init() {
 
 case "$ACTION" in
   up)
-    if [[ ! -f "$ENV_FILE" ]]; then
-      run_init
-    fi
+    [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
     ;;
   down)
@@ -115,7 +119,7 @@ case "$ACTION" in
     ;;
   reset)
     pm2_delete_known
-    run_init
+    [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
     wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
     ;;

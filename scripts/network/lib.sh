@@ -15,11 +15,12 @@ die() {
 usage_common() {
   cat <<'EOF'
 Usage:
-  scripts/network/dispatch.sh <up|down|reset|ready|logs|status|init>
+  scripts/network/dispatch.sh <up|down|reset|ready|logs|status|init|resolve-backend>
 
 Environment:
   TEST_ENV_CONFIG   Path to config YAML (default: config/test_env.yaml, then .example)
   RUNTIME_BACKEND   Override backend (native|docker)
+  RUNTIME_SESSION_FILE Path to runtime session snapshot (default: data/runtime_session.yaml)
   WAIT_TIMEOUT      Seconds for ready checks (default: 120)
   NODE              Service/process name for logs
 EOF
@@ -157,4 +158,40 @@ wait_for_rpc_ready() {
   done
 
   die "RPC not ready within ${timeout}s: $rpc_url"
+}
+
+resolve_runtime_session_file() {
+  local requested="${1:-${RUNTIME_SESSION_FILE:-}}"
+  local session_file=""
+
+  if [[ -n "$requested" ]]; then
+    session_file="$(to_abs_path "$requested")"
+  else
+    session_file="$ROOT_DIR/data/runtime_session.yaml"
+  fi
+
+  echo "$session_file"
+}
+
+runtime_session_exists() {
+  local session_file
+  session_file="$(resolve_runtime_session_file "${1:-}")"
+  [[ -f "$session_file" ]]
+}
+
+require_runtime_session() {
+  local action="${1:-lifecycle}"
+  local session_file
+  session_file="$(resolve_runtime_session_file "${2:-}")"
+  if [[ ! -f "$session_file" ]]; then
+    die "runtime session not found for action '$action': $session_file. Run 'make init' first."
+  fi
+  echo "$session_file"
+}
+
+session_get() {
+  local session_file="$1"
+  local key_path="$2"
+  local default_value="${3:-}"
+  cfg_get "$session_file" "$key_path" "$default_value"
 }

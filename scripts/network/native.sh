@@ -26,6 +26,7 @@ ECOSYSTEM_FILE="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.ecosystem_file" 
 ENV_FILE="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.env_file" "./data/native/.env")")"
 PM2_NAMESPACE="$(cfg_get "$SOURCE_FILE" "native.pm2_namespace" "ju-chain")"
 RPC_URL="$(cfg_get "$SOURCE_FILE" "native.external_rpc" "$(cfg_get "$SOURCE_FILE" "network.external_rpc" "http://localhost:18545")")"
+LOG_DIR="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.log_dir" "./data/native-logs")")"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 NODE_COUNT="$(cfg_get "$SOURCE_FILE" "network.node_count" "4")"
 VALIDATOR_COUNT="$(cfg_get "$SOURCE_FILE" "network.validator_count" "3")"
@@ -106,6 +107,40 @@ pm2_start_all() {
   done
 }
 
+pm2_wait_all_online() {
+  local timeout="${PROCS_WAIT_TIMEOUT:-$WAIT_TIMEOUT}"
+  local deadline=$((SECONDS + timeout))
+  local pending=()
+  local proc pid
+
+  while (( SECONDS <= deadline )); do
+    pending=()
+    for proc in "${PM2_PROCS[@]}"; do
+      pid="$("$MANAGER" pid "$proc" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ "$pid" -eq 0 ]]; then
+        pending+=("$proc")
+      fi
+    done
+
+    if [[ ${#pending[@]} -eq 0 ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  log "pm2 processes not online after ${timeout}s: ${pending[*]}"
+  "$MANAGER" status || true
+  for proc in "${pending[@]}"; do
+    local log_key="${proc#${PM2_NAMESPACE}-}"
+    local err_log="${LOG_DIR}/${log_key}-error.log"
+    if [[ -f "$err_log" ]]; then
+      log "recent errors for $proc ($err_log):"
+      tail -n 20 "$err_log" | sed 's/^/[network]   /'
+    fi
+  done
+  die "native backend startup incomplete"
+}
+
 pm2_status() {
   "$MANAGER" status
 }
@@ -131,6 +166,7 @@ case "$ACTION" in
   up)
     [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
+    pm2_wait_all_online
     ;;
   down)
     pm2_delete_known
@@ -139,6 +175,7 @@ case "$ACTION" in
     pm2_delete_known
     [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
+    pm2_wait_all_online
     wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
     ;;
   ready)

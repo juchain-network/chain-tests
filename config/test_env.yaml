@@ -1,11 +1,11 @@
 runtime:
   backend: native
   impl_mode: single
-  impl: reth
+  impl: geth
 
 paths:
-  chain_root: "../chain-1.16/chain-1.16"
-  reth_root: "../../../my/rchain"
+  chain_root: "../chain-1.16"
+  reth_root: "../../personal/rchain"
   chain_contract_root: "../chain-contract"
   reth_bytecode_file: "../../../my/rchain/crates/congress-core/src/bytecode.rs"
 
@@ -16,10 +16,10 @@ binaries:
   reth_docker: ""
 
 runtime_nodes:
-  node0: reth
-  node1: reth
-  node2: reth
-  node3: reth
+  node0: geth
+  node1: geth
+  node2: geth
+  node3: geth
 
 validator_auth:
   mode: auto

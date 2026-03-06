@@ -49,7 +49,7 @@ if [[ "$SMOKE_GENESIS_MODE" == "smoke" && -z "$SMOKE_SINGLE_FORK_TARGET" ]]; the
   die "SMOKE_SINGLE_FORK_TARGET is required when SMOKE_SINGLE_GENESIS_MODE=smoke"
 fi
 
-TMP_CFG="$(mktemp "${TMPDIR:-/tmp}/chain-tests-smoke-single-XXXX.yaml")"
+TMP_CFG="$(mktemp "${TMPDIR:-/tmp}/chain-tests-smoke-single.XXXXXX")"
 cp "$CONFIG_FILE" "$TMP_CFG"
 trap 'TEST_ENV_CONFIG="$TMP_CFG" "$ROOT_DIR/scripts/network/native_single.sh" down "$TMP_CFG" >/dev/null 2>&1 || true; TEST_ENV_CONFIG="$TMP_CFG" make -C "$ROOT_DIR" clean >/dev/null 2>&1 || true; rm -f "$TMP_CFG" "${TMP_CFG}.next"' EXIT
 

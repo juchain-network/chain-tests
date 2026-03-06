@@ -89,7 +89,7 @@ run_release_gate() {
 
 run_reth_keystore_smoke() {
   local tmp_cfg
-  tmp_cfg="$(mktemp "${TMPDIR:-/tmp}/chain-tests-reth-XXXX.yaml")"
+  tmp_cfg="$(mktemp "${TMPDIR:-/tmp}/chain-tests-reth.XXXXXX")"
   trap 'rm -f "$tmp_cfg" "${tmp_cfg}.next"' RETURN
   cp "$CONFIG_FILE" "$tmp_cfg"
   awk '

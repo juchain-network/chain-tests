@@ -115,6 +115,11 @@ type runManifest struct {
 	StepDurationsSec  map[string]time.Duration `json:"step_durations"`
 }
 
+type testTarget struct {
+	Name    string
+	Package string
+}
+
 const nestedRunEnv = "CHAIN_TESTS_NESTED_RUN"
 
 func main() {
@@ -313,17 +318,17 @@ func main() {
 			}
 		}
 	case "all":
-		testList, err := discoverTests(rootDir)
+		testTargets, err := discoverTestTargets(rootDir)
 		if err != nil {
 			fmt.Printf("Failed to discover tests: %v\n", err)
 			os.Exit(1)
 		}
-		if len(testList) == 0 {
+		if len(testTargets) == 0 {
 			fmt.Println("No tests found")
 			os.Exit(1)
 		}
-		for _, testName := range testList {
-			res := runSingleTest(runDir, testName, *pkgs, *timeout, *configPath, env, rootDir)
+		for _, target := range testTargets {
+			res := runSingleTest(runDir, target.Name, target.Package, *timeout, *configPath, env, rootDir)
 			results = append(results, res)
 			if res.Status != "PASS" {
 				hadFailure = true
@@ -501,7 +506,7 @@ func parseGroupThresholds(raw string) (map[string]time.Duration, time.Duration, 
 	return thresholds, defaultThreshold, nil
 }
 
-func discoverTests(rootDir string) ([]string, error) {
+func discoverTestTargets(rootDir string) ([]testTarget, error) {
 	testDir := filepath.Join(rootDir, "tests")
 	var files []string
 	err := filepath.WalkDir(testDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -533,8 +538,14 @@ func discoverTests(rootDir string) ([]string, error) {
 		return nil, nil
 	}
 
-	found := make(map[string]struct{})
+	found := make(map[string]string)
 	for _, file := range files {
+		relFile, err := filepath.Rel(rootDir, file)
+		if err != nil {
+			return nil, err
+		}
+		pkgPath := "./" + filepath.ToSlash(filepath.Dir(relFile))
+
 		f, err := os.Open(file)
 		if err != nil {
 			return nil, err
@@ -550,7 +561,10 @@ func discoverTests(rootDir string) ([]string, error) {
 			if name == "TestMain" || name == "" {
 				continue
 			}
-			found[name] = struct{}{}
+			if prevPkg, ok := found[name]; ok && prevPkg != pkgPath {
+				return nil, fmt.Errorf("duplicate test name %s in %s and %s", name, prevPkg, pkgPath)
+			}
+			found[name] = pkgPath
 		}
 		_ = f.Close()
 		if err := scanner.Err(); err != nil {
@@ -558,11 +572,13 @@ func discoverTests(rootDir string) ([]string, error) {
 		}
 	}
 
-	out := make([]string, 0, len(found))
-	for name := range found {
-		out = append(out, name)
+	out := make([]testTarget, 0, len(found))
+	for name, pkgPath := range found {
+		out = append(out, testTarget{Name: name, Package: pkgPath})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 

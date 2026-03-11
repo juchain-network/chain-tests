@@ -215,3 +215,37 @@ func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 		t.Fatalf("slow alerts section not found in report")
 	}
 }
+
+func TestDiscoverTestTargetsMapsTestsToOwningPackage(t *testing.T) {
+	rootDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootDir, "tests", "epoch"), 0o755); err != nil {
+		t.Fatalf("failed to create epoch test dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootDir, "tests", "smoke"), 0o755); err != nil {
+		t.Fatalf("failed to create smoke test dir: %v", err)
+	}
+
+	epochTest := []byte("package epoch\n\nfunc TestZ_SystemInitSecurityGuards(t *testing.T) {}\n")
+	if err := os.WriteFile(filepath.Join(rootDir, "tests", "epoch", "system_init_security_test.go"), epochTest, 0o644); err != nil {
+		t.Fatalf("failed to write epoch test file: %v", err)
+	}
+
+	smokeTest := []byte("package smoke\n\nfunc TestSmoke_ShouldBeSkipped(t *testing.T) {}\n")
+	if err := os.WriteFile(filepath.Join(rootDir, "tests", "smoke", "smoke_test.go"), smokeTest, 0o644); err != nil {
+		t.Fatalf("failed to write smoke test file: %v", err)
+	}
+
+	targets, err := discoverTestTargets(rootDir)
+	if err != nil {
+		t.Fatalf("discoverTestTargets failed: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("unexpected target count: %d", len(targets))
+	}
+	if targets[0].Name != "TestZ_SystemInitSecurityGuards" {
+		t.Fatalf("unexpected target name: %#v", targets[0])
+	}
+	if targets[0].Package != "./tests/epoch" {
+		t.Fatalf("unexpected target package: %#v", targets[0])
+	}
+}

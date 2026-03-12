@@ -13,6 +13,39 @@ import (
 
 const posaMaxHeightLag = uint64(8)
 
+func TestP_GenesisPOSAFirstBlockRewardPath(t *testing.T) {
+	if ctx == nil {
+		t.Fatalf("context not initialized")
+	}
+
+	start, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read initial block number failed: %v", err)
+	}
+	if start < 2 {
+		waitBlocks(t, int(2-start))
+		start, err = ctx.Clients[0].BlockNumber(context.Background())
+		if err != nil {
+			t.Fatalf("read block number after warmup failed: %v", err)
+		}
+	}
+	if start < 2 {
+		t.Fatalf("network did not progress past first two blocks: height=%d", start)
+	}
+
+	if err := ctx.WaitForBlockProgress(2, 120*time.Second); err != nil {
+		t.Fatalf("chain stalled after genesis POSA startup: %v", err)
+	}
+
+	end, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read final block number failed: %v", err)
+	}
+	if end <= start {
+		t.Fatalf("expected block growth after first-block reward path check: start=%d end=%d", start, end)
+	}
+}
+
 func TestP_ValidatorJoinLeave(t *testing.T) {
 	if ctx == nil {
 		t.Fatalf("context not initialized")

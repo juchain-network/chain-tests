@@ -401,6 +401,14 @@ This section covers validation logic for all configuration parameters.
         *   Validators/stakes array lengths match.
         *   Effective-top count equals returned list length.
         *   Jailed validator is excluded from reward-eligible list immediately.
+*   **[V-06] Genesis POSA First-Block Reward Path**
+    *   **Steps**:
+        1. Start multi-node network with `GENESIS_MODE=posa`.
+        2. Ensure fork switches are enabled from genesis (`shanghai/cancun/posa/fixHeader = 0`).
+        3. Observe chain height passes block `1` and continues growing.
+    *   **Expected**:
+        *   Network progresses past the first post-genesis block.
+        *   Reward eligibility path does not stall block production during initial POSA startup.
 
 ---
 

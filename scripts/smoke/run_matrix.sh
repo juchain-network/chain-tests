@@ -35,7 +35,7 @@ RESULTS_TSV="$SMOKE_REPORT_DIR/matrix_results.tsv"
 printf 'topology\tcase\tmode\ttarget\tstatus\trc\tlog\treport\tsummary\tmanifest\trepro\n' > "$RESULTS_TSV"
 
 sanitize_case() {
-  printf '%s' "$1" | tr '[:space:]' '_' | tr -c 'a-zA-Z0-9._-:' '_' | tr ':' '_'
+  printf '%s' "$1" | tr '[:space:]' '_' | tr -c 'a-zA-Z0-9._:-' '_' | tr ':' '_'
 }
 
 case_to_mode_target() {

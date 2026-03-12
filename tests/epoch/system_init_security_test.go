@@ -110,6 +110,32 @@ func TestZ_SystemInitSecurityGuards(t *testing.T) {
 		}
 	})
 
+	t.Run("ExternalSystemRuntimeSelectorsForbidden", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			addr   common.Address
+			meta   *bind.MetaData
+			method string
+			args   []interface{}
+		}{
+			{
+				name:   "Punish.executePending",
+				addr:   testctx.PunishAddr,
+				meta:   contracts.PunishMetaData,
+				method: "executePending",
+				args:   []interface{}{big.NewInt(1)},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				data := packMethodData(t, tc.meta, tc.method, tc.args...)
+				expectForbiddenSystemTx(t, senderKey, tc.addr, data)
+			})
+		}
+	})
+
 	t.Run("FixedAddressValidationOnFreshDeploy", func(t *testing.T) {
 		from := crypto.PubkeyToAddress(senderKey.PublicKey)
 		wrong := common.HexToAddress("0x000000000000000000000000000000000000bEEF")

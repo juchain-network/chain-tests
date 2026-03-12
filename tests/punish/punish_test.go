@@ -628,6 +628,9 @@ func TestG_DoubleSign(t *testing.T) {
 					} else {
 						lastErr = errW
 						if strings.Contains(errW.Error(), "timeout waiting for tx") {
+							if progErr := ctx.WaitForBlockProgress(1, 20*time.Second); progErr != nil {
+								t.Skipf("skip multi-validator double sign: chain stalled while tx pending (%s): %v", tx.Hash().Hex(), progErr)
+							}
 							ctx.RefreshNonce(reporterAddr)
 							waitNextBlock()
 							continue

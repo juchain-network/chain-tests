@@ -6,10 +6,9 @@ import (
 	"math/big"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 func TestG_PunishPaths(t *testing.T) {
@@ -40,57 +39,223 @@ func TestG_PunishPaths(t *testing.T) {
 		}
 	})
 
-	// [P-24] ExecutePending No-op
-	t.Run("P-24_ExecutePendingNoop", func(t *testing.T) {
-		waitMinedBounded := func(txHash common.Hash, timeout time.Duration) error {
-			deadline := time.Now().Add(timeout)
-			for time.Now().Before(deadline) {
-				receipt, errR := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
-				if errR == nil && receipt != nil {
-					if receipt.Status == 0 {
-						return nil
-					}
-					return nil
-				}
-				time.Sleep(retrySleep())
+	// [P-24] ExecutePending must be blocked for external tx.
+	t.Run("P-24_ExecutePendingForbiddenExternalTx", func(t *testing.T) {
+		opts, err := ctx.GetTransactor(ctx.GenesisValidators[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ctx.Punish.ExecutePending(opts, big.NewInt(1))
+		if err == nil {
+			t.Fatalf("expected executePending external tx to be rejected")
+		}
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "forbidden system transaction") && !strings.Contains(msg, "miner only") {
+			t.Fatalf("expected forbidden system tx or miner-only rejection, got: %v", err)
+		}
+	})
+
+	// [P-24] ExecutePending should be auto-executed by consensus without external tx.
+	t.Run("P-24_ExecutePendingAutoByConsensus", func(t *testing.T) {
+		const (
+			configIDPunishThreshold int64 = 1
+			configIDRemoveThreshold int64 = 2
+			configIDDecreaseRate    int64 = 3
+		)
+
+		punishThreshold, err := ctx.Proposal.PunishThreshold(nil)
+		if err != nil || punishThreshold == nil {
+			t.Fatalf("read punishThreshold failed: %v", err)
+		}
+		removeThreshold, err := ctx.Proposal.RemoveThreshold(nil)
+		if err != nil || removeThreshold == nil {
+			t.Fatalf("read removeThreshold failed: %v", err)
+		}
+		decreaseRate, err := ctx.Proposal.DecreaseRate(nil)
+		if err != nil || decreaseRate == nil {
+			t.Fatalf("read decreaseRate failed: %v", err)
+		}
+		origPunishThreshold := new(big.Int).Set(punishThreshold)
+		origRemoveThreshold := new(big.Int).Set(removeThreshold)
+		origDecreaseRate := new(big.Int).Set(decreaseRate)
+
+		t.Cleanup(func() {
+			if err := ctx.EnsureConfig(configIDPunishThreshold, origPunishThreshold, big.NewInt(1)); err != nil {
+				t.Errorf("restore punishThreshold failed: %v", err)
 			}
-			return fmt.Errorf("tx %s still pending after %s", txHash.Hex(), timeout)
+			if err := ctx.EnsureConfig(configIDRemoveThreshold, origRemoveThreshold, big.NewInt(1000)); err != nil {
+				t.Errorf("restore removeThreshold failed: %v", err)
+			}
+			if err := ctx.EnsureConfig(configIDDecreaseRate, origDecreaseRate, big.NewInt(1)); err != nil {
+				t.Errorf("restore decreaseRate failed: %v", err)
+			}
+		})
+
+		// Make epoch-path punish queue generation deterministic while keeping remove path disabled.
+		if err := ctx.EnsureConfig(configIDPunishThreshold, big.NewInt(1), punishThreshold); err != nil {
+			t.Fatalf("ensure punishThreshold=1 failed: %v", err)
+		}
+		if err := ctx.EnsureConfig(configIDRemoveThreshold, big.NewInt(1000), removeThreshold); err != nil {
+			t.Fatalf("ensure removeThreshold=1000 failed: %v", err)
+		}
+		if err := ctx.EnsureConfig(configIDDecreaseRate, big.NewInt(1), decreaseRate); err != nil {
+			t.Fatalf("ensure decreaseRate=1 failed: %v", err)
 		}
 
-		fromAddr := crypto.PubkeyToAddress(ctx.GenesisValidators[0].PublicKey)
-		var lastErr error
-		for retry := 0; retry < 6; retry++ {
-			opts, errG := ctx.GetTransactor(ctx.GenesisValidators[0])
-			if errG != nil {
-				ctx.WaitIfEpochBlock()
-				continue
-			}
+		epochBig, err := ctx.Proposal.Epoch(nil)
+		if err != nil || epochBig == nil || epochBig.Sign() == 0 {
+			t.Fatalf("epoch not available: %v", err)
+		}
+		epoch := epochBig.Uint64()
+		if epoch > 600 {
+			t.Skipf("epoch=%d too large for bounded local integration assertion", epoch)
+		}
 
-			tx, errCall := ctx.Punish.ExecutePending(opts, big.NewInt(1))
-			if errCall == nil {
-				lastErr = waitMinedBounded(tx.Hash(), 4*time.Second)
-				if lastErr == nil {
-					t.Logf("executePending(1) sent: %s", tx.Hash().Hex())
+		targetVal := common.HexToAddress(ctx.Config.Validators[1].Address)
+		targetNeedsManualEpochPunish := true
+		if activeVals, err := ctx.Validators.GetActiveValidators(nil); err == nil {
+			for _, addr := range activeVals {
+				if keyForAddress(addr) == nil {
+					targetVal = addr
+					targetNeedsManualEpochPunish = false
+					break
 				}
+			}
+		}
+		if targetVal == (common.Address{}) {
+			t.Fatalf("invalid target validator")
+		}
+
+		pendingHead := func() (common.Address, bool) {
+			addr, err := ctx.Punish.PendingValidators(nil, big.NewInt(0))
+			if err != nil {
+				return common.Address{}, false
+			}
+			return addr, true
+		}
+
+		// Stabilize to an empty queue before creating a deterministic pending entry.
+		for i := 0; i < 20; i++ {
+			if _, has := pendingHead(); !has {
 				break
 			}
-			lastErr = errCall
-			if strings.Contains(errCall.Error(), "Epoch block forbidden") {
-				ctx.WaitIfEpochBlock()
-				continue
-			}
-			msg := strings.ToLower(errCall.Error())
-			if strings.Contains(msg, "nonce too low") ||
-				strings.Contains(msg, "replacement transaction underpriced") ||
-				strings.Contains(msg, "already known") {
-				ctx.RefreshNonce(fromAddr)
-				time.Sleep(retrySleep())
-				continue
-			}
-			break
+			waitBlocks(t, 1)
 		}
-		if lastErr != nil {
-			t.Logf("executePending(1) best-effort result: %v", lastErr)
+		if _, has := pendingHead(); has {
+			t.Fatalf("pending queue should be empty before P-24 auto-execution assertion")
+		}
+
+		submitEpochPunish := func(target common.Address) (*types.Receipt, error) {
+			var lastErr error
+			maxAttempts := int(epoch*3 + 30)
+			for attempt := 0; attempt < maxAttempts; attempt++ {
+				head, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+				if err != nil || head == nil {
+					lastErr = fmt.Errorf("read header failed: %w", err)
+					waitBlocks(t, 1)
+					continue
+				}
+
+				curHeight := head.Number.Uint64()
+				if (curHeight+1)%epoch != 0 {
+					waitBlocks(t, 1)
+					continue
+				}
+
+				proposerKey, proposerAddr := pickInTurnValidatorForNextBlock(t)
+				if proposerAddr == target {
+					waitBlocks(t, 1)
+					continue
+				}
+
+				opts, err := ctx.GetTransactorNoEpochWait(proposerKey, true)
+				if err != nil {
+					lastErr = err
+					waitBlocks(t, 1)
+					continue
+				}
+
+				tx, err := ctx.Punish.Punish(opts, target)
+				if err != nil {
+					lastErr = err
+					msg := strings.ToLower(err.Error())
+					if strings.Contains(msg, "epoch block forbidden") ||
+						strings.Contains(msg, "nonce too low") ||
+						strings.Contains(msg, "replacement transaction underpriced") ||
+						strings.Contains(msg, "already known") ||
+						strings.Contains(msg, "miner only") {
+						waitBlocks(t, 1)
+						continue
+					}
+					waitBlocks(t, 1)
+					continue
+				}
+
+				if err := ctx.WaitMined(tx.Hash()); err != nil {
+					lastErr = err
+					waitBlocks(t, 1)
+					continue
+				}
+
+				receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), tx.Hash())
+				if err != nil || receipt == nil {
+					lastErr = fmt.Errorf("read punish receipt failed: %w", err)
+					waitBlocks(t, 1)
+					continue
+				}
+				if receipt.BlockNumber == nil || receipt.BlockNumber.Uint64()%epoch != 0 {
+					lastErr = fmt.Errorf("punish tx mined on non-epoch block %v", receipt.BlockNumber)
+					waitBlocks(t, 1)
+					continue
+				}
+				return receipt, nil
+			}
+			if lastErr == nil {
+				lastErr = fmt.Errorf("failed to submit punish on epoch block")
+			}
+			return nil, lastErr
+		}
+
+		if targetNeedsManualEpochPunish {
+			receipt, err := submitEpochPunish(targetVal)
+			if err != nil {
+				t.Skipf("skip deterministic epoch punish submit in current window: %v", err)
+			}
+			t.Logf("epoch punish mined at block %d", receipt.BlockNumber.Uint64())
+		} else {
+			t.Logf("using unknown-key validator %s; waiting for consensus-generated pending entry", targetVal.Hex())
+			observed := false
+			maxObserveBlocks := int(epoch*4 + 30)
+			for i := 0; i < maxObserveBlocks; i++ {
+				if _, has := pendingHead(); has {
+					observed = true
+					break
+				}
+				waitBlocks(t, 1)
+			}
+			if !observed {
+				t.Skipf("pending queue entry not observed within %d blocks for auto-consume assertion", maxObserveBlocks)
+			}
+		}
+
+		head, has := pendingHead()
+		if !has {
+			t.Fatalf("pending queue entry not created after epoch punish")
+		}
+		if head != targetVal {
+			t.Logf("pending queue head %s differs from target %s (queue still considered non-empty)", head.Hex(), targetVal.Hex())
+		}
+
+		consumed := false
+		for i := 0; i < 12; i++ {
+			waitBlocks(t, 1)
+			if _, has := pendingHead(); !has {
+				consumed = true
+				break
+			}
+		}
+		if !consumed {
+			t.Fatalf("pending queue was not auto-consumed by consensus execution")
 		}
 	})
 

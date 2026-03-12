@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -9,7 +11,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/rlp"
 	"juchain.org/chain/tools/ci/internal/testkit"
+	"juchain.org/chain/tools/ci/internal/utils"
 )
 
 func rewardIncreaseProbeBlocks(defaultMax int) int {
@@ -184,11 +190,262 @@ func TestI_ConsensusRewards(t *testing.T) {
 		robustClaimValidatorRewards(t, minerKey)
 	})
 
+	t.Run("V-01_JailedExcludedFromRewardEligibleImmediately", func(t *testing.T) {
+		active, err := ctx.Validators.GetActiveValidators(nil)
+		if err != nil {
+			t.Fatalf("failed to query active validators: %v", err)
+		}
+		if len(active) < 2 {
+			t.Skip("skip immediate jailed exclusion test: need at least 2 active validators")
+		}
+
+		var (
+			targetAddr common.Address
+			targetKey  *ecdsa.PrivateKey
+		)
+		for _, addr := range active {
+			key := keyForAddress(addr)
+			if key == nil {
+				continue
+			}
+			info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+			if err != nil || info.IsJailed {
+				continue
+			}
+			targetAddr = addr
+			targetKey = key
+			break
+		}
+		if targetKey == nil || targetAddr == (common.Address{}) {
+			t.Skip("skip immediate jailed exclusion test: no eligible validator target")
+		}
+
+		eligibleBefore, err := ctx.Validators.GetRewardEligibleValidatorsWithStakes(nil)
+		if err != nil {
+			t.Fatalf("failed to query reward-eligible validators before jail: %v", err)
+		}
+		if !containsAddress(eligibleBefore.Validators, targetAddr) {
+			t.Skipf("target %s already absent from reward-eligible set before jail", targetAddr.Hex())
+		}
+
+		doubleSignWindow, _ := ctx.Proposal.DoubleSignWindow(nil)
+		targetWindow := big.NewInt(8)
+		if doubleSignWindow == nil || doubleSignWindow.Cmp(targetWindow) > 0 {
+			_ = ctx.EnsureConfig(15, targetWindow, doubleSignWindow)
+		}
+
+		reporterKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(5))
+		if err != nil {
+			t.Fatalf("failed to setup reporter: %v", err)
+		}
+		if err := submitDoubleSignEvidenceForRewardEligibility(targetKey, targetAddr, reporterKey); err != nil {
+			t.Fatalf("failed to submit double-sign evidence: %v", err)
+		}
+
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 8,
+			Interval:    retrySleep(),
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err := ctx.Staking.GetValidatorInfo(nil, targetAddr)
+			if err != nil {
+				return false, err
+			}
+			return info.IsJailed, nil
+		})
+		if err != nil {
+			t.Fatalf("target validator was not jailed in time: %v", err)
+		}
+
+		err = testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 8,
+			Interval:    retrySleep(),
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			eligibleNow, err := ctx.Validators.GetRewardEligibleValidatorsWithStakes(nil)
+			if err != nil {
+				return false, err
+			}
+			return !containsAddress(eligibleNow.Validators, targetAddr), nil
+		})
+		if err != nil {
+			t.Fatalf("jailed validator %s still present in reward-eligible set: %v", targetAddr.Hex(), err)
+		}
+
+		activeNow, _ := ctx.Validators.GetActiveValidators(nil)
+		if containsAddress(activeNow, targetAddr) {
+			t.Logf("validator %s still in active set but excluded from reward-eligible set as expected", targetAddr.Hex())
+		}
+
+		_, minerAddr := minerKeyOrSkip(t)
+		beforeInfo, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
+		before := new(big.Int).Set(beforeInfo.AccumulatedRewards)
+		if !waitForRewardIncrease(t, minerAddr, before, rewardIncreaseProbeBlocks(40)) {
+			infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
+			t.Fatalf("rewards did not progress after jailed exclusion: before=%s after=%s", before.String(), infoAfter.AccumulatedRewards.String())
+		}
+	})
+
 	t.Run("QueryRewards", func(t *testing.T) {
 		valAddr := ctx.Config.Validators[0].Address
 		_, _, _, _, rew, _ := ctx.Validators.GetValidatorInfo(nil, common.HexToAddress(valAddr))
 		t.Logf("Validator %s rewards: %s", valAddr, rew.String())
 	})
+}
+
+func submitDoubleSignEvidenceForRewardEligibility(
+	valKey *ecdsa.PrivateKey,
+	valAddr common.Address,
+	reporterKey *ecdsa.PrivateKey,
+) error {
+	if ctx == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	if valKey == nil || reporterKey == nil {
+		return fmt.Errorf("missing validator or reporter key")
+	}
+
+	reporterAddr := crypto.PubkeyToAddress(reporterKey.PublicKey)
+	var lastErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		ctx.WaitIfEpochBlock()
+
+		head, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+		if err != nil || head == nil {
+			lastErr = fmt.Errorf("read latest header failed: %w", err)
+			waitBlocks(nil, 1)
+			continue
+		}
+
+		targetHeight := new(big.Int).Sub(head.Number, big.NewInt(1))
+		if targetHeight.Sign() <= 0 {
+			targetHeight = big.NewInt(1)
+		}
+		baseTime := head.Time
+		if h, err := ctx.Clients[0].HeaderByNumber(context.Background(), targetHeight); err == nil && h != nil {
+			baseTime = h.Time
+		}
+
+		h1 := &types.Header{
+			ParentHash:  common.Hash{},
+			UncleHash:   types.EmptyUncleHash,
+			Coinbase:    valAddr,
+			Root:        common.Hash{},
+			TxHash:      types.EmptyRootHash,
+			ReceiptHash: types.EmptyRootHash,
+			Bloom:       types.Bloom{},
+			Difficulty:  big.NewInt(1),
+			Number:      targetHeight,
+			GasLimit:    30_000_000,
+			GasUsed:     0,
+			Time:        baseTime,
+			Extra:       make([]byte, 32+65),
+			MixDigest:   common.Hash{},
+			Nonce:       types.BlockNonce{},
+		}
+		h2 := &types.Header{
+			ParentHash:  common.Hash{},
+			UncleHash:   types.EmptyUncleHash,
+			Coinbase:    valAddr,
+			Root:        common.Hash{0x01},
+			TxHash:      types.EmptyRootHash,
+			ReceiptHash: types.EmptyRootHash,
+			Bloom:       types.Bloom{},
+			Difficulty:  big.NewInt(1),
+			Number:      targetHeight,
+			GasLimit:    30_000_000,
+			GasUsed:     0,
+			Time:        baseTime,
+			Extra:       make([]byte, 32+65),
+			MixDigest:   common.Hash{},
+			Nonce:       types.BlockNonce{},
+		}
+
+		rlp1, err := signHeaderCliqueForRewards(h1, valKey)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to sign header 1: %w", err)
+			waitBlocks(nil, 1)
+			continue
+		}
+		rlp2, err := signHeaderCliqueForRewards(h2, valKey)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to sign header 2: %w", err)
+			waitBlocks(nil, 1)
+			continue
+		}
+
+		opts, err := ctx.GetTransactor(reporterKey)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to build reporter transactor: %w", err)
+			waitBlocks(nil, 1)
+			continue
+		}
+
+		tx, err := ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
+		if err != nil {
+			lastErr = err
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "epoch block forbidden") ||
+				strings.Contains(msg, "nonce too low") ||
+				strings.Contains(msg, "replacement transaction underpriced") ||
+				strings.Contains(msg, "already known") ||
+				strings.Contains(msg, "revert") {
+				ctx.RefreshNonce(reporterAddr)
+				waitBlocks(nil, 1)
+				continue
+			}
+			return err
+		}
+
+		if err := ctx.WaitMined(tx.Hash()); err != nil {
+			lastErr = err
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "reverted") ||
+				strings.Contains(msg, "epoch block forbidden") ||
+				strings.Contains(msg, "timeout waiting for tx") {
+				ctx.RefreshNonce(reporterAddr)
+				waitBlocks(nil, 1)
+				continue
+			}
+			return err
+		}
+
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("double-sign evidence retries exhausted")
+	}
+	return lastErr
+}
+
+func signHeaderCliqueForRewards(h *types.Header, key *ecdsa.PrivateKey) ([]byte, error) {
+	origExtra := h.Extra
+	if len(origExtra) < 65 {
+		h.Extra = make([]byte, 65)
+	}
+	headerForHash := *h
+	extraCopy := make([]byte, len(h.Extra)-65)
+	copy(extraCopy, h.Extra[:len(h.Extra)-65])
+	headerForHash.Extra = extraCopy
+	encodedForHash, err := rlp.EncodeToBytes(&headerForHash)
+	if err != nil {
+		return nil, err
+	}
+	hash := crypto.Keccak256(encodedForHash)
+	sig, err := crypto.Sign(hash, key)
+	if err != nil {
+		return nil, err
+	}
+	if len(h.Extra) < 65 {
+		h.Extra = make([]byte, 32+65)
+	}
+	copy(h.Extra[len(h.Extra)-65:], sig)
+	return rlp.EncodeToBytes(h)
 }
 
 func waitForRewardIncrease(t *testing.T, minerAddr common.Address, before *big.Int, maxBlocks int) bool {

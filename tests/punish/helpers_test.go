@@ -239,22 +239,32 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 		t.Fatalf("failed to read header: %v", err)
 	}
 	coinbase := header.Coinbase
-	idx := 0
+	start := 0
 	for i, v := range validators {
 		if v == coinbase {
-			idx = i + 1
+			start = (i + 1) % len(validators)
 			break
 		}
 	}
-	if idx >= len(validators) {
-		idx = 0
+
+	for offset := 0; offset < len(validators); offset++ {
+		idx := (start + offset) % len(validators)
+		addr := validators[idx]
+		if key := keyForAddress(addr); key != nil {
+			return key, addr
+		}
 	}
-	addr := validators[idx]
-	key := keyForAddress(addr)
-	if key == nil {
-		t.Fatalf("no key for in-turn validator %s", addr.Hex())
+
+	active := make([]string, 0, len(validators))
+	for _, v := range validators {
+		active = append(active, v.Hex())
 	}
-	return key, addr
+	known := make([]string, 0, len(ctx.GenesisValidators))
+	for _, k := range ctx.GenesisValidators {
+		known = append(known, crypto.PubkeyToAddress(k.PublicKey).Hex())
+	}
+	t.Fatalf("no key for active validator set; coinbase=%s active=%s known=%s", coinbase.Hex(), strings.Join(active, ","), strings.Join(known, ","))
+	return nil, common.Address{} // unreachable
 }
 
 func waitNextBlock() {

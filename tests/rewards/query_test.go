@@ -27,6 +27,33 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	}
 	_, _ = ctx.Validators.GetTopValidators(nil)
 	_, _ = ctx.Validators.GetHighestValidators(nil)
+	effectiveTop, err := ctx.Validators.GetEffectiveTopValidators(nil)
+	utils.AssertNoError(t, err, "getEffectiveTopValidators failed")
+	effectiveCount, err := ctx.Validators.GetEffectiveTopValidatorCount(nil)
+	utils.AssertNoError(t, err, "getEffectiveTopValidatorCount failed")
+	if effectiveCount != nil && int(effectiveCount.Uint64()) != len(effectiveTop) {
+		t.Fatalf("effective count mismatch: count=%d list=%d", effectiveCount.Uint64(), len(effectiveTop))
+	}
+	rewardEligible, err := ctx.Validators.GetRewardEligibleValidatorsWithStakes(nil)
+	utils.AssertNoError(t, err, "getRewardEligibleValidatorsWithStakes failed")
+	if len(rewardEligible.Validators) != len(rewardEligible.TotalStakes) {
+		t.Fatalf("reward-eligible validators/stakes length mismatch: %d vs %d", len(rewardEligible.Validators), len(rewardEligible.TotalStakes))
+	}
+	isLastEffective, err := ctx.Validators.IsLastEffectiveValidator(nil, valAddr)
+	utils.AssertNoError(t, err, "isLastEffectiveValidator failed")
+	if len(effectiveTop) == 1 {
+		want := effectiveTop[0] == valAddr
+		if isLastEffective != want {
+			t.Fatalf("isLastEffectiveValidator mismatch: addr=%s got=%v want=%v", valAddr.Hex(), isLastEffective, want)
+		}
+	} else if isLastEffective {
+		t.Fatalf("isLastEffectiveValidator should be false when effective top count=%d", len(effectiveTop))
+	}
+	for _, addr := range rewardEligible.Validators {
+		if !containsAddress(active, addr) {
+			t.Fatalf("reward-eligible validator %s not found in active set", addr.Hex())
+		}
+	}
 	_, _ = ctx.Validators.IsValidatorActive(nil, valAddr)
 	_, _ = ctx.Validators.IsValidatorJailed(nil, valAddr)
 	_, _ = ctx.Validators.IsValidatorExist(nil, valAddr)
@@ -45,4 +72,13 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	_, _ = ctx.Proposal.IsProposalValidForStaking(nil, valAddr)
 	_, _ = ctx.Proposal.Pass(nil, valAddr)
 	_, _ = ctx.Proposal.ProposerNonces(nil, valAddr)
+}
+
+func containsAddress(addrs []common.Address, target common.Address) bool {
+	for _, addr := range addrs {
+		if addr == target {
+			return true
+		}
+	}
+	return false
 }

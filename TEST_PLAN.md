@@ -320,6 +320,15 @@ This section covers validation logic for all configuration parameters.
 *   **[P-22] Slash after Exit**
     *   **Steps**: Submit double-sign after `exit`.
     *   **Expected**: Revert "Validator not exist".
+*   **[P-26] Last-Effective Slash Floor**
+    *   **Steps**:
+        1. Reduce validator set to only one effective validator.
+        2. Run low-level `slashValidator` simulation (`from=PUNISH_ADDR`) to read `(actualSlash, actualReward)`.
+        3. Submit real double-sign evidence.
+    *   **Expected**:
+        *   `actualSlash` is capped by `selfStake - minValidatorStake`.
+        *   On-chain `selfStake` never falls below `minValidatorStake`.
+        *   Last effective validator remains in effective-top set and chain keeps producing blocks.
 
 ### 4.3 Exceptions & Boundaries
 *   **[P-03] Forced Exit during Activity**
@@ -341,9 +350,14 @@ This section covers validation logic for all configuration parameters.
 *   **[P-23] Punish Normal Path**
     *   **Steps**: Miner calls `punish(val)` once on non-epoch block.
     *   **Expected**: `missedBlocksCounter` increments; validator appears in punish list.
-*   **[P-24] Execute Pending (No-op)**
-    *   **Steps**: Call `executePending(0)` and `executePending(1)` when queue empty.
-    *   **Expected**: No revert; no state change.
+*   **[P-24] Execute Pending (Consensus-Only)**
+    *   **Steps**:
+        1. Try to call `executePending(1)` via normal external transaction.
+        2. Create epoch punish pending entry.
+        3. Observe pending queue consumed on following non-epoch blocks without sending `executePending` tx.
+    *   **Expected**:
+        *   External tx is rejected with `forbidden system transaction`.
+        *   Pending entry is auto-executed by consensus path.
 *   **[P-25] Decrease Missed Blocks Counter (Epoch)**
     *   **Steps**: Miner calls `decreaseMissedBlocksCounter(epoch)` on epoch block.
     *   **Expected**: Counter decreases (or no-op if list empty), event emitted.
@@ -378,9 +392,15 @@ This section covers validation logic for all configuration parameters.
 *   **[V-02b] Description Boundary (Identity/Website/Email/Details)**
     *   **Steps**: Exceed max lengths (identity 3000, website 140, email 140, details 280).
     *   **Expected**: Revert with corresponding "Invalid ... length".
-*   **[V-05] Active Validators With Stakes**
-    *   **Steps**: Call `getActiveValidatorsWithStakes`.
-    *   **Expected**: Array lengths match, values returned.
+*   **[V-05] Reward-Eligible / Effective-Top Queries**
+    *   **Steps**:
+        1. Call `getActiveValidatorsWithStakes`, `getRewardEligibleValidatorsWithStakes`.
+        2. Call `getEffectiveTopValidators`, `getEffectiveTopValidatorCount`, `isLastEffectiveValidator`.
+        3. Jail one validator and re-query reward-eligible list.
+    *   **Expected**:
+        *   Validators/stakes array lengths match.
+        *   Effective-top count equals returned list length.
+        *   Jailed validator is excluded from reward-eligible list immediately.
 
 ---
 
@@ -402,7 +422,7 @@ This section covers validation logic for all configuration parameters.
 
 ## 7. Public Query APIs (Smoke)
 *   **[Q-01] Core Query Coverage**
-    *   **Steps**: Call view getters for proposal/pass/nonces, validator status, staking counts, unbonding counts.
+    *   **Steps**: Call view getters for proposal/pass/nonces, validator status, staking counts, unbonding counts, reward-eligible/effective-top APIs.
     *   **Expected**: No revert; basic invariants hold (lengths match, counts non-negative).
 
 **Notes**:

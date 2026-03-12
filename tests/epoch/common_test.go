@@ -189,6 +189,20 @@ func getPropID(tx *types.Transaction) [32]byte {
 func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth bool) {
 	var err error
 	voterAddr := crypto.PubkeyToAddress(voterKey.PublicKey)
+	waitVoteMined := func(txHash common.Hash, timeout time.Duration) error {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
+			if err == nil && receipt != nil {
+				if receipt.Status == 0 {
+					return fmt.Errorf("transaction %s reverted", txHash.Hex())
+				}
+				return nil
+			}
+			time.Sleep(retrySleep())
+		}
+		return fmt.Errorf("timeout waiting for tx %s", txHash.Hex())
+	}
 	for retry := 0; retry < 10; retry++ {
 		// Only active, non-jailed validators can vote
 		active, _ := ctx.Validators.IsValidatorActive(nil, voterAddr)
@@ -212,10 +226,20 @@ func robustVote(t *testing.T, voterKey *ecdsa.PrivateKey, propID [32]byte, auth 
 		var txVote *types.Transaction
 		txVote, err = ctx.Proposal.VoteProposal(opts, propID, auth)
 		if err == nil {
-			if errW := ctx.WaitMined(txVote.Hash()); errW == nil {
+			if errW := waitVoteMined(txVote.Hash(), 30*time.Second); errW == nil {
 				return
 			} else {
 				if strings.Contains(errW.Error(), "Epoch block forbidden") {
+					time.Sleep(retrySleep())
+					continue
+				}
+				if strings.Contains(errW.Error(), "timeout waiting for tx") {
+					if progErr := ctx.WaitForBlockProgress(1, 15*time.Second); progErr != nil {
+						if t != nil {
+							t.Logf("vote tx stalled with no block progress: %v", progErr)
+						}
+						return
+					}
 					time.Sleep(retrySleep())
 					continue
 				}

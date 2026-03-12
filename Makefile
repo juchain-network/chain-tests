@@ -423,7 +423,10 @@ test-epoch:
 	@set -e; \
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups epoch)"; \
 	echo "⏱ epoch group epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_LastManStanding|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"
+	echo "⏱ epoch phase-1: non-destructive checks"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"; \
+	echo "⏱ epoch phase-2: destructive last-man-standing"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_LastManStanding"
 
 test-posa-multi:
 	@set -e; \

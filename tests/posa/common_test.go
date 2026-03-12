@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 
 	"juchain.org/chain/tools/ci/internal/config"
@@ -91,6 +92,7 @@ func getProposalID(tx *types.Transaction) [32]byte {
 
 func robustVote(t *testing.T, voter *ecdsa.PrivateKey, proposalID [32]byte) {
 	t.Helper()
+	voterAddr := crypto.PubkeyToAddress(voter.PublicKey)
 	for retry := 0; retry < 12; retry++ {
 		ctx.WaitIfEpochBlock()
 		opts, err := ctx.GetTransactor(voter)
@@ -107,7 +109,12 @@ func robustVote(t *testing.T, voter *ecdsa.PrivateKey, proposalID [32]byte) {
 			t.Fatalf("vote proposal failed: %v", err)
 		}
 		if err := ctx.WaitMined(tx.Hash()); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "epoch block forbidden") {
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "epoch block forbidden") {
+				time.Sleep(retrySleep())
+				continue
+			}
+			if shouldRetryVoteRevert(t, voterAddr, proposalID, tx.Hash()) {
 				time.Sleep(retrySleep())
 				continue
 			}
@@ -116,6 +123,50 @@ func robustVote(t *testing.T, voter *ecdsa.PrivateKey, proposalID [32]byte) {
 		return
 	}
 	t.Fatalf("vote proposal retries exhausted")
+}
+
+func shouldRetryVoteRevert(t *testing.T, voterAddr common.Address, proposalID [32]byte, txHash common.Hash) bool {
+	t.Helper()
+	if ctx == nil {
+		return false
+	}
+	if txHash != (common.Hash{}) {
+		if receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), txHash); err == nil && receipt != nil && receipt.BlockNumber != nil {
+			epoch := uint64(currentEpochLength())
+			if epochVal, err := ctx.Validators.Epoch(nil); err == nil && epochVal != nil && epochVal.Sign() > 0 {
+				epoch = epochVal.Uint64()
+			}
+			if epoch > 0 && receipt.BlockNumber.Uint64()%epoch == 0 {
+				return true
+			}
+		}
+	}
+
+	if active, err := ctx.Validators.IsValidatorActive(nil, voterAddr); err == nil && !active {
+		return false
+	}
+	if vote, err := ctx.Proposal.Votes(nil, voterAddr, proposalID); err == nil && vote.VoteTime != nil && vote.VoteTime.Sign() > 0 {
+		return false
+	}
+	if result, err := ctx.Proposal.Results(nil, proposalID); err == nil && result.ResultExist {
+		return false
+	}
+	proposal, err := ctx.Proposal.Proposals(nil, proposalID)
+	if err != nil || proposal.CreateTime == nil || proposal.CreateTime.Sign() == 0 {
+		return false
+	}
+
+	if proposal.CreateBlock != nil && proposal.CreateBlock.Sign() > 0 {
+		if lasting, err := ctx.Proposal.ProposalLastingPeriod(nil); err == nil && lasting != nil && lasting.Sign() > 0 {
+			if head, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil); err == nil && head != nil {
+				expireHeight := new(big.Int).Add(proposal.CreateBlock, lasting)
+				if head.Number != nil && head.Number.Cmp(expireHeight) >= 0 {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func isActiveValidator(t *testing.T, addr common.Address) bool {

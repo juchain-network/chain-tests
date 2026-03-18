@@ -1,60 +1,61 @@
 # chain-tests AGENTS Guide
 
-## 1. 项目目标
+## 1. Project Goal
 
-`chain-tests` 的目标是建设 **自定义公链（Congress 共识）本地集成测试能力**，重点验证：
+`chain-tests` is the main integration test repository for a custom Congress-based chain.
+Its primary goals are to validate:
 
-- 系统合约在真实多节点链环境下的端到端行为；
-- 共识层与系统合约之间的联动行为；
-- 共识关键路径（验证人集合更新、惩罚、奖励、治理参数变更）的回归稳定性。
-- 支持 `docker` 与 `native`（非 Docker）两种多节点运行后端，并可通过配置切换。
+- end-to-end system contract behavior on real local multi-node networks
+- integration behavior between consensus and system contracts
+- regression stability of critical consensus paths, including validator-set updates, punishment, rewards, and governance parameter changes
+- both `docker` and `native` multi-node runtime backends, selectable by configuration
 
-该仓库是集成测试工程主仓，优先承载测试编排、测试用例、报告与测试资产，不承载系统合约主开发。
+This repository is the primary integration test workspace. It should focus on test orchestration, test cases, reports, and reusable test assets. It should not become the main development repository for system contracts.
 
 ---
 
-## 2. 关联仓库与职责边界
+## 2. Related Repositories And Boundaries
 
-### 2.1 系统合约仓库
+### 2.1 System Contracts Repository
 
-- 路径：`/Users/litian/code/work/github/chain-contract`
-- 职责：系统合约源码、Foundry 单测、Genesis 相关脚本、Go 合约绑定生成。
+- Suggested local path: `../chain-contract`
+- Responsibility: system contract source code, Foundry unit tests, genesis-related scripts, and generated Go bindings
 
-### 2.2 现有集成测试雏形（迁移参考）
+### 2.2 Existing Integration Test Prototype
 
-- 路径：`/Users/litian/code/work/github/chain-contract/test-integration`
-- 职责：当前可运行的本地 4 节点集成测试框架雏形（Makefile、Docker、Go tests、CI runner）。
-- 说明：`chain-tests` 新能力建设应优先复用其设计思路与测试分组方式，再逐步抽离为独立测试工程。
+- Suggested local path: `../chain-contract/test-integration`
+- Responsibility: the current runnable local 4-node integration test prototype, including Makefile, Docker setup, Go tests, and CI runner
+- Migration note: `chain-tests` should reuse its stable structure and test grouping strategy first, then extract and refactor into an independent test project
 
-### 2.3 定制 geth 仓库
+### 2.3 Custom Geth Repository
 
-- 参考路径：`/Users/litian/code/work/github/chain/accounts`
-- 实际仓库根目录：`/Users/litian/code/work/github/chain`
-- 职责：节点实现、共识执行、系统交易保护逻辑。
-- 依赖边界：`chain-tests` 仅消费 `chain` 编译产出的二进制，不依赖 `chain/local-test` 脚本与配置。
+- Reference subpath: `../chain/accounts`
+- Repository root: `../chain`
+- Responsibility: node implementation, consensus execution, and system-transaction protection logic
+- Dependency boundary: `chain-tests` only consumes compiled binaries from `chain`; it must not depend on `chain/local-test` scripts or configs
 
-### 2.4 Congress 共识实现
+### 2.4 Congress Consensus Implementation
 
-- 核心文件：`/Users/litian/code/work/github/chain/consensus/congress/congress.go`
-- 当前关键常量（实现侧）：
-  - 默认 `epochLength = 86400`
+- Core file: `../chain/consensus/congress/congress.go`
+- Current implementation-side constants:
+  - default `epochLength = 86400`
   - `maxValidators = 21`
-  - 系统合约地址：
+  - system contract addresses:
     - Validators: `0x...f010`
     - Punish: `0x...f011`
     - Proposal: `0x...f012`
     - Staking: `0x...f013`
 
-### 2.5 chain-contract 依赖边界（新增）
+### 2.5 chain-contract Artifact Boundary
 
-- `chain-tests` 仅依赖 `chain-contract` 的编译产物（如 `out/` 下 artifact / bytecode）。
-- 本仓库不负责在 `chain-contract` 仓库内执行源码构建；需要提前准备好编译结果并通过配置路径引用。
+- `chain-tests` depends only on compiled artifacts from `chain-contract`, such as `out/` artifacts and bytecode
+- This repository must not build contract sources inside `chain-contract`; compiled outputs must be prepared ahead of time and referenced through configuration
 
 ---
 
-## 3. 推荐目录设计（chain-tests）
+## 3. Recommended Repository Layout
 
-建议保持与 `test-integration` 一致的可迁移结构：
+Keep a structure that stays close to the existing `test-integration` prototype:
 
 ```text
 chain-tests/
@@ -68,68 +69,71 @@ chain-tests/
 │   └── config/
 ├── tests/
 ├── templates/
-├── data/                 # 运行态生成，不入库
-└── reports/              # 测试报告输出
+├── data/                 # runtime-generated, not committed
+└── reports/              # test report output
 ```
 
 ---
 
-## 4. 测试执行基线（建议）
+## 4. Test Execution Baseline
 
-### 4.0 运行时后端选择（新增）
+### 4.0 Runtime Backend Selection
 
-推荐采用双后端设计：
+Use a dual-backend runtime model:
 
-- `native`（默认推荐，本地开发优先）：
-  - 使用 `pm2` 管理多 `geth` 进程；
-  - 使用本仓库维护的 `scripts/native/pm2_init.sh` 与 `native/ecosystem.config.js`；
-  - 优势：启动/停止更快、无镜像构建、调试日志更直接。
-- `docker`（CI 与环境一致性优先）：
-  - 继续使用 `docker compose`；
-  - 优势：依赖隔离强、跨机器一致性好。
+- `native`:
+  - recommended default for local development
+  - uses `pm2` to manage multiple local `geth` processes
+  - uses repository-owned files such as `scripts/native/pm2_init.sh` and `native/ecosystem.config.js`
+  - advantages: faster startup/shutdown, no image build step, easier log inspection
+- `docker`:
+  - preferred for CI and environment consistency
+  - continues to use `docker compose`
+  - advantages: stronger dependency isolation and better cross-machine consistency
 
-运行时后端建议通过统一配置文件 `config/test_env.yaml` 的 `runtime.backend` 字段选择：
+Select the runtime backend through `config/test_env.yaml`:
 
-- `runtime.backend: native` -> 调用本地进程编排脚本
-- `runtime.backend: docker` -> 调用 docker 编排脚本
+- `runtime.backend: native` -> use native process orchestration
+- `runtime.backend: docker` -> use Docker orchestration
 
-依赖路径建议通过 `config/test_env.yaml` 的 `paths.*` 管理，支持相对路径（相对本仓库根目录），例如：
+Dependency paths should be managed through `config/test_env.yaml` under `paths.*`, using repository-relative paths where possible, for example:
 
 - `paths.chain_root: ../chain`
 - `paths.chain_contract_root: ../chain-contract`
 - `paths.chain_contract_out: ../chain-contract/out`
 
-Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` / `60`），并在生成 `genesis.json` 时生效。
-也可在初始化时临时覆盖：`make init EPOCH=60`（仅影响本次生成）。
-建议通过 `tests.profile`（`fast/default/edge`）统一管理测试参数窗口（cooldown/lasting/unbonding 等），减少散落硬编码。
-高频轮询等待建议通过 `data/test_config.yaml` 的 `test.timing.retry_poll_ms` / `test.timing.block_poll_ms` 调整，优先在配置层调优而非改代码常量。
+Epoch should be configured through `config/test_env.yaml` using `network.epoch`, for example `30` or `60`, and should be applied when generating `genesis.json`.
+You may also override it for one initialization run with `make init EPOCH=60`.
 
-### 4.1 本地网络编排（4 节点）
+Use `tests.profile` such as `fast`, `default`, or `edge` to control timing windows like cooldowns, lasting periods, and unbonding periods, instead of scattering hardcoded values.
+High-frequency polling parameters should be tuned through `data/test_config.yaml`, for example `test.timing.retry_poll_ms` and `test.timing.block_poll_ms`, before changing code-level constants.
 
-- 使用 Docker Compose 启动 4 节点（3 验证节点 + 1 同步节点）。
-- 对外 RPC 统一走 `http://localhost:18545`。
-- 启动前自动生成：
-  - 节点密钥与配置；
-  - `genesis.json`（含系统合约 alloc）；
-  - `data/test_config.yaml`（测试账户与 RPC 配置）。
+### 4.1 Local Network Topology Baseline
 
-### 4.2 建议命令约定
+- Use a 4-node network baseline
+- expose RPC through `http://localhost:18545`
+- generate the following before startup:
+  - node keys and node configs
+  - `genesis.json`, including system contract alloc entries
+  - `data/test_config.yaml`, including test accounts and RPC configuration
 
-- 初始化并启动：
-  - `make reset`（等价 clean + init + run + ready）
-- 运行全部测试：
+### 4.2 Recommended Command Conventions
+
+- Initialize and start:
+  - `make reset` which is equivalent to `clean + init + run + ready`
+- Run full regression:
   - `make test-regression SCOPE=core`
   - `make test-regression SCOPE=full`
-  - `make ci MODE=groups BUDGET=1`（按分组执行并启用默认耗时预算门禁）
-  - `make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards`（按用例模式执行并启用慢用例预算门禁）
-  - `make ci-budget-suggest`（基于历史 reports 自动推荐预算阈值）
-  - `make ci-budget-suggest-json`（输出机器可读 JSON，便于流水线消费）
-  - `make ci-budget-suggest-save`（把推荐阈值写入 `config/ci_budget.local.mk` 本地覆盖文件）
-  - `make ci-budget-drift-check`（检测当前 CI_BUDGET 与推荐值偏差是否超过阈值并可失败）
-  - `make ci-budget-selftest`（运行预算推荐脚本的内置自检）
-  - `make ci-budget-enforced`（执行 image + 漂移检查 + 分组预算门禁测试）
-  - `BUDGET_RECOMMEND_MIN_GROUP_SAMPLES` 可控制推荐覆盖门槛（样本不足时优先保留当前阈值）
-- 分组运行：
+  - `make ci MODE=groups BUDGET=1`
+  - `make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards`
+  - `make ci-budget-suggest`
+  - `make ci-budget-suggest-json`
+  - `make ci-budget-suggest-save`
+  - `make ci-budget-drift-check`
+  - `make ci-budget-selftest`
+  - `make ci-budget-enforced`
+  - `BUDGET_RECOMMEND_MIN_GROUP_SAMPLES` controls the minimum sample threshold used by budget recommendation logic
+- Run business groups:
   - `make test-group GROUP=config`
   - `make test-group GROUP=governance`
   - `make test-group GROUP=staking`
@@ -137,9 +141,7 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
   - `make test-group GROUP=punish`
   - `make test-group GROUP=rewards`
   - `make test-group GROUP=epoch`
-- 查看日志：
-  - `make logs`
-- 网络生命周期统一使用高层命令：
+- Observe runtime:
   - `make init`
   - `make run`
   - `make ready`
@@ -150,97 +152,97 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
 
 ---
 
-## 5. 共识/合约联调硬约束（必须遵守）
+## 5. Hard Constraints For Consensus / Contract Integration
 
-1. Epoch 生效延迟  
-验证人集合变化通常在 Epoch 边界生效；新增/移除验证人相关断言必须等待到下一个 Epoch 检查。
+1. Epoch activation delay
+Validator-set changes usually take effect at the next epoch boundary. Assertions for validator additions or removals must wait until the next epoch.
 
-2. 物理节点数量约束  
-本地仅 4 物理节点时，不要让“活跃验证人阈值”超过网络可达成共识的上限，否则可能停链。
+2. Physical node count constraint
+When the local environment has only 4 physical nodes, do not set active-validator thresholds above what the network can actually sustain, or the chain may stall.
 
-3. 提案 -> 投票 -> 注册 的准入顺序  
-候选验证人必须先提案通过，再在有效窗口内注册；跳步会失败。
+3. Proposal -> vote -> register ordering
+A candidate validator must first pass proposal approval and then register within the valid window. Skipping steps should fail.
 
-4. 系统交易保护  
-`distributeBlockReward`、`punish`、`updateActiveValidatorSet` 等系统级方法不可通过普通外部交易直接调用；集成测试要验证副作用，而不是强行直调。
+4. Protected system transactions
+Methods such as `distributeBlockReward`, `punish`, and `updateActiveValidatorSet` must not be called directly through ordinary external transactions. Integration tests should verify effects, not bypass the protection model.
 
-5. 交易参数  
-优先使用 Legacy gas（`GasPrice`）路径，避免在本地链上出现不兼容的 EIP-1559 行为差异。
+5. Transaction parameters
+Prefer the legacy gas path using `GasPrice` to avoid local-chain incompatibilities with EIP-1559 behavior.
 
-6. Nonce 并发安全  
-并发发交易时统一走上下文封装（如 `CIContext` 风格）管理 nonce，避免 flaky。
-
----
-
-## 6. 变更联动规则
-
-当系统合约变更时，集成测试侧必须同步完成以下步骤：
-
-1. 在 `chain-contract` 编译合约：`forge build`
-2. 生成/更新 Go 合约绑定
-3. 重新生成系统合约 bytecode 与 `genesis.json`
-4. 重置本地测试链数据并重启网络
-5. 重新执行受影响测试分组
-
-当 Congress 共识逻辑变更（`congress.go`）时，必须：
-
-1. 重新构建定制 geth 二进制
-2. 替换测试网络运行二进制
-3. 从干净数据目录重启后再跑回归
+6. Nonce concurrency safety
+When sending transactions concurrently, always use a shared context abstraction such as `CIContext` to manage nonce allocation and avoid flaky behavior.
 
 ---
 
-## 7. 测试开发规范
+## 6. Change Synchronization Rules
 
-1. 用例命名  
-建议使用稳定前缀分组（如 `TestA_`, `TestB_`），便于 CI 分组执行与故障定位。
+When system contracts change, the integration test side must also do the following:
 
-2. 断言策略  
-先断言链状态（高度推进、交易上链），再断言业务状态（validator set、stake、proposal、rewards）。
+1. build contracts in `chain-contract` with `forge build`
+2. generate or update Go bindings
+3. regenerate system contract bytecode and `genesis.json`
+4. reset local test data and restart the network
+5. rerun affected test groups
 
-3. 隔离性  
-高耦合场景（惩罚、退出、epoch 切换）建议单测单起链或按组重置网络，避免级联污染。
+When Congress consensus logic changes in `congress.go`, you must:
 
-4. 可观测性  
-失败日志必须包含：测试名、交易哈希、当前块高、关键配置参数快照。
-
-5. 禁止事项  
-- 不依赖手工操作修复状态；
-- 不在脏数据目录上做“重试即通过”的不稳定测试；
-- 不绕过共识约束构造“主网不会发生”的路径作为成功标准。
+1. rebuild the custom `geth` binary
+2. replace the runtime binary used by the test network
+3. restart from a clean data directory before rerunning regression
 
 ---
 
-## 8. 当前阶段工作重点
+## 7. Test Development Rules
 
-1. 将 `chain-contract/test-integration` 的稳定能力迁移到 `chain-tests`（先跑通，再重构）。
-2. 优先补齐 Congress 相关高风险回归场景：
-   - Epoch 边界验证人更新；
-   - 惩罚与恢复；
-   - 治理参数动态调整对共识行为的影响；
-   - 升级/初始化保护路径。
-3. 建立可重复、可追溯的本地 CI 报告输出。
-4. 新增双后端运行时：
-   - `native(pm2)` 用于开发快速反馈；
-   - `docker` 用于 CI 稳定回归；
-   - 保证两者复用同一套测试用例与断言逻辑。
+1. Test naming
+Use stable grouped prefixes such as `TestA_`, `TestB_`, and so on, so CI grouping and failure localization stay predictable.
+
+2. Assertion strategy
+First assert chain-level state such as block progress and transaction inclusion, then assert business state such as validator set, stake, proposal result, or rewards.
+
+3. Isolation
+For highly coupled scenarios such as punishment, exit, and epoch transitions, prefer one isolated chain per test or per group reset to avoid cascading state pollution.
+
+4. Observability
+Failure logs must include the test name, transaction hash, current block height, and a snapshot of critical configuration values.
+
+5. Prohibited practices
+- do not rely on manual intervention to repair state
+- do not keep retrying on a dirty data directory until a flaky test passes
+- do not treat consensus-bypassing paths that would never happen in production as valid success criteria
 
 ---
 
-## 9. 双后端落地建议（实施顺序）
+## 8. Current Priorities
 
-1. 定义统一配置：`config/test_env.yaml`（见 `config/test_env.yaml.example`）。
-2. 新增统一网络编排入口（建议 `scripts/network/*.sh`）：
-   - `docker.sh`：封装 compose 的 up/down/logs/ready；
-   - `native.sh`：封装 pm2 的 init/start/stop/logs/ready；
-   - `dispatch.sh`：读取配置并分发到对应后端。
-3. `Makefile` 仅调用 `dispatch.sh`，不直接依赖具体后端命令。
-4. CI 默认强制 `runtime.backend=docker`，本地默认 `runtime.backend=native`。
+1. Migrate the stable capabilities from `chain-contract/test-integration` into `chain-tests` first, then refactor
+2. Prioritize high-risk Congress regression coverage:
+  - validator-set updates at epoch boundaries
+  - punishment and recovery
+  - dynamic governance parameter changes affecting consensus behavior
+  - upgrade and initialization guard paths
+3. Build repeatable, traceable local CI report output
+4. Maintain dual runtime backends:
+  - `native (pm2)` for fast local feedback
+  - `docker` for stable CI regression
+  - both must reuse the same test cases and assertion logic
 
-当前迁移阶段说明：
+---
 
-- `native` 后端已支持节点启停与就绪检查（`pm2` 进程编排）。
-- 集成测试数据源（`data/test_config.yaml`）目前仍以 `gen_network_config.sh` 生成流程为主，与 `native` 本地链配置尚未完全统一。
-- 在账户与创世配置统一前，建议：
-  - 本地链调试优先 `native`；
-  - 自动化回归优先 `docker`。
+## 9. Recommended Rollout Order For Dual Backend Support
+
+1. Define a unified config file: `config/test_env.yaml`
+2. Provide unified orchestration entrypoints under `scripts/network/*.sh`:
+  - `docker.sh` to wrap compose `up/down/logs/ready`
+  - `native.sh` to wrap pm2 `init/start/stop/logs/ready`
+  - `dispatch.sh` to select the backend based on config
+3. Keep `Makefile` as a thin wrapper over `dispatch.sh`, without hardcoding backend-specific commands
+4. Default CI to `runtime.backend=docker` and local development to `runtime.backend=native`
+
+Current migration-stage notes:
+
+- the `native` backend already supports node start/stop and readiness checks through pm2 orchestration
+- integration test data generation still primarily depends on `gen_network_config.sh`, and native-chain config is not yet fully unified with that flow
+- until account and genesis configuration are fully unified:
+  - prefer `native` for local debugging
+  - prefer `docker` for automated regression

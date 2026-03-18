@@ -117,7 +117,7 @@ Notes:
 ### 3.4 Run tests
 
 ```bash
-make test-all
+make test-regression SCOPE=core
 ```
 
 ## 4. Runtime backend switch
@@ -148,13 +148,12 @@ CLI variables act only as temporary overrides for that invocation.
 
 ```bash
 make test-smoke
-make test-smoke-single
-make test-smoke-matrix-single
-make test-smoke-matrix-multi
-make test-smoke-matrix-all
+TOPOLOGY=single make test-smoke
+TOPOLOGY=multi MATRIX=1 make test-smoke
+TOPOLOGY=all MATRIX=1 make test-smoke
 ```
 
-`test-smoke-single` key variables:
+`test-smoke` single-node mode key variables:
 
 - `SMOKE_SINGLE_IMPL`: optional override `geth | reth` (empty -> use `config/test_env.yaml` runtime settings)
 - `SMOKE_SINGLE_AUTH_MODE`: optional override `auto | private_key | keystore` (empty -> use `config/test_env.yaml` validator_auth.mode)
@@ -167,16 +166,16 @@ Examples:
 
 ```bash
 # single-node smoke using config defaults (runtime/backend/auth from test_env.yaml)
-make test-smoke-single
+TOPOLOGY=single make test-smoke
 
 # single-node smoke on reth
-SMOKE_SINGLE_IMPL=reth make test-smoke-single
+TOPOLOGY=single SMOKE_SINGLE_IMPL=reth make test-smoke
 
 # single-node smoke on reth + keystore auth
-SMOKE_SINGLE_IMPL=reth SMOKE_SINGLE_AUTH_MODE=keystore make test-smoke-single
+TOPOLOGY=single SMOKE_SINGLE_IMPL=reth SMOKE_SINGLE_AUTH_MODE=keystore make test-smoke
 
 # single-node static-fork genesis smoke
-SMOKE_SINGLE_GENESIS_MODE=smoke SMOKE_SINGLE_FORK_TARGET=poa_shanghai_cancun make test-smoke-single
+TOPOLOGY=single SMOKE_SINGLE_GENESIS_MODE=smoke SMOKE_SINGLE_FORK_TARGET=poa_shanghai_cancun make test-smoke
 ```
 
 Smoke matrix is **static genesis fork-profile liveness** (no runtime upgrade scheduling).
@@ -191,56 +190,66 @@ Matrix examples:
 
 ```bash
 # multi topology with selected static-fork cases
-SMOKE_CASES=poa,poa_shanghai_cancun make test-smoke-matrix-multi
+SMOKE_CASES=poa,poa_shanghai_cancun TOPOLOGY=multi MATRIX=1 make test-smoke
 
 # single topology static-fork matrix
-SMOKE_CASES=poa,poa_shanghai,poa_shanghai_cancun make test-smoke-matrix-single
+SMOKE_CASES=poa,poa_shanghai,poa_shanghai_cancun TOPOLOGY=single MATRIX=1 make test-smoke
 
 # single + multi matrix with explicit report directory
-SMOKE_REPORT_DIR=reports/smoke_matrix_custom make test-smoke-matrix-all
+SMOKE_REPORT_DIR=reports/smoke_matrix_custom TOPOLOGY=all MATRIX=1 make test-smoke
 ```
 
-### 5.2 Grouped tests
+### 5.2 Business groups and targeted runs
 
 ```bash
-make test-config
-make test-governance
-make test-staking
-make test-delegation
-make test-punish
-make test-rewards
-make test-epoch
+make test-group GROUP=config
+make test-group GROUP=governance
+make test-group GROUP=staking
+make test-group GROUP=delegation
+make test-group GROUP=punish
+make test-group GROUP=rewards
+make test-group GROUP=epoch
+make test-group GROUP=all
 ```
 
-Run only selected groups:
+Run only selected groups through the shared CI group runner:
 
 ```bash
-GROUPS=config,governance,staking make ci-groups
+make ci MODE=groups GROUPS=config,governance,staking
 ```
 
 Run specific tests by pattern/package:
 
 ```bash
-make ci-tests RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
+make ci MODE=tests RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
 ```
 
-### 5.3 Full regression
+Enable runtime budget gates for groups or targeted tests:
 
 ```bash
-make test-all
+make ci MODE=groups BUDGET=1
+make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
+```
+
+### 5.3 Regression bundles
+
+```bash
+make test-regression
+make test-regression SCOPE=full
 ```
 
 Notes:
 
-- `test-all` runs all non-smoke tests case-by-case (smoke is separate)
+- `test-regression` defaults to `SCOPE=core` and runs all non-smoke tests case-by-case
+- `SCOPE=full` orchestrates smoke + business groups + fork matrix + PoSA + interop aggregation
 - `make test` runs a single-pass `go test -run .` and expects network already ready
 
 ### 5.4 Fork/upgrade liveness matrix (dynamic)
 
 ```bash
-make test-fork-single
-make test-fork-multi
-make test-fork-all
+make test-fork
+TOPOLOGY=single make test-fork
+TOPOLOGY=all make test-fork
 ```
 
 Optional variables:
@@ -254,29 +263,29 @@ Examples:
 
 ```bash
 # only POA and one dynamic upgrade target
-FORK_CASES=poa,upgrade:cancunTime make test-fork-all
+FORK_CASES=poa,upgrade:cancunTime TOPOLOGY=all make test-fork
 
 # custom upgrade delay and timeout
-FORK_CASES=upgrade:allStaggered FORK_DELAY_SECONDS=60 FORK_TEST_TIMEOUT=30m make test-fork-multi
+FORK_CASES=upgrade:allStaggered FORK_DELAY_SECONDS=60 FORK_TEST_TIMEOUT=30m TOPOLOGY=multi make test-fork
 
 # fixed report output directory
-FORK_REPORT_DIR=reports/fork_custom make test-fork-single
+FORK_REPORT_DIR=reports/fork_custom TOPOLOGY=single make test-fork
 ```
 
-### 5.5 PoSA / full regression
+### 5.5 Scenario suites
 
 ```bash
-make test-posa-multi
-make test-interop-sync
-make test-interop-state-root
-make test-regression-all
+make test-scenario SCENARIO=posa
+make test-scenario SCENARIO=interop CHECK=sync
+make test-scenario SCENARIO=interop CHECK=state-root
+make test-scenario SCENARIO=interop CHECK=all
 ```
 
 ### 5.6 Performance / soak
 
 ```bash
-make test-perf-tiers
-make test-soak-24h
+make test-perf MODE=tiers
+make test-perf MODE=soak
 ```
 
 Generated perf artifacts:
@@ -385,8 +394,8 @@ When Congress consensus logic changes (`congress.go`):
 ## 10. CI profiles
 
 ```bash
-make ci-pr-gate
-make ci-nightly-full
-make ci-weekly-soak
-make ci-release-gate
+make ci PROFILE=pr
+make ci PROFILE=nightly
+make ci PROFILE=weekly-soak
+make ci PROFILE=release
 ```

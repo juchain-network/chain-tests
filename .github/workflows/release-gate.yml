@@ -46,7 +46,7 @@ jobs:
         run: |
           make precheck
           make reset
-          make ci-release-gate
+          make ci PROFILE=release
 
       - name: Upload reports
         if: always()

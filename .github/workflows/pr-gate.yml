@@ -46,7 +46,7 @@ jobs:
         run: |
           make precheck
           make reset
-          make ci-pr-gate
+          make ci PROFILE=pr
 
       - name: Upload reports
         if: always()

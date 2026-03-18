@@ -67,7 +67,7 @@ run_case() {
   case_slug="$(sanitize_case "$label")"
   local case_dir="$FORK_REPORT_DIR/${TOPOLOGY}_${case_slug}"
   local case_log="$case_dir/run.log"
-  local repro="FORK_CASES=$label FORK_DELAY_SECONDS=$FORK_DELAY_SECONDS FORK_TEST_TIMEOUT=$FORK_TEST_TIMEOUT make test-fork-$TOPOLOGY"
+  local repro="FORK_CASES=$label FORK_DELAY_SECONDS=$FORK_DELAY_SECONDS FORK_TEST_TIMEOUT=$FORK_TEST_TIMEOUT TOPOLOGY=$TOPOLOGY make test-fork"
 
   mkdir -p "$case_dir"
 

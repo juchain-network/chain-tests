@@ -2,13 +2,9 @@ SHELL := /bin/bash
 
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
-        net-up net-down net-reset net-ready test test-all test-all-legacy \
-        test-smoke test-smoke-single test-smoke-matrix-single test-smoke-matrix-multi test-smoke-matrix-all test-config test-governance test-staking test-delegation test-punish \
-        test-rewards test-epoch test-fork-single test-fork-multi test-fork-all \
-        test-posa-multi test-interop-sync test-interop-state-root test-interop-all \
-        test-regression-all test-perf-tiers test-soak-24h \
-        ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced \
-        ci-pr-gate ci-nightly-full ci-weekly-soak ci-release-gate
+        net-up net-down net-reset net-ready test \
+        test-group test-smoke test-fork test-scenario test-regression test-perf \
+        ci ci-tool ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
@@ -27,6 +23,7 @@ GOCACHE ?=
 REPORT_DIR ?=
 DEBUG ?=
 GROUPS ?=
+GROUP ?=
 TESTS ?=
 RUN ?=
 TIMEOUT ?=
@@ -44,6 +41,7 @@ FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
 FORK_UPGRADE_STARTUP_BUFFER_MULTI ?= 30
 FORK_TEST_TIMEOUT ?= 20m
 FORK_REPORT_DIR ?=
+MATRIX ?= 0
 SMOKE_CASES ?= poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa
 SMOKE_TOPOLOGY ?=
 SMOKE_REPORT_DIR ?=
@@ -59,6 +57,12 @@ PERF_SAMPLE_INTERVAL ?= 2s
 PERF_SOAK_DURATION ?= 24h
 PERF_SOAK_TPS ?= 10
 PERF_SOAK_RESTART_INTERVAL ?= 1h
+SCENARIO ?=
+CHECK ?= all
+SCOPE ?= core
+PROFILE ?=
+MODE ?=
+BUDGET ?= 0
 REGRESSION_REPORT_DIR ?=
 CI_PR_GROUPS ?= config,governance,staking,punish,epoch
 CI_NIGHTLY_GROUPS ?= config,governance,staking,delegation,punish,rewards,epoch
@@ -99,7 +103,7 @@ all: help
 help:
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Network Targets:"
+	@echo "Network Commands:"
 	@echo "  init-config     - Create config/test_env.yaml from example if missing"
 	@echo "  image           - Build juchain binary for docker runtime"
 	@echo "  init            - Generate genesis, keys, and runtime config"
@@ -113,105 +117,59 @@ help:
 	@echo "  logs            - View runtime logs (NODE=... optional)"
 	@echo "  status          - Show runtime status"
 	@echo ""
-	@echo "Direct Backend-Routed Targets:"
+	@echo "Direct Backend-Routed Commands:"
 	@echo "  net-up net-down net-reset net-ready"
 	@echo ""
-	@echo "Test Targets:"
-	@echo "  test            - Run full suite in single pass (no setup)"
-	@echo "  test-all        - Run all non-smoke tests with isolated reset per test"
-	@echo "  test-smoke      - Quick smoke test (continuous tx + multi-node height growth)"
-	@echo "  test-smoke-single - Single-node smoke (native single topology; impl/auth/fork via SMOKE_SINGLE_*)"
-	@echo "  test-smoke-matrix-single - Static fork-genesis smoke matrix on single topology"
-	@echo "  test-smoke-matrix-multi - Static fork-genesis smoke matrix on multi topology"
-	@echo "  test-smoke-matrix-all - Run static fork-genesis smoke matrix on single + multi topology"
-	@echo "  test-fork-single - Fork liveness matrix on native single-node topology"
-	@echo "  test-fork-multi - Fork liveness matrix on configured multi-node backend"
-	@echo "  test-fork-all   - Run fork liveness matrix for single and multi topology"
-	@echo "  test-posa-multi - Deep PoSA multi-node regression scenarios"
-	@echo "  test-interop-sync - Interop sync catch-up checks (mixed geth/reth friendly)"
-	@echo "  test-interop-state-root - Interop checkpoint stateRoot parity checks"
-	@echo "  test-interop-all - Run interop sync + stateRoot checks"
-	@echo "  test-regression-all - One-shot full regression orchestration + aggregate report"
-	@echo "  test-perf-tiers - Run TPS tier perf profile and summary"
-	@echo "  test-soak-24h   - Run long-soak profile and verdict report"
-	@echo "  test-config     - System config tests"
-	@echo "  test-governance - Governance tests"
-	@echo "  test-staking    - Staking tests"
-	@echo "  test-delegation - Delegation tests"
-	@echo "  test-punish     - Punish/exit tests"
-	@echo "  test-rewards    - Rewards/query tests"
-	@echo "  test-epoch      - Epoch/upgrade tests"
+	@echo "Primary Test Commands:"
+	@echo "  test            - Run the prepared network in a single go test pass (expects ready network)"
+	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
+	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
+	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop CHECK=sync|state-root|all"
+	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
+	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak"
 	@echo ""
-	@echo "CI Targets:"
-	@echo "  ci ci-tool ci-groups ci-groups-budget ci-tests ci-tests-budget ci-budget-suggest ci-budget-suggest-json ci-budget-drift-check ci-budget-selftest ci-budget-enforced"
-	@echo "  ci-pr-gate      - PR gate profile (smoke + key groups)"
-	@echo "  ci-nightly-full - Nightly profile (smoke-matrix + full groups + fork-all + posa)"
-	@echo "  ci-weekly-soak  - Weekly long-soak profile"
-	@echo "  ci-release-gate - Release gate profile (smoke-matrix + fork-all + posa)"
-	@echo "  ci-groups-budget - Run group mode with default runtime budget gates enabled"
-	@echo "  ci-tests-budget  - Run tests mode with default slow-test budget gate enabled"
-	@echo "  ci-budget-suggest - Suggest budget thresholds from historical reports"
-	@echo "  ci-budget-suggest-json - Output budget suggestion as machine-readable JSON"
-	@echo "  ci-budget-suggest-save - Suggest and write CI_BUDGET_* overrides to config/ci_budget.local.mk"
-	@echo "  ci-budget-drift-check - Compare suggestions with current CI_BUDGET_* and fail on large drift"
-	@echo "  ci-budget-selftest - Run built-in self checks for budget recommendation script"
-	@echo "  ci-budget-enforced - image + drift check + grouped budget-gated test run"
+	@echo "CI Commands:"
+	@echo "  ci              - PROFILE=pr|nightly|release|weekly-soak or MODE=groups|tests [BUDGET=1]"
+	@echo "  ci-tool         - Pass raw flags to ci.go via ARGS=..."
 	@echo ""
-	@echo "Variables:"
+	@echo "Utilities:"
+	@echo "  ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save"
+	@echo "  ci-budget-drift-check ci-budget-selftest ci-budget-enforced"
+	@echo ""
+	@echo "Key Variables:"
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
 	@echo "  RUNTIME_SESSION_FILE=$(RUNTIME_SESSION_FILE) # optional override for runtime session snapshot path"
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
-	@echo "  EPOCH=$(EPOCH)                     # optional runtime epoch override for init/reset"
-	@echo "                                    # also overrides group/special epoch config when set"
-	@echo "                                    # test-* epoch order: EPOCH > tests.epoch_overrides > profile.epoch > network.epoch"
-	@echo "  TOPOLOGY=$(TOPOLOGY)             # init-only: single|multi"
+	@echo "  GROUP=$(GROUP)                   # test-group selector"
+	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
+	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
+	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop"
+	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
+	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
+	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
+	@echo "  MODE=$(MODE)                     # ci/test-perf mode selector"
+	@echo "  BUDGET=$(BUDGET)                 # ci MODE=groups|tests with budget gate enabled"
+	@echo "  EPOCH=$(EPOCH)                   # optional runtime epoch override for init/test commands"
 	@echo "  INIT_MODE=$(INIT_MODE)           # init-only: poa|posa|smoke|upgrade"
 	@echo "  INIT_TARGET=$(INIT_TARGET)       # init-only: smoke/upgrade target case"
 	@echo "  INIT_DELAY_SECONDS=$(INIT_DELAY_SECONDS) # init-only: upgrade delay seconds"
+	@echo "  RUN=$(RUN) TESTS=$(TESTS) PKGS=$(PKGS) TIMEOUT=$(TIMEOUT)"
 	@echo "  FORK_CASES=$(FORK_CASES)         # e.g. poa,upgrade:shanghaiTime,upgrade:allStaggered,upgrade:allSame,posa"
 	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS) # optional override; empty -> use config network.fork_delay_seconds"
-	@echo "  FORK_UPGRADE_STARTUP_BUFFER_SINGLE=$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)"
-	@echo "  FORK_UPGRADE_STARTUP_BUFFER_MULTI=$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)"
-	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT)"
-	@echo "  FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
-	@echo "  SMOKE_CASES=$(SMOKE_CASES)       # poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa"
-	@echo "  SMOKE_TOPOLOGY=$(SMOKE_TOPOLOGY) # optional override: single|multi; empty -> infer from config node_count/validator_count"
-	@echo "  SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
+	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT) FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
+	@echo "  SMOKE_CASES=$(SMOKE_CASES) SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
 	@echo "  SMOKE_SINGLE_IMPL=$(SMOKE_SINGLE_IMPL) # optional override: geth|reth; empty -> use config runtime.*"
 	@echo "  SMOKE_SINGLE_AUTH_MODE=$(SMOKE_SINGLE_AUTH_MODE) # optional override: auto|private_key|keystore; empty -> use config validator_auth.mode"
 	@echo "  SMOKE_SINGLE_GENESIS_MODE=$(SMOKE_SINGLE_GENESIS_MODE) # optional: poa|posa|smoke|upgrade"
 	@echo "  SMOKE_SINGLE_FORK_TARGET=$(SMOKE_SINGLE_FORK_TARGET) # required when SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade"
 	@echo "  SMOKE_SINGLE_OBSERVE_SECONDS=$(SMOKE_SINGLE_OBSERVE_SECONDS) # optional override; empty -> use config tests.smoke.observe_seconds"
 	@echo "  SMOKE_SINGLE_TEST_TIMEOUT=$(SMOKE_SINGLE_TEST_TIMEOUT) # single-smoke go test timeout"
-	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS)"
-	@echo "  PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
-	@echo "  PERF_SAMPLE_INTERVAL=$(PERF_SAMPLE_INTERVAL)"
-	@echo "  PERF_SOAK_DURATION=$(PERF_SOAK_DURATION)"
-	@echo "  PERF_SOAK_TPS=$(PERF_SOAK_TPS)"
-	@echo "  PERF_SOAK_RESTART_INTERVAL=$(PERF_SOAK_RESTART_INTERVAL)"
-	@echo "  REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
-	@echo "  SKIP_PRECHECK=$(SKIP_PRECHECK)     # set to 1 to bypass precheck before run"
-	@echo "  SKIP_SETUP=$(SKIP_SETUP)           # set to 1 to skip clean/init/run/stop in tests mode (-run)"
-	@echo "  SHARED_SETUP=$(SHARED_SETUP)       # set to 1 to share setup across compatible groups in ci-groups"
-	@echo "  SHARED_GROUPS=$(SHARED_GROUPS)     # comma list of state-compatible groups allowed to share setup"
-	@echo "  SLOW_TOP=$(SLOW_TOP)               # top-N slow tests in CI report"
-	@echo "  SLOW_THRESHOLD=$(SLOW_THRESHOLD)   # duration threshold for slow alerts (e.g. 2s)"
-	@echo "  SLOW_FAIL=$(SLOW_FAIL)             # 1/true/yes -> fail when slow threshold exceeded"
-	@echo "  GROUP_THRESHOLDS=$(GROUP_THRESHOLDS) # e.g. config=2m,rewards=3m,default=4m"
-	@echo "  GROUP_THRESHOLD_FAIL=$(GROUP_THRESHOLD_FAIL) # 1/true/yes -> fail on group overrun"
-	@echo "  MAX_SKIPS=$(MAX_SKIPS)             # max skipped tests allowed (-1 disables, 0 forbids skips)"
-	@echo "  CI_BUDGET_GROUP_THRESHOLDS=$(CI_BUDGET_GROUP_THRESHOLDS)"
-	@echo "  CI_BUDGET_SLOW_THRESHOLD=$(CI_BUDGET_SLOW_THRESHOLD)"
-	@echo "  CI_BUDGET_SLOW_TOP=$(CI_BUDGET_SLOW_TOP)"
-	@echo "  CI_BUDGET_TEST_SLOW_THRESHOLD=$(CI_BUDGET_TEST_SLOW_THRESHOLD)"
-	@echo "  BUDGET_RECOMMEND_RECENT=$(BUDGET_RECOMMEND_RECENT)"
-	@echo "  BUDGET_RECOMMEND_GROUP_QUANTILE=$(BUDGET_RECOMMEND_GROUP_QUANTILE)"
-	@echo "  BUDGET_RECOMMEND_GROUP_HEADROOM=$(BUDGET_RECOMMEND_GROUP_HEADROOM)"
-	@echo "  BUDGET_RECOMMEND_SLOW_QUANTILE=$(BUDGET_RECOMMEND_SLOW_QUANTILE)"
-	@echo "  BUDGET_RECOMMEND_SLOW_HEADROOM=$(BUDGET_RECOMMEND_SLOW_HEADROOM)"
-	@echo "  BUDGET_RECOMMEND_MIN_GROUP_SAMPLES=$(BUDGET_RECOMMEND_MIN_GROUP_SAMPLES)"
-	@echo "  BUDGET_DRIFT_RATIO=$(BUDGET_DRIFT_RATIO)"
-	@echo "  BUDGET_DRIFT_MIN_MS=$(BUDGET_DRIFT_MIN_MS)"
+	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS) PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
+	@echo "  PERF_SOAK_DURATION=$(PERF_SOAK_DURATION) PERF_SOAK_TPS=$(PERF_SOAK_TPS)"
+	@echo "  REPORT_DIR=$(REPORT_DIR) REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
+	@echo "  See README.md for the full variable reference."
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
 
 init-config:
@@ -312,215 +270,323 @@ net-reset:
 net-ready:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" ready
 
-# Punish tests run in two isolated chunks to balance startup overhead and state stability.
-test-punish:
-	@echo "🧪 Running Punishment Test Group..."
+test-group:
 	@set -e; \
-	group_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups punish)"; \
-	paths_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_paths punish)"; \
-	double_sign_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_double_sign punish)"; \
-	if [ -z "$$paths_epoch" ]; then paths_epoch="$$group_epoch"; fi; \
-	if [ -z "$$double_sign_epoch" ]; then double_sign_epoch="$$group_epoch"; fi; \
-	echo "⏱ punish epochs: paths=$$paths_epoch double_sign=$$double_sign_epoch"; \
-	if [ "$$paths_epoch" = "$$double_sign_epoch" ]; then \
-		echo "⏱ punish running in single pass (shared epoch=$$paths_epoch)"; \
-		EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths|TestG_DoubleSign"; \
-	else \
-		EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths"; \
-		EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign"; \
-	fi
-
-test-config:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups config)"; \
-	echo "⏱ config epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"
+	group="$(GROUP)"; \
+	if [ -z "$$group" ]; then \
+		echo "Set GROUP=<config|governance|staking|delegation|punish|rewards|epoch|all>"; \
+		exit 1; \
+	fi; \
+	case "$$group" in \
+		all) \
+			$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups "$(CI_DEFAULT_GROUPS)" $(if $(CI_LOG),-ci-log,); \
+			;; \
+		config) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups config)"; \
+			echo "⏱ config epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/config -run "TestA_SystemConfigSetup|TestB_ConfigBoundaryChecks"; \
+			;; \
+		governance) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups governance)"; \
+			echo "⏱ governance epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/governance -run "TestB_Governance.*"; \
+			;; \
+		staking) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups staking)"; \
+			echo "⏱ staking epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/staking -run "TestC_Staking.*|TestD_Staking.*"; \
+			;; \
+		delegation) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups delegation)"; \
+			echo "⏱ delegation epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"; \
+			;; \
+		punish) \
+			echo "🧪 Running Punishment Test Group..."; \
+			group_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups punish)"; \
+			paths_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_paths punish)"; \
+			double_sign_epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) specials punish_double_sign punish)"; \
+			if [ -z "$$paths_epoch" ]; then paths_epoch="$$group_epoch"; fi; \
+			if [ -z "$$double_sign_epoch" ]; then double_sign_epoch="$$group_epoch"; fi; \
+			echo "⏱ punish epochs: paths=$$paths_epoch double_sign=$$double_sign_epoch"; \
+			if [ "$$paths_epoch" = "$$double_sign_epoch" ]; then \
+				echo "⏱ punish running in single pass (shared epoch=$$paths_epoch)"; \
+				EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths|TestG_DoubleSign"; \
+			else \
+				EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths"; \
+				EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign"; \
+			fi; \
+			;; \
+		rewards) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups rewards)"; \
+			echo "⏱ rewards epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness|TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"; \
+			;; \
+		epoch) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups epoch)"; \
+			echo "⏱ epoch group epoch=$$epoch"; \
+			echo "⏱ epoch phase-1: non-destructive checks"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"; \
+			echo "⏱ epoch phase-2: destructive last-man-standing"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_LastManStanding"; \
+			;; \
+		*) \
+			echo "Unsupported GROUP=$$group"; \
+			echo "Expected one of: config governance staking delegation punish rewards epoch all"; \
+			exit 1; \
+			;; \
+	esac
 
 test-smoke:
 	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
-	echo "⏱ smoke epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/smoke -run "TestS_SmokeChainLivenessAllNodes"
+	topology="$(if $(TOPOLOGY),$(TOPOLOGY),multi)"; \
+	matrix="$(if $(MATRIX),$(MATRIX),0)"; \
+	case "$$matrix" in \
+		1|true|yes|on) matrix=1 ;; \
+		0|false|no|off|"") matrix=0 ;; \
+		*) echo "MATRIX must be 0|1|true|false"; exit 1 ;; \
+	esac; \
+	case "$$topology" in \
+		single|multi|all) ;; \
+		*) echo "TOPOLOGY must be single|multi|all"; exit 1 ;; \
+	esac; \
+	if [ "$$matrix" = "1" ]; then \
+		if [ "$$topology" = "all" ]; then \
+			report_root="$(if $(SMOKE_REPORT_DIR),$(SMOKE_REPORT_DIR),reports/smoke_matrix_$$(date +%Y%m%d_%H%M%S))"; \
+			echo "📦 smoke matrix report dir=$$report_root"; \
+			$(MAKE) SMOKE_REPORT_DIR="$$report_root/single" TOPOLOGY=single MATRIX=1 test-smoke; \
+			$(MAKE) SMOKE_REPORT_DIR="$$report_root/multi" TOPOLOGY=multi MATRIX=1 test-smoke; \
+		elif [ "$$topology" = "single" ]; then \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			SMOKE_CASES="$(SMOKE_CASES)" \
+			SMOKE_TOPOLOGY="single" \
+			SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
+			bash ./scripts/smoke/run_matrix.sh single; \
+		else \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			SMOKE_CASES="$(SMOKE_CASES)" \
+			SMOKE_TOPOLOGY="multi" \
+			SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
+			bash ./scripts/smoke/run_matrix.sh multi; \
+		fi; \
+	else \
+		if [ "$$topology" = "all" ]; then \
+			echo "TOPOLOGY=all is only supported when MATRIX=1"; \
+			exit 1; \
+		elif [ "$$topology" = "single" ]; then \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			SMOKE_SINGLE_IMPL="$(SMOKE_SINGLE_IMPL)" \
+			SMOKE_SINGLE_AUTH_MODE="$(SMOKE_SINGLE_AUTH_MODE)" \
+			SMOKE_SINGLE_GENESIS_MODE="$(SMOKE_SINGLE_GENESIS_MODE)" \
+			SMOKE_SINGLE_FORK_TARGET="$(SMOKE_SINGLE_FORK_TARGET)" \
+			SMOKE_SINGLE_OBSERVE_SECONDS="$(SMOKE_SINGLE_OBSERVE_SECONDS)" \
+			SMOKE_SINGLE_TEST_TIMEOUT="$(SMOKE_SINGLE_TEST_TIMEOUT)" \
+			bash ./scripts/smoke/run_single.sh; \
+		else \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+			echo "⏱ smoke epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/smoke -run "TestS_SmokeChainLivenessAllNodes"; \
+		fi; \
+	fi
 
-test-smoke-single:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		SMOKE_SINGLE_IMPL="$(SMOKE_SINGLE_IMPL)" \
-		SMOKE_SINGLE_AUTH_MODE="$(SMOKE_SINGLE_AUTH_MODE)" \
-		SMOKE_SINGLE_GENESIS_MODE="$(SMOKE_SINGLE_GENESIS_MODE)" \
-		SMOKE_SINGLE_FORK_TARGET="$(SMOKE_SINGLE_FORK_TARGET)" \
-		SMOKE_SINGLE_OBSERVE_SECONDS="$(SMOKE_SINGLE_OBSERVE_SECONDS)" \
-		SMOKE_SINGLE_TEST_TIMEOUT="$(SMOKE_SINGLE_TEST_TIMEOUT)" \
-		bash ./scripts/smoke/run_single.sh
-
-test-smoke-matrix-single:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		SMOKE_CASES="$(SMOKE_CASES)" \
-		SMOKE_TOPOLOGY="single" \
-		SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
-		bash ./scripts/smoke/run_matrix.sh single
-
-test-smoke-matrix-multi:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		SMOKE_CASES="$(SMOKE_CASES)" \
-		SMOKE_TOPOLOGY="multi" \
-		SMOKE_REPORT_DIR="$(SMOKE_REPORT_DIR)" \
-		bash ./scripts/smoke/run_matrix.sh multi
-
-test-smoke-matrix-all:
+test-fork:
 	@set -e; \
-		report_root="$(if $(SMOKE_REPORT_DIR),$(SMOKE_REPORT_DIR),reports/smoke_matrix_$$(date +%Y%m%d_%H%M%S))"; \
-		echo "📦 smoke matrix report dir=$$report_root"; \
-		$(MAKE) SMOKE_REPORT_DIR="$$report_root/single" test-smoke-matrix-single; \
-		$(MAKE) SMOKE_REPORT_DIR="$$report_root/multi" test-smoke-matrix-multi
-
-test-fork-single:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+	topology="$(if $(TOPOLOGY),$(TOPOLOGY),multi)"; \
+	case "$$topology" in \
+		single|multi|all) ;; \
+		*) echo "TOPOLOGY must be single|multi|all"; exit 1 ;; \
+	esac; \
+	if [ "$$topology" = "all" ]; then \
+		report_root="$(if $(FORK_REPORT_DIR),$(FORK_REPORT_DIR),reports/fork_$$(date +%Y%m%d_%H%M%S))"; \
+		echo "📦 fork matrix report dir=$$report_root"; \
+		$(MAKE) FORK_REPORT_DIR="$$report_root/single" TOPOLOGY=single test-fork; \
+		$(MAKE) FORK_REPORT_DIR="$$report_root/multi" TOPOLOGY=multi test-fork; \
+	else \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
 		FORK_CASES="$(FORK_CASES)" \
 		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
 		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
 		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
 		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
 		FORK_REPORT_DIR="$(FORK_REPORT_DIR)" \
-		bash ./scripts/fork/run_matrix.sh single
+		bash ./scripts/fork/run_matrix.sh "$$topology"; \
+	fi
 
-test-fork-multi:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		FORK_CASES="$(FORK_CASES)" \
-		FORK_DELAY_SECONDS="$(FORK_DELAY_SECONDS)" \
-		FORK_UPGRADE_STARTUP_BUFFER_SINGLE="$(FORK_UPGRADE_STARTUP_BUFFER_SINGLE)" \
-		FORK_UPGRADE_STARTUP_BUFFER_MULTI="$(FORK_UPGRADE_STARTUP_BUFFER_MULTI)" \
-		FORK_TEST_TIMEOUT="$(FORK_TEST_TIMEOUT)" \
-		FORK_REPORT_DIR="$(FORK_REPORT_DIR)" \
-		bash ./scripts/fork/run_matrix.sh multi
-
-test-fork-all: test-fork-single test-fork-multi
-
-test-governance:
+test-scenario:
 	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups governance)"; \
-	echo "⏱ governance epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/governance -run "TestB_Governance.*"
+	scenario="$(SCENARIO)"; \
+	check="$(if $(CHECK),$(CHECK),all)"; \
+	if [ -z "$$scenario" ]; then \
+		echo "Set SCENARIO=<posa|interop>"; \
+		exit 1; \
+	fi; \
+	case "$$scenario" in \
+		posa) \
+			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups posa)"; \
+			echo "⏱ posa epoch=$$epoch"; \
+			EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"; \
+			bash ./scripts/report/assert_chain_health.sh; \
+			;; \
+		interop) \
+			case "$$check" in \
+				all) \
+					$(MAKE) SCENARIO=interop CHECK=sync test-scenario; \
+					$(MAKE) SCENARIO=interop CHECK=state-root test-scenario; \
+					;; \
+				sync) \
+					epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+					echo "⏱ interop-sync epoch=$$epoch"; \
+					EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_SyncCatchUp"; \
+					;; \
+				state-root) \
+					epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+					echo "⏱ interop-state-root epoch=$$epoch"; \
+					EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_StateRootCheckpoint"; \
+					;; \
+				*) \
+					echo "Unsupported CHECK=$$check"; \
+					echo "Expected one of: sync state-root all"; \
+					exit 1; \
+					;; \
+			esac; \
+			;; \
+		*) \
+			echo "Unsupported SCENARIO=$$scenario"; \
+			echo "Expected one of: posa interop"; \
+			exit 1; \
+			;; \
+	esac
 
-test-staking:
+test-regression:
 	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups staking)"; \
-	echo "⏱ staking epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/staking -run "TestC_Staking.*|TestD_Staking.*"
+	scope="$(if $(SCOPE),$(SCOPE),core)"; \
+	case "$$scope" in \
+		core) \
+			$(CI_TOOL) -mode all $(CI_COMMON_FLAGS); \
+			;; \
+		full) \
+			reg_id="$$(date +%Y%m%d_%H%M%S)"; \
+			reg_dir="$(if $(REGRESSION_REPORT_DIR),$(REGRESSION_REPORT_DIR),reports/regression_$$reg_id)"; \
+			ci_dir="$$reg_dir/ci"; \
+			fork_dir="$$reg_dir/fork"; \
+			echo "📦 regression report dir=$$reg_dir"; \
+			mkdir -p "$$ci_dir" "$$fork_dir"; \
+			$(MAKE) REPORT_DIR="$$ci_dir" TOPOLOGY=multi MATRIX=0 test-smoke; \
+			$(MAKE) REPORT_DIR="$$ci_dir" test-group GROUP=all; \
+			$(MAKE) FORK_REPORT_DIR="$$fork_dir" TOPOLOGY=all test-fork; \
+			$(MAKE) REPORT_DIR="$$ci_dir" test-scenario SCENARIO=posa; \
+			$(MAKE) REPORT_DIR="$$ci_dir" test-scenario SCENARIO=interop CHECK=all; \
+			python3 ./scripts/report/aggregate_reports.py --output-dir "$$reg_dir" --ci-dir "$$ci_dir" --fork-dir "$$fork_dir"; \
+			;; \
+		*) \
+			echo "SCOPE must be core|full"; \
+			exit 1; \
+			;; \
+	esac
 
-test-delegation:
+test-perf:
 	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups delegation)"; \
-	echo "⏱ delegation epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/delegation -run "TestE_Delegation.*"
-
-test-rewards:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups rewards)"; \
-	echo "⏱ rewards epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rewards -run "TestH_Robustness|TestI_ConsensusRewards|TestI_PublicQueryCoverage|TestI_ValidatorExtras"
-
-test-epoch:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups epoch)"; \
-	echo "⏱ epoch group epoch=$$epoch"; \
-	echo "⏱ epoch phase-1: non-destructive checks"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestY_UpdateActiveValidatorSet|TestZ_UpgradesAndInitGuards|TestZ_SystemInitSecurityGuards"; \
-	echo "⏱ epoch phase-2: destructive last-man-standing"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/epoch -run "TestZ_LastManStanding"
-
-test-posa-multi:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups posa)"; \
-	echo "⏱ posa epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/posa -run "TestP_.*"; \
-	bash ./scripts/report/assert_chain_health.sh
-
-test-interop-sync:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
-	echo "⏱ interop-sync epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_SyncCatchUp"
-
-test-interop-state-root:
-	@set -e; \
-	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
-	echo "⏱ interop-state-root epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/interop -run "TestI_StateRootCheckpoint"
-
-test-interop-all: test-interop-sync test-interop-state-root
-
-test-perf-tiers:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
-		PERF_TIER_DURATION="$(PERF_TIER_DURATION)" \
-		PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
-		bash ./scripts/perf/run_tps_tiers.sh
-
-test-soak-24h:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
-		PERF_SOAK_DURATION="$(PERF_SOAK_DURATION)" \
-		PERF_SOAK_TPS="$(PERF_SOAK_TPS)" \
-		PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
-		PERF_SOAK_RESTART_INTERVAL="$(PERF_SOAK_RESTART_INTERVAL)" \
-		bash ./scripts/perf/run_soak.sh
-
-test-regression-all:
-	@set -e; \
-	reg_id="$$(date +%Y%m%d_%H%M%S)"; \
-	reg_dir="$(if $(REGRESSION_REPORT_DIR),$(REGRESSION_REPORT_DIR),reports/regression_$$reg_id)"; \
-	ci_dir="$$reg_dir/ci"; \
-	fork_dir="$$reg_dir/fork"; \
-	echo "📦 regression report dir=$$reg_dir"; \
-	mkdir -p "$$ci_dir" "$$fork_dir"; \
-	$(MAKE) REPORT_DIR="$$ci_dir" test-smoke; \
-	$(MAKE) REPORT_DIR="$$ci_dir" ci-groups GROUPS="$(CI_DEFAULT_GROUPS)"; \
-	$(MAKE) FORK_REPORT_DIR="$$fork_dir" test-fork-all; \
-	$(MAKE) REPORT_DIR="$$ci_dir" test-posa-multi; \
-	$(MAKE) REPORT_DIR="$$ci_dir" test-interop-all; \
-	python3 ./scripts/report/aggregate_reports.py --output-dir "$$reg_dir" --ci-dir "$$ci_dir" --fork-dir "$$fork_dir"
-
-test-all:
-	@$(CI_TOOL) -mode all $(CI_COMMON_FLAGS)
-
-test-all-legacy:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups $(CI_DEFAULT_GROUPS)
+	mode="$(MODE)"; \
+	if [ -z "$$mode" ]; then \
+		echo "Set MODE=<tiers|soak>"; \
+		exit 1; \
+	fi; \
+	case "$$mode" in \
+		tiers) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
+			PERF_TIER_DURATION="$(PERF_TIER_DURATION)" \
+			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
+			bash ./scripts/perf/run_tps_tiers.sh; \
+			;; \
+		soak) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			PERF_SOAK_DURATION="$(PERF_SOAK_DURATION)" \
+			PERF_SOAK_TPS="$(PERF_SOAK_TPS)" \
+			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
+			PERF_SOAK_RESTART_INTERVAL="$(PERF_SOAK_RESTART_INTERVAL)" \
+			bash ./scripts/perf/run_soak.sh; \
+			;; \
+		*) \
+			echo "MODE must be tiers|soak for test-perf"; \
+			exit 1; \
+			;; \
+	esac
 
 test: ready
 	@echo "🧪 Running Integration Tests (Single Pass)..."
 	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -run "." -skip-setup
 
-ci: image test-all
+ci:
+	@set -e; \
+	profile="$(PROFILE)"; \
+	mode="$(MODE)"; \
+	budget="$(if $(BUDGET),$(BUDGET),0)"; \
+	case "$$budget" in \
+		1|true|yes|on) budget=1 ;; \
+		0|false|no|off|"") budget=0 ;; \
+		*) echo "BUDGET must be 0|1|true|false"; exit 1 ;; \
+	esac; \
+	if [ -n "$$profile" ] && [ -n "$$mode" ]; then \
+		echo "Set either PROFILE or MODE, not both"; \
+		exit 1; \
+	fi; \
+	if [ -n "$$profile" ]; then \
+		case "$$profile" in \
+			pr|nightly|release|weekly-soak) \
+				TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_PR_GROUPS="$(CI_PR_GROUPS)" CI_NIGHTLY_GROUPS="$(CI_NIGHTLY_GROUPS)" bash ./scripts/ci/run_profile.sh "$$profile"; \
+				;; \
+			*) \
+				echo "PROFILE must be pr|nightly|release|weekly-soak"; \
+				exit 1; \
+				;; \
+		esac; \
+	elif [ -n "$$mode" ]; then \
+		case "$$mode" in \
+			groups) \
+				if [ "$$budget" = "1" ]; then \
+					$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) \
+						-groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" \
+						$(if $(CI_LOG),-ci-log,) \
+						-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
+						-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_SLOW_THRESHOLD)) \
+						-slow-fail \
+						-group-thresholds "$(if $(GROUP_THRESHOLDS),$(GROUP_THRESHOLDS),$(CI_BUDGET_GROUP_THRESHOLDS))" \
+						-group-threshold-fail; \
+				else \
+					$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" $(if $(CI_LOG),-ci-log,); \
+				fi; \
+				;; \
+			tests) \
+				if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then \
+					echo "Set TESTS or RUN"; \
+					exit 1; \
+				fi; \
+				if [ "$$budget" = "1" ]; then \
+					$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) \
+						$(if $(PKGS),-pkgs "$(PKGS)",) \
+						$(if $(TESTS),-tests "$(TESTS)",) \
+						$(if $(RUN),-run "$(RUN)",) \
+						$(if $(TIMEOUT),-timeout $(TIMEOUT),) \
+						-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
+						-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_TEST_SLOW_THRESHOLD)) \
+						-slow-fail; \
+				else \
+					$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(PKGS),-pkgs "$(PKGS)",) $(if $(TESTS),-tests "$(TESTS)",) $(if $(RUN),-run "$(RUN)",) $(if $(TIMEOUT),-timeout $(TIMEOUT),); \
+				fi; \
+				;; \
+			*) \
+				echo "MODE must be groups|tests for ci"; \
+				exit 1; \
+				;; \
+		esac; \
+	else \
+		echo "Set PROFILE=<pr|nightly|release|weekly-soak> or MODE=<groups|tests>"; \
+		exit 1; \
+	fi
 
 ci-tool:
 	@$(CI_TOOL) $(CI_COMMON_FLAGS) $(ARGS)
-
-ci-groups:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) -groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" $(if $(CI_LOG),-ci-log,)
-
-ci-groups-budget:
-	@$(CI_TOOL) -mode groups $(CI_COMMON_FLAGS) \
-		-groups "$(if $(GROUPS),$(GROUPS),$(CI_DEFAULT_GROUPS))" \
-		$(if $(CI_LOG),-ci-log,) \
-		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
-		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_SLOW_THRESHOLD)) \
-		-slow-fail \
-		-group-thresholds "$(if $(GROUP_THRESHOLDS),$(GROUP_THRESHOLDS),$(CI_BUDGET_GROUP_THRESHOLDS))" \
-		-group-threshold-fail
-
-ci-tests:
-	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) $(if $(PKGS),-pkgs "$(PKGS)",) $(if $(TESTS),-tests "$(TESTS)",) $(if $(RUN),-run "$(RUN)",) $(if $(TIMEOUT),-timeout $(TIMEOUT),)
-
-ci-tests-budget:
-	@if [ -z "$(TESTS)" ] && [ -z "$(RUN)" ]; then echo "Set TESTS or RUN"; exit 1; fi
-	@$(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) \
-		$(if $(PKGS),-pkgs "$(PKGS)",) \
-		$(if $(TESTS),-tests "$(TESTS)",) \
-		$(if $(RUN),-run "$(RUN)",) \
-		$(if $(TIMEOUT),-timeout $(TIMEOUT),) \
-		-slow-top $(if $(SLOW_TOP),$(SLOW_TOP),$(CI_BUDGET_SLOW_TOP)) \
-		-slow-threshold $(if $(SLOW_THRESHOLD),$(SLOW_THRESHOLD),$(CI_BUDGET_TEST_SLOW_THRESHOLD)) \
-		-slow-fail
 
 ci-budget-suggest:
 	@node $(SCRIPTS_DIR)/recommend_budgets.js \
@@ -599,16 +665,5 @@ ci-budget-drift-check:
 ci-budget-selftest:
 	@node $(SCRIPTS_DIR)/recommend_budgets_selftest.js
 
-ci-budget-enforced: image ci-budget-drift-check ci-groups-budget
-
-ci-pr-gate:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_PR_GROUPS="$(CI_PR_GROUPS)" bash ./scripts/ci/run_profile.sh pr
-
-ci-nightly-full:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_NIGHTLY_GROUPS="$(CI_NIGHTLY_GROUPS)" bash ./scripts/ci/run_profile.sh nightly
-
-ci-weekly-soak:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/ci/run_profile.sh weekly_soak
-
-ci-release-gate:
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/ci/run_profile.sh release_gate
+ci-budget-enforced: image ci-budget-drift-check
+	@$(MAKE) ci MODE=groups BUDGET=1

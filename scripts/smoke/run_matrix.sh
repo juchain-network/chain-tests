@@ -175,7 +175,7 @@ run_case() {
   case_log="$case_dir/run.log"
   mkdir -p "$case_dir"
 
-  local repro="SMOKE_CASES=$label make test-smoke-matrix-$TOPOLOGY"
+  local repro="SMOKE_CASES=$label TOPOLOGY=$TOPOLOGY MATRIX=1 make test-smoke"
 
   set +e
   {
@@ -189,7 +189,7 @@ run_case() {
         SMOKE_SINGLE_GENESIS_MODE="$mode" \
         SMOKE_SINGLE_FORK_TARGET="$target" \
         SMOKE_SINGLE_OBSERVE_SECONDS="$SMOKE_SINGLE_OBSERVE_SECONDS" \
-        make -C "$PROJECT_ROOT" test-smoke-single
+        make -C "$PROJECT_ROOT" test-smoke TOPOLOGY=single MATRIX=0
       rc=$?
     else
       env \
@@ -197,7 +197,7 @@ run_case() {
         GENESIS_MODE="$mode" \
         FORK_TARGET="$target" \
         REPORT_DIR="$case_dir/reports" \
-        make -C "$PROJECT_ROOT" test-smoke
+        make -C "$PROJECT_ROOT" test-smoke TOPOLOGY=multi MATRIX=0
       rc=$?
     fi
 

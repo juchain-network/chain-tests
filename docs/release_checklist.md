@@ -7,16 +7,16 @@
 
 ## 2. Baseline validation
 - [ ] `make precheck`
-- [ ] `make ci-release-gate` (smoke + fork-all + posa)
+- [ ] `make ci PROFILE=release` (smoke + fork + posa)
 
 ## 3. Full regression and reports
-- [ ] `make test-regression-all`
+- [ ] `make test-regression SCOPE=full`
 - [ ] Verify `reports/regression_*/index.md` exists.
 - [ ] Verify per-run `report.md`, `summary.json`, `manifest.json` exist.
 - [ ] Confirm failed cases (if any) have reproducible command.
 
 ## 4. Performance/soak gate
-- [ ] `make test-perf-tiers`
+- [ ] `make test-perf MODE=tiers`
 - [ ] Review `verdict.json` thresholds:
   - [ ] success_rate >= 0.99
   - [ ] max_height_lag <= 8

@@ -31,20 +31,22 @@ This runbook covers local and CI operations for `chain-tests` regression, fork m
 ## 5. Regression commands
 - Smoke:
   - `make test-smoke`
+  - `TOPOLOGY=all MATRIX=1 make test-smoke`
 - Business groups:
-  - `make ci-groups`
+  - `make test-group GROUP=all`
+  - `make ci MODE=groups GROUPS=config,governance,staking`
 - Fork matrix (single + multi):
-  - `make test-fork-all`
+  - `TOPOLOGY=all make test-fork`
 - PoSA deep scenarios:
-  - `make test-posa-multi`
+  - `make test-scenario SCENARIO=posa`
 - Full orchestrated regression:
-  - `make test-regression-all`
+  - `make test-regression SCOPE=full`
 
 ## 6. Performance and soak
 - TPS profile:
-  - `make test-perf-tiers`
+  - `make test-perf MODE=tiers`
 - 24h soak:
-  - `make test-soak-24h`
+  - `make test-perf MODE=soak`
 
 Expected artifacts:
 - `summary.md`
@@ -56,13 +58,13 @@ Expected artifacts:
 
 ## 7. CI profiles
 - PR gate:
-  - `make ci-pr-gate`
+  - `make ci PROFILE=pr`
 - Nightly full:
-  - `make ci-nightly-full`
+  - `make ci PROFILE=nightly`
 - Weekly soak:
-  - `make ci-weekly-soak`
+  - `make ci PROFILE=weekly-soak`
 - Release gate:
-  - `make ci-release-gate`
+  - `make ci PROFILE=release`
 
 ## 8. Troubleshooting
 ### 8.1 Bytecode mismatch

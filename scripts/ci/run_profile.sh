@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/network/lib.sh"
 
 PROFILE="${1:-}"
-[[ -n "$PROFILE" ]] || { echo "usage: scripts/ci/run_profile.sh <pr|nightly|weekly_soak|release_gate>" >&2; exit 1; }
+[[ -n "$PROFILE" ]] || { echo "usage: scripts/ci/run_profile.sh <pr|nightly|weekly-soak|release>" >&2; exit 1; }
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 
@@ -25,9 +25,9 @@ run_pr() {
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.pr_gate.run_smoke" "true")"
 
   if is_true "$run_smoke"; then
-    make -C "$ROOT_DIR" test-smoke
+    make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   fi
-  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci-groups GROUPS="$groups"
+  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci MODE=groups GROUPS="$groups"
 }
 
 run_nightly() {
@@ -41,16 +41,16 @@ run_nightly() {
   run_reth_keystore="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_reth_keystore_smoke" "false")"
 
   if is_true "$run_smoke_matrix"; then
-    make -C "$ROOT_DIR" test-smoke-matrix-all
+    make -C "$ROOT_DIR" test-smoke TOPOLOGY=all MATRIX=1
   elif is_true "$run_smoke"; then
-    make -C "$ROOT_DIR" test-smoke
+    make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   fi
-  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci-groups GROUPS="$groups"
+  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci MODE=groups GROUPS="$groups"
   if is_true "$run_fork"; then
-    make -C "$ROOT_DIR" test-fork-all
+    make -C "$ROOT_DIR" test-fork TOPOLOGY=all
   fi
   if is_true "$run_posa"; then
-    make -C "$ROOT_DIR" test-posa-multi
+    make -C "$ROOT_DIR" test-scenario SCENARIO=posa
   fi
   if is_true "$run_reth_keystore"; then
     run_reth_keystore_smoke
@@ -64,7 +64,7 @@ run_weekly_soak() {
     echo "weekly_soak profile is disabled in config"
     exit 0
   fi
-  make -C "$ROOT_DIR" test-soak-24h
+  make -C "$ROOT_DIR" test-perf MODE=soak
 }
 
 run_release_gate() {
@@ -75,15 +75,15 @@ run_release_gate() {
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.release_gate.run_posa" "true")"
 
   if is_true "$run_smoke_matrix"; then
-    make -C "$ROOT_DIR" test-smoke-matrix-all
+    make -C "$ROOT_DIR" test-smoke TOPOLOGY=all MATRIX=1
   elif is_true "$run_smoke"; then
-    make -C "$ROOT_DIR" test-smoke
+    make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   fi
   if is_true "$run_fork"; then
-    make -C "$ROOT_DIR" test-fork-all
+    make -C "$ROOT_DIR" test-fork TOPOLOGY=all
   fi
   if is_true "$run_posa"; then
-    make -C "$ROOT_DIR" test-posa-multi
+    make -C "$ROOT_DIR" test-scenario SCENARIO=posa
   fi
 }
 
@@ -106,7 +106,7 @@ run_reth_keystore_smoke() {
 
   TEST_ENV_CONFIG="$CONFIG_FILE" RUNTIME_BACKEND=docker "$ROOT_DIR/scripts/network/dispatch.sh" down || true
   TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" reset
-  TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" test-smoke
+  TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" stop || true
   trap - RETURN
   rm -f "$tmp_cfg"
@@ -115,8 +115,8 @@ run_reth_keystore_smoke() {
 case "$PROFILE" in
   pr) run_pr ;;
   nightly) run_nightly ;;
-  weekly_soak) run_weekly_soak ;;
-  release_gate) run_release_gate ;;
+  weekly-soak|weekly_soak) run_weekly_soak ;;
+  release|release_gate) run_release_gate ;;
   *)
     echo "unsupported profile: $PROFILE" >&2
     exit 1

@@ -4,7 +4,7 @@ runtime:
   impl: geth
 
 paths:
-  chain_root: "../chain-1.16"
+  chain_root: "../chain"
   reth_root: "../../personal/rchain"
   chain_contract_root: "../chain-contract"
   reth_bytecode_file: "../../../my/rchain/crates/congress-core/src/bytecode.rs"

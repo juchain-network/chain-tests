@@ -47,7 +47,7 @@ jobs:
         run: |
           make precheck
           make reset
-          make ci-weekly-soak
+          make ci PROFILE=weekly-soak
 
       - name: Upload reports
         if: always()

@@ -161,14 +161,14 @@ tests:
   # 5) network.epoch
   epoch_overrides:
     groups:
-      # Applied to make test-<group> unless group-specific key exists.
+      # Applied to make test-group GROUP=<name> unless group-specific key exists.
       default: 30
       # Example: lower epoch only for groups that benefit in runtime.
       staking: 15
       punish: 18
       epoch: 20
     specials:
-      # Used by make test-punish second phase (TestG_DoubleSign).
+      # Used by make test-group GROUP=punish second phase (TestG_DoubleSign).
       punish_double_sign: 18
   # Parameter presets for different test speed/stability trade-offs.
   profiles:
@@ -197,7 +197,7 @@ tests:
       commission_update_cooldown: 30
       proposal_lasting_period: 300
 
-# Performance/soak defaults (used by make test-perf-* and scripts/perf/*).
+# Performance/soak defaults (used by make test-perf MODE=... and scripts/perf/*).
 perf:
   # Transactions per second tiers for quick perf profile.
   tps_tiers: [10, 30, 60]
@@ -212,7 +212,7 @@ perf:
     max_height_lag: 8
     rpc_latency_p95_ms_max: 500
 
-# CI defaults (consumed by make ci-pr-gate / ci-nightly-full / ci-weekly-soak).
+# CI defaults (consumed by make ci PROFILE=...).
 ci:
   pr_gate:
     groups: "config,governance,staking,punish,epoch"

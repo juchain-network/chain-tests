@@ -48,7 +48,7 @@ jobs:
         run: |
           make precheck
           make reset
-          make ci-nightly-full
+          make ci PROFILE=nightly
 
       - name: Upload reports
         if: always()

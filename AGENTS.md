@@ -118,9 +118,10 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
 - 初始化并启动：
   - `make reset`（等价 clean + init + run + ready）
 - 运行全部测试：
-  - `make test-all`
-  - `make ci-groups-budget`（按分组执行并启用默认耗时预算门禁）
-  - `make ci-tests-budget RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards`（按用例模式执行并启用慢用例预算门禁）
+  - `make test-regression SCOPE=core`
+  - `make test-regression SCOPE=full`
+  - `make ci MODE=groups BUDGET=1`（按分组执行并启用默认耗时预算门禁）
+  - `make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards`（按用例模式执行并启用慢用例预算门禁）
   - `make ci-budget-suggest`（基于历史 reports 自动推荐预算阈值）
   - `make ci-budget-suggest-json`（输出机器可读 JSON，便于流水线消费）
   - `make ci-budget-suggest-save`（把推荐阈值写入 `config/ci_budget.local.mk` 本地覆盖文件）
@@ -129,13 +130,13 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
   - `make ci-budget-enforced`（执行 image + 漂移检查 + 分组预算门禁测试）
   - `BUDGET_RECOMMEND_MIN_GROUP_SAMPLES` 可控制推荐覆盖门槛（样本不足时优先保留当前阈值）
 - 分组运行：
-  - `make test-config`
-  - `make test-governance`
-  - `make test-staking`
-  - `make test-delegation`
-  - `make test-punish`
-  - `make test-rewards`
-  - `make test-epoch`
+  - `make test-group GROUP=config`
+  - `make test-group GROUP=governance`
+  - `make test-group GROUP=staking`
+  - `make test-group GROUP=delegation`
+  - `make test-group GROUP=punish`
+  - `make test-group GROUP=rewards`
+  - `make test-group GROUP=epoch`
 - 查看日志：
   - `make logs`
 

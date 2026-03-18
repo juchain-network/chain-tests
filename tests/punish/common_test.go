@@ -24,7 +24,7 @@ import (
 
 var (
 	ctx             *testctx.CIContext
-	configPath      = flag.String("config", "../../config.yaml", "Path to test configuration file")
+	configPath      = flag.String("config", "../../data/test_config.yaml", "Path to generated test configuration file")
 	proposerCounter int
 )
 

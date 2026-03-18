@@ -129,7 +129,7 @@ func main() {
 	runPattern := flag.String("run", "", "go test -run pattern (used when -tests is empty)")
 	pkgs := flag.String("pkgs", "./tests/...", "go test package pattern/path")
 	timeout := flag.String("timeout", "30m", "go test timeout (tests mode only)")
-	configPath := flag.String("config", "", "Path to test_config.yaml (default: test-integration/data/test_config.yaml)")
+	configPath := flag.String("config", "", "Path to generated test_config.yaml (default: data/test_config.yaml)")
 	reportDir := flag.String("report-dir", "reports", "Report output directory")
 	gocache := flag.String("gocache", "/tmp/go-build", "GOCACHE path")
 	debug := flag.Bool("debug", false, "Enable DEBUG logs (sets JUCHAIN_TEST_DEBUG=1)")

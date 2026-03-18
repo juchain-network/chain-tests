@@ -26,7 +26,7 @@ type interopNode struct {
 
 var (
 	interopCfg        *config.Config
-	interopConfigPath = flag.String("config", "../../config.yaml", "Path to test configuration file")
+	interopConfigPath = flag.String("config", "../../data/test_config.yaml", "Path to generated test configuration file")
 	interopNodes      []interopNode
 )
 

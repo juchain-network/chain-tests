@@ -434,5 +434,5 @@ This section covers validation logic for all configuration parameters.
     *   **Expected**: No revert; basic invariants hold (lengths match, counts non-negative).
 
 **Notes**:
-*   Ensure `tools/ci/config.yaml` is correctly configured before execution.
+*   Ensure `config/test_env.yaml` is configured and `data/test_config.yaml` has been generated before execution.
 *   Tests execute in order; prerequisite failure halts subsequent tests.

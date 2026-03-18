@@ -16,7 +16,7 @@ import (
 var (
 	ctx        *testctx.CIContext
 	cfg        *config.Config
-	configPath = flag.String("config", "../../config.yaml", "Path to test configuration file")
+	configPath = flag.String("config", "../../data/test_config.yaml", "Path to generated test configuration file")
 )
 
 func TestMain(m *testing.M) {

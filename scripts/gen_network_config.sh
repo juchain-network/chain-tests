@@ -245,6 +245,7 @@ mkdir -p "$DATA_DIR"
 mkdir -p "${GOCACHE:-$ROOT_DIR/.gocache}" "${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
 export GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}"
 export GOMODCACHE="${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
+rm -f "$DATA_DIR/genkeys.go" "$DATA_DIR/genkeystore.go"
 
 echo "=== Generating Network Configuration ==="
 echo "Using epoch: $NETWORK_EPOCH"
@@ -260,107 +261,10 @@ elif [ "$GENESIS_MODE" = "smoke" ]; then
     echo "Using smoke static fork case: $FORK_TARGET"
 fi
 
-# 1. Generate Keys helper (using a temporary Go program)
-cat > "$DATA_DIR/genkeys.go" <<EOF
-package main
-
-import (
-	"crypto/ecdsa"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"os"
-	"github.com/ethereum/go-ethereum/crypto"
-)
-
-func main() {
-	var key *ecdsa.PrivateKey
-	if len(os.Args) > 1 && os.Args[1] != "" {
-		seed := os.Args[1]
-		sum := sha256.Sum256([]byte(seed))
-		for {
-			k, err := crypto.ToECDSA(sum[:])
-			if err == nil {
-				key = k
-				break
-			}
-			sum = sha256.Sum256(sum[:])
-		}
-	} else {
-		key, _ = crypto.GenerateKey()
-	}
-	addr := crypto.PubkeyToAddress(key.PublicKey)
-	priv := hex.EncodeToString(crypto.FromECDSA(key))
-	pub := hex.EncodeToString(crypto.FromECDSAPub(&key.PublicKey)[1:]) // Remove 04 prefix
-	fmt.Printf("%s,%s,%s\n", addr.Hex(), priv, pub)
-}
-EOF
-
-# Initialize go module for genkeys if explicitly requested
-if [ "${RUN_GO_MOD_TIDY:-}" = "1" ]; then
-    pushd "$ROOT_DIR" > /dev/null
-    go mod tidy
-    popd > /dev/null
-fi
-
-cat > "$DATA_DIR/genkeystore.go" <<EOF
-package main
-
-import (
-	"encoding/hex"
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"github.com/ethereum/go-ethereum/accounts/keystore"
-	"github.com/ethereum/go-ethereum/crypto"
-)
-
-func main() {
-	if len(os.Args) != 5 {
-		fmt.Fprintf(os.Stderr, "usage: genkeystore <hex-privkey> <password> <output-dir> <address-file>\\n")
-		os.Exit(2)
-	}
-
-	privHex := os.Args[1]
-	pass := os.Args[2]
-	outDir := os.Args[3]
-	addressFile := os.Args[4]
-
-	keyBytes, err := hex.DecodeString(privHex)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "decode privkey: %v\\n", err)
-		os.Exit(1)
-	}
-	priv, err := crypto.ToECDSA(keyBytes)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "to ecdsa: %v\\n", err)
-		os.Exit(1)
-	}
-
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "mkdir keystore dir: %v\\n", err)
-		os.Exit(1)
-	}
-	ks := keystore.NewKeyStore(outDir, keystore.StandardScryptN, keystore.StandardScryptP)
-	acc, err := ks.ImportECDSA(priv, pass)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "import ecdsa: %v\\n", err)
-		os.Exit(1)
-	}
-
-	if err := os.WriteFile(addressFile, []byte(acc.Address.Hex()+"\\n"), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "write address file: %v\\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(filepath.Clean(acc.URL.Path))
-}
-EOF
-
 generate_key() {
     local seed="$1"
     local output
-    if ! output=$(cd "$ROOT_DIR" && go run "$DATA_DIR/genkeys.go" "$seed"); then
+    if ! output=$(cd "$ROOT_DIR" && go run ./cmd/genkeys "$seed"); then
         echo "❌ genkeys failed for seed '${seed}'" >&2
         exit 1
     fi
@@ -373,7 +277,7 @@ generate_keystore() {
     local out_dir="$3"
     local address_file="$4"
     local output
-    if ! output=$(cd "$ROOT_DIR" && go run "$DATA_DIR/genkeystore.go" "$priv" "$password" "$out_dir" "$address_file"); then
+    if ! output=$(cd "$ROOT_DIR" && go run ./cmd/genkeystore "$priv" "$password" "$out_dir" "$address_file"); then
         echo "❌ genkeystore failed for out_dir '${out_dir}'" >&2
         exit 1
     fi

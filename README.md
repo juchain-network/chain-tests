@@ -127,13 +127,16 @@ Backend is controlled by `config/test_env.yaml`:
 - `runtime.backend: native` -> pm2 multi-process local nodes (faster local feedback)
 - `runtime.backend: docker` -> docker compose multi-node runtime (better CI consistency)
 
-Unified network commands:
+Public lifecycle commands:
 
 ```bash
-make net-up
-make net-down
-make net-reset
-make net-ready
+make init
+make run
+make ready
+make stop
+make reset
+make status
+make logs
 ```
 
 Lifecycle commands are bound to the latest initialized runtime session object; editing

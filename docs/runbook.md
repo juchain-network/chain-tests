@@ -79,7 +79,7 @@ Expected artifacts:
 ### 8.3 Node lag or stall
 - Check `reports/*/report.md` slow cases and group duration tables
 - Verify runtime logs and peer status
-- Restart network: `make net-reset`
+- Restart network session: `make stop && make run && make ready`
 
 ## 9. Rollback
 1. Pin previous geth binary and contract artifact versions.

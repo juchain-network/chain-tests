@@ -139,15 +139,14 @@ Epoch 建议通过 `config/test_env.yaml` 的 `network.epoch` 配置（如 `30` 
   - `make test-group GROUP=epoch`
 - 查看日志：
   - `make logs`
-
-建议将命令入口统一为：
-
-- `make net-up`
-- `make net-down`
-- `make net-reset`
-- `make net-ready`
-
-以上命令内部根据 `runtime.backend` 自动路由到 `native` 或 `docker` 实现，测试命令无需关心底层后端。
+- 网络生命周期统一使用高层命令：
+  - `make init`
+  - `make run`
+  - `make ready`
+  - `make stop`
+  - `make reset`
+  - `make status`
+  - `make logs`
 
 ---
 

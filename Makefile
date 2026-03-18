@@ -117,9 +117,6 @@ help:
 	@echo "  logs            - View runtime logs (NODE=... optional)"
 	@echo "  status          - Show runtime status"
 	@echo ""
-	@echo "Direct Backend-Routed Commands:"
-	@echo "  net-up net-down net-reset net-ready"
-	@echo ""
 	@echo "Primary Test Commands:"
 	@echo "  test            - Run the prepared network in a single go test pass (expects ready network)"
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
@@ -258,6 +255,7 @@ logs:
 status:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" status
 
+# Internal/raw backend dispatch escape hatches. Keep out of the public command surface.
 net-up:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" up
 

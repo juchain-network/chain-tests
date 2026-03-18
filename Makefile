@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
-        net-up net-down net-reset net-ready test \
+        net-up net-down net-reset net-ready sync-contract-clients test \
         test-group test-smoke test-fork test-scenario test-regression test-perf \
         ci ci-tool ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
@@ -10,6 +10,7 @@ PWD := $(shell pwd)
 SCRIPTS_DIR := scripts
 DATA_DIR := data
 NETWORK_DISPATCH := scripts/network/dispatch.sh
+CONTRACT_CLIENT_SYNC := scripts/sync_contract_clients.sh
 CI_TOOL := go run ./ci.go
 EPOCH_RESOLVER := $(SCRIPTS_DIR)/resolve_epoch.sh
 
@@ -19,6 +20,11 @@ RUNTIME_SESSION_FILE ?=
 
 # Test runner config consumed by ci.go
 TEST_CONFIG ?= data/test_config.yaml
+CONTRACT_CLIENT_SOURCE_ROOT ?=
+CONTRACT_CLIENT_SOURCE_OUT ?=
+CONTRACT_CLIENT_TARGET_DIR ?= contracts
+CONTRACT_CLIENT_BUILD ?= 0
+ABIGEN ?=
 GOCACHE ?=
 REPORT_DIR ?=
 DEBUG ?=
@@ -110,6 +116,7 @@ help:
 	@echo "  run             - Start network (auto backend: docker/native)"
 	@echo "  precheck        - Compile-only precheck for tests/tooling (cached by source fingerprint)"
 	@echo "  runtime-precheck - Validate contract/congress/geth consistency before startup"
+	@echo "  sync-contract-clients - Regenerate contracts/*.go from external contract artifacts"
 	@echo "  ready           - Wait for RPC readiness"
 	@echo "  stop            - Stop network"
 	@echo "  reset           - clean + init + run + ready"
@@ -138,6 +145,11 @@ help:
 	@echo "  TEST_ENV_CONFIG=$(TEST_ENV_CONFIG)"
 	@echo "  RUNTIME_SESSION_FILE=$(RUNTIME_SESSION_FILE) # optional override for runtime session snapshot path"
 	@echo "  TEST_CONFIG=$(TEST_CONFIG)"
+	@echo "  CONTRACT_CLIENT_SOURCE_ROOT=$(CONTRACT_CLIENT_SOURCE_ROOT) # optional external contract repo root"
+	@echo "  CONTRACT_CLIENT_SOURCE_OUT=$(CONTRACT_CLIENT_SOURCE_OUT)   # optional artifact dir override"
+	@echo "  CONTRACT_CLIENT_TARGET_DIR=$(CONTRACT_CLIENT_TARGET_DIR)   # generated bindings output dir"
+	@echo "  CONTRACT_CLIENT_BUILD=$(CONTRACT_CLIENT_BUILD)             # 1=run forge build before sync"
+	@echo "  ABIGEN=$(ABIGEN)                                           # optional abigen binary override"
 	@echo "  GROUP=$(GROUP)                   # test-group selector"
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
@@ -207,6 +219,15 @@ runtime-precheck:
 	@$(backend_cmd); \
 	echo "🔍 Running runtime consistency precheck..."; \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" bash $(SCRIPTS_DIR)/runtime_precheck.sh
+
+sync-contract-clients:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		CONTRACT_CLIENT_SOURCE_ROOT="$(CONTRACT_CLIENT_SOURCE_ROOT)" \
+		CONTRACT_CLIENT_SOURCE_OUT="$(CONTRACT_CLIENT_SOURCE_OUT)" \
+		CONTRACT_CLIENT_TARGET_DIR="$(CONTRACT_CLIENT_TARGET_DIR)" \
+		CONTRACT_CLIENT_BUILD="$(CONTRACT_CLIENT_BUILD)" \
+		ABIGEN="$(ABIGEN)" \
+		bash $(CONTRACT_CLIENT_SYNC)
 
 run:
 	@set -e; \

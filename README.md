@@ -45,6 +45,20 @@ cd ../chain-contract
 forge build
 ```
 
+Sync the generated Go bindings in this repository from the latest external artifacts:
+
+```bash
+make sync-contract-clients
+```
+
+Useful overrides:
+
+```bash
+make sync-contract-clients CONTRACT_CLIENT_SOURCE_ROOT=../chain-contracts
+make sync-contract-clients CONTRACT_CLIENT_BUILD=1
+make sync-contract-clients ABIGEN=../chain/build/bin/abigen
+```
+
 Build geth:
 
 ```bash

@@ -27,7 +27,7 @@ run_pr() {
   if is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   fi
-  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci MODE=groups GROUPS="$groups"
+  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci PROFILE= MODE=groups GROUPS="$groups"
 }
 
 run_nightly() {
@@ -45,7 +45,7 @@ run_nightly() {
   elif is_true "$run_smoke"; then
     make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   fi
-  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci MODE=groups GROUPS="$groups"
+  GOCACHE="${GOCACHE:-}" make -C "$ROOT_DIR" ci PROFILE= MODE=groups GROUPS="$groups"
   if is_true "$run_fork"; then
     make -C "$ROOT_DIR" test-fork TOPOLOGY=all
   fi

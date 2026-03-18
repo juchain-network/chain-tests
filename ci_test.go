@@ -162,6 +162,19 @@ func TestCollectGroupDurations(t *testing.T) {
 	}
 }
 
+func TestGroupMakeArgsUsesUnifiedEntryPoint(t *testing.T) {
+	args := groupMakeArgs("config")
+	if len(args) != 2 {
+		t.Fatalf("unexpected arg count: %#v", args)
+	}
+	if args[0] != "test-group" {
+		t.Fatalf("unexpected target: %#v", args)
+	}
+	if args[1] != "GROUP=config" {
+		t.Fatalf("unexpected group selector: %#v", args)
+	}
+}
+
 func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "report.md")
 	results := []stepResult{

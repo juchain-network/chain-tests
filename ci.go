@@ -270,7 +270,7 @@ func main() {
 
 			name := "group_" + group
 			cmd := "make"
-			args := []string{"test-" + group}
+			args := groupMakeArgs(group)
 			res := runStep(runDir, name, cmd, args, groupEnv, rootDir)
 			results = append(results, res)
 			if res.Status != "PASS" {
@@ -424,6 +424,10 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+func groupMakeArgs(group string) []string {
+	return []string{"test-group", "GROUP=" + strings.TrimSpace(group)}
 }
 
 func buildGroupSet(raw string) map[string]struct{} {

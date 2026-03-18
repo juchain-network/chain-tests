@@ -103,7 +103,7 @@ services:
     ports:
       - "18545:8545"
       - "18546:8546" # WS
-      - "30301:30303" # P2P
+      - "40401:30303" # P2P
     volumes:
       - ../data/node3:/data
       - ../data/genesis.json:/genesis.json

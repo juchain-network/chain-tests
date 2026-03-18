@@ -39,7 +39,7 @@ RPC_HOST="0.0.0.0"
 RPC_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 WS_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
 ENGINE_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_engine" "18550")"
-P2P_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_p2p" "30301")"
+P2P_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_p2p" "40401")"
 RPC_URL="http://127.0.0.1:${RPC_PORT}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 

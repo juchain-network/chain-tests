@@ -39,22 +39,22 @@ VALIDATOR_COUNT="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
 V1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_ws" "18546")"
 V1_ENGINE="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_engine" "18550")"
-V1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_p2p" "30301")"
+V1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_p2p" "40401")"
 
 V2_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_http" "18547")"
 V2_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_ws" "18548")"
 V2_ENGINE="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_engine" "18552")"
-V2_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_p2p" "30303")"
+V2_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator2_p2p" "40403")"
 
 V3_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_http" "18549")"
 V3_WS="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_ws" "18553")"
 V3_ENGINE="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_engine" "18554")"
-V3_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_p2p" "30305")"
+V3_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.validator3_p2p" "40405")"
 
 S1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.sync_http" "18551")"
 S1_WS="$(cfg_get "$CONFIG_FILE" "native.ports.sync_ws" "18555")"
 S1_ENGINE="$(cfg_get "$CONFIG_FILE" "native.ports.sync_engine" "18556")"
-S1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.sync_p2p" "30307")"
+S1_P2P="$(cfg_get "$CONFIG_FILE" "native.ports.sync_p2p" "40407")"
 
 normalize_impl() {
   local impl="${1:-}"

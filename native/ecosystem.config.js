@@ -250,7 +250,7 @@ const nodeDefs = [
     httpPort: process.env.VALIDATOR1_HTTP_PORT || '18545',
     wsPort: process.env.VALIDATOR1_WS_PORT || '18546',
     enginePort: process.env.VALIDATOR1_ENGINE_PORT || '18550',
-    p2pPort: process.env.VALIDATOR1_P2P_PORT || '30301',
+    p2pPort: process.env.VALIDATOR1_P2P_PORT || '40401',
     mine: true,
     address: process.env.VALIDATOR1_ADDRESS,
     passwordFile: process.env.VALIDATOR1_PASSWORD
@@ -265,7 +265,7 @@ const nodeDefs = [
     httpPort: process.env.VALIDATOR2_HTTP_PORT || '18547',
     wsPort: process.env.VALIDATOR2_WS_PORT || '18548',
     enginePort: process.env.VALIDATOR2_ENGINE_PORT || '18552',
-    p2pPort: process.env.VALIDATOR2_P2P_PORT || '30303',
+    p2pPort: process.env.VALIDATOR2_P2P_PORT || '40403',
     mine: true,
     address: process.env.VALIDATOR2_ADDRESS,
     passwordFile: process.env.VALIDATOR2_PASSWORD
@@ -280,7 +280,7 @@ const nodeDefs = [
     httpPort: process.env.VALIDATOR3_HTTP_PORT || '18549',
     wsPort: process.env.VALIDATOR3_WS_PORT || '18553',
     enginePort: process.env.VALIDATOR3_ENGINE_PORT || '18554',
-    p2pPort: process.env.VALIDATOR3_P2P_PORT || '30305',
+    p2pPort: process.env.VALIDATOR3_P2P_PORT || '40405',
     mine: true,
     address: process.env.VALIDATOR3_ADDRESS,
     passwordFile: process.env.VALIDATOR3_PASSWORD
@@ -295,7 +295,7 @@ const nodeDefs = [
     httpPort: process.env.SYNCNODE_HTTP_PORT || '18551',
     wsPort: process.env.SYNCNODE_WS_PORT || '18555',
     enginePort: process.env.SYNCNODE_ENGINE_PORT || '18556',
-    p2pPort: process.env.SYNCNODE_P2P_PORT || '30307',
+    p2pPort: process.env.SYNCNODE_P2P_PORT || '40407',
     mine: false,
     cache: '2048'
   }

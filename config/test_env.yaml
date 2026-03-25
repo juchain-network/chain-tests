@@ -45,6 +45,8 @@ network:
   chain_id: 666666
   data_dir: "./data"
   reports_dir: "./reports"
+  prefund_staking_initial_stake: true
+  min_validator_stake_wei: "1000000000000000000"
 
 docker:
   compose_file: "./docker/docker-compose.yml"

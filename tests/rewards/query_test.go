@@ -39,6 +39,8 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	if len(rewardEligible.Validators) != len(rewardEligible.TotalStakes) {
 		t.Fatalf("reward-eligible validators/stakes length mismatch: %d vs %d", len(rewardEligible.Validators), len(rewardEligible.TotalStakes))
 	}
+	minStake, err := ctx.Proposal.MinValidatorStake(nil)
+	utils.AssertNoError(t, err, "read minValidatorStake failed")
 	isLastEffective, err := ctx.Validators.IsLastEffectiveValidator(nil, valAddr)
 	utils.AssertNoError(t, err, "isLastEffectiveValidator failed")
 	if len(effectiveTop) == 1 {
@@ -52,6 +54,11 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	for _, addr := range rewardEligible.Validators {
 		if !containsAddress(active, addr) {
 			t.Fatalf("reward-eligible validator %s not found in active set", addr.Hex())
+		}
+		info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+		utils.AssertNoError(t, err, "read reward-eligible validator info failed")
+		if info.SelfStake == nil || info.SelfStake.Cmp(minStake) < 0 {
+			t.Fatalf("reward-eligible validator %s self stake below minValidatorStake: self=%v min=%s", addr.Hex(), info.SelfStake, minStake.String())
 		}
 	}
 	_, _ = ctx.Validators.IsValidatorActive(nil, valAddr)

@@ -23,11 +23,6 @@ func TestG_DoubleSign(t *testing.T) {
 	}
 	ensureMinActiveValidators(t, 3, 2)
 
-	var (
-		p21ValidatorKey  *ecdsa.PrivateKey
-		p21ValidatorAddr common.Address
-	)
-
 	// [P-07] Submit Double Sign Evidence
 	t.Run("P-07_DoubleSignEvidence", func(t *testing.T) {
 		submitEvidenceFor := func(valKey *ecdsa.PrivateKey, valAddr common.Address) error {
@@ -289,8 +284,6 @@ func TestG_DoubleSign(t *testing.T) {
 			utils.AssertNoError(t, err, "create val failed")
 		}
 		robustResignValidator(t, key)
-		p21ValidatorKey = key
-		p21ValidatorAddr = addr
 
 		var lastErr error
 		for attempt := 0; attempt < 8; attempt++ {
@@ -375,25 +368,13 @@ func TestG_DoubleSign(t *testing.T) {
 
 	// [P-22] Exit + Double Sign
 	t.Run("P-22_ExitThenDoubleSign", func(t *testing.T) {
-		key := p21ValidatorKey
-		addr := p21ValidatorAddr
-		var err error
-		if key == nil || addr == (common.Address{}) {
-			key, addr, err = createAndRegisterValidator(t, "P-22 ExitDS")
-			utils.AssertNoError(t, err, "create val failed")
-			robustResignValidator(t, key)
-		} else {
-			// Keep fallback behavior deterministic if state changed unexpectedly.
-			info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
-			if errInfo != nil || !info.IsRegistered {
-				key, addr, err = createAndRegisterValidator(t, "P-22 ExitDS")
-				utils.AssertNoError(t, err, "create val failed")
-				robustResignValidator(t, key)
-			} else {
-				t.Logf("Reusing validator from P-21 for P-22: %s", addr.Hex())
-				robustResignValidator(t, key)
-			}
-		}
+		// Keep this scenario isolated from P-21. After the min-stake alignment,
+		// reusing a validator that was already slashed in P-21 can leave it below
+		// minValidatorStake, which makes exitValidator inapplicable and turns this
+		// case into a stake-floor test instead of an exit-after-clean-resign test.
+		key, addr, err := createAndRegisterValidator(t, "P-22 ExitDS")
+		utils.AssertNoError(t, err, "create val failed")
+		robustResignValidator(t, key)
 
 		opts, err := ctx.GetTransactor(key)
 		utils.AssertNoError(t, err, "transactor failed")

@@ -36,6 +36,20 @@ func TestD_StakingManagement(t *testing.T) {
 			strings.Contains(msg, "nonce too low")
 	}
 
+	t.Run("S-00_BootstrapValidatorsMeetMinStake", func(t *testing.T) {
+		minStake := testkit.RequireMinValidatorStake(t, func() (*big.Int, error) {
+			return ctx.Proposal.MinValidatorStake(nil)
+		})
+		for _, validator := range ctx.Config.Validators {
+			addr := common.HexToAddress(validator.Address)
+			info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+			utils.AssertNoError(t, err, "read bootstrap validator info failed")
+			if info.SelfStake == nil || info.SelfStake.Cmp(minStake) < 0 {
+				t.Fatalf("bootstrap validator %s self stake below minValidatorStake: self=%v min=%s", addr.Hex(), info.SelfStake, minStake.String())
+			}
+		}
+	})
+
 	// [S-01] Add Stake
 	t.Run("S-01_AddStake", func(t *testing.T) {
 		ctx.WaitIfEpochBlock()
@@ -354,7 +368,7 @@ func TestD_StakingManagement(t *testing.T) {
 
 	t.Run("S-11_DoubleRegister", func(t *testing.T) {
 		opts, _ := ctx.GetTransactor(valKey)
-		opts.Value = utils.ToWei(100000)
+		opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 		_, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
 			t.Fatal("Expected error 'Already registered'")
@@ -478,8 +492,15 @@ func TestD_StakingManagement(t *testing.T) {
 	t.Run("S-06_StakeBelowMin", func(t *testing.T) {
 		key, addr, _ := ctx.CreateAndFundAccount(utils.ToWei(100))
 		passProposalFor(t, addr, "S-06 Small")
+		minStake := testkit.RequireMinValidatorStake(t, func() (*big.Int, error) {
+			return ctx.Proposal.MinValidatorStake(nil)
+		})
+		belowMin := new(big.Int).Sub(minStake, big.NewInt(1))
+		if belowMin.Sign() <= 0 {
+			t.Skipf("min validator stake too small for below-min check: %s", minStake.String())
+		}
 		opts, _ := ctx.GetTransactor(key)
-		opts.Value = utils.ToWei(0.5) // Below 1 ETH min
+		opts.Value = belowMin
 		_, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
 			t.Fatal("Expected failure")
@@ -573,7 +594,7 @@ func TestD_StakingManagement(t *testing.T) {
 			return !pass, nil
 		})
 		opts, _ := ctx.GetTransactor(key)
-		opts.Value = utils.ToWei(100000)
+		opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 		_, err = ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
 			t.Fatal("Should fail without reproposal")

@@ -403,7 +403,7 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 			time.Sleep(retrySleep())
 			continue
 		}
-		opts.Value = utils.ToWei(100000)
+		opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 
 		txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {

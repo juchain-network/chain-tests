@@ -17,6 +17,7 @@ import (
 
 	"juchain.org/chain/tools/ci/internal/config"
 	testctx "juchain.org/chain/tools/ci/internal/context"
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 var (
@@ -388,7 +389,7 @@ func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address
 			time.Sleep(retrySleep())
 			continue
 		}
-		regOpts.Value = big.NewInt(1000000000000000000)
+		regOpts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 		tx, err := ctx.Staking.RegisterValidator(regOpts, big.NewInt(1000))
 		if err == nil {
 			if err := ctx.WaitMined(tx.Hash()); err == nil {

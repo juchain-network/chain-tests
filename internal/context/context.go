@@ -756,16 +756,9 @@ func (c *CIContext) WaitMined(txHash common.Hash) error {
 	loggedPool := false
 	lastKeepAlive := time.Time{}
 	lastHeadProbe := time.Time{}
-	lastRecovery := time.Time{}
 	lastPoke := time.Time{}
 	lastHeight := uint64(0)
 	stuckSince := time.Time{}
-	epoch := c.configuredEpoch()
-	if c.Validators != nil {
-		if epochVal, err := c.Validators.Epoch(nil); err == nil && epochVal != nil && epochVal.Sign() > 0 {
-			epoch = epochVal.Uint64()
-		}
-	}
 
 	for {
 		select {
@@ -793,13 +786,6 @@ func (c *CIContext) WaitMined(txHash common.Hash) error {
 						if lastPoke.IsZero() || time.Since(lastPoke) > 2*time.Second {
 							c.sendDummyTx()
 							lastPoke = time.Now()
-						}
-						// On epoch blocks, also try explicit validator-set transition.
-						if epoch > 0 && height > 0 && height%epoch == 0 {
-							if lastRecovery.IsZero() || time.Since(lastRecovery) > 2*time.Second {
-								_ = c.triggerEpochTransition(height, epoch)
-								lastRecovery = time.Now()
-							}
 						}
 					}
 				}
@@ -1033,6 +1019,68 @@ func (c *CIContext) proposalCooldownBlocks() uint64 {
 	return 1
 }
 
+func (c *CIContext) epochValue() uint64 {
+	if c == nil {
+		return 0
+	}
+	if c.Validators != nil {
+		if epochVal, err := c.Validators.Epoch(nil); err == nil && epochVal != nil && epochVal.Sign() > 0 {
+			return epochVal.Uint64()
+		}
+	}
+	if c.Proposal != nil {
+		if epochVal, err := c.Proposal.Epoch(nil); err == nil && epochVal != nil && epochVal.Sign() > 0 {
+			return epochVal.Uint64()
+		}
+	}
+	return c.configuredEpoch()
+}
+
+func sameAddressSlice(a []common.Address, b []common.Address) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	counts := make(map[common.Address]int, len(a))
+	for _, addr := range a {
+		counts[addr]++
+	}
+	for _, addr := range b {
+		if counts[addr] == 0 {
+			return false
+		}
+		counts[addr]--
+	}
+	for _, remaining := range counts {
+		if remaining != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *CIContext) waitUntilHeight(target uint64, timeout time.Duration) (uint64, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		height, err := c.Clients[0].BlockNumber(context.Background())
+		if err == nil {
+			if height >= target {
+				return height, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return 0, fmt.Errorf("wait for block %d failed: %w", target, err)
+			}
+			return 0, fmt.Errorf("timeout waiting for block %d", target)
+		}
+		c.sendDummyTx()
+		time.Sleep(c.BlockPollInterval())
+	}
+}
+
 func (c *CIContext) waitBlocks(n uint64) {
 	if n == 0 {
 		return
@@ -1057,60 +1105,98 @@ func (c *CIContext) waitBlocks(n uint64) {
 	}
 }
 
+func (c *CIContext) WaitForNextEpochTransition() (uint64, error) {
+	if c == nil || len(c.Clients) == 0 {
+		return 0, fmt.Errorf("context not initialized")
+	}
+
+	epoch := c.epochValue()
+	if epoch == 0 {
+		return 0, fmt.Errorf("epoch not available")
+	}
+
+	current, err := c.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("read current block failed: %w", err)
+	}
+
+	nextEpochBlock := ((current / epoch) + 1) * epoch
+	if current%epoch == 0 {
+		nextEpochBlock = current + epoch
+	}
+	if nextEpochBlock == 0 {
+		return 0, fmt.Errorf("invalid next epoch block computed from current=%d epoch=%d", current, epoch)
+	}
+
+	if _, err := c.waitUntilHeight(nextEpochBlock, 60*time.Second); err != nil {
+		return 0, err
+	}
+	c.WaitIfEpochBlock()
+
+	deadline := time.Now().Add(20 * time.Second)
+	var lastErr error
+	for {
+		height, err := c.Clients[0].BlockNumber(context.Background())
+		if err != nil {
+			lastErr = fmt.Errorf("read stable height failed: %w", err)
+		} else {
+			highest, err := c.Validators.GetHighestValidators(nil)
+			if err != nil {
+				lastErr = fmt.Errorf("get highest validators failed: %w", err)
+			} else {
+				expectedSet, err := c.Staking.GetTopValidators(nil, highest)
+				if err != nil {
+					lastErr = fmt.Errorf("get top validators failed: %w", err)
+				} else if len(expectedSet) == 0 {
+					lastErr = fmt.Errorf("top validator set is empty after epoch block %d", nextEpochBlock)
+				} else {
+					activeSet, err := c.Validators.GetActiveValidators(nil)
+					if err != nil {
+						lastErr = fmt.Errorf("get active validators failed: %w", err)
+					} else if sameAddressSlice(activeSet, expectedSet) {
+						c.SyncNonces()
+						return height, nil
+					} else {
+						lastErr = fmt.Errorf(
+							"active validator set not settled after epoch block %d (height=%d expected=%d active=%d)",
+							nextEpochBlock,
+							height,
+							len(expectedSet),
+							len(activeSet),
+						)
+					}
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			if lastErr == nil {
+				lastErr = fmt.Errorf("epoch transition did not settle after block %d", nextEpochBlock)
+			}
+			return 0, lastErr
+		}
+
+		c.sendDummyTx()
+		time.Sleep(c.BlockPollInterval())
+	}
+}
+
 func (c *CIContext) triggerEpochTransition(height uint64, epoch uint64) bool {
-	if epoch == 0 || height == 0 || height%epoch != 0 {
-		return false
-	}
-	highest, err := c.Validators.GetHighestValidators(nil)
-	if err != nil || highest == nil {
-		return false
-	}
-	top, err := c.Staking.GetTopValidators(nil, highest)
-	if err != nil || len(top) == 0 {
-		return false
-	}
-
-	target := new(big.Int).SetUint64(height)
-	for _, vk := range c.GenesisValidators {
-		addr := crypto.PubkeyToAddress(vk.PublicKey)
-		active, errActive := c.Validators.IsValidatorActive(nil, addr)
-		if errActive == nil && !active {
-			continue
-		}
-		info, errInfo := c.Staking.GetValidatorInfo(nil, addr)
-		if errInfo == nil && info.IsJailed {
-			continue
-		}
-
-		c.RefreshNonce(addr)
-		opts, err := c.GetTransactorNoEpochWait(vk, false)
-		if err != nil {
-			continue
-		}
-		opts.GasLimit = 1000000
-
-		tx, err := c.Validators.UpdateActiveValidatorSet(opts, top, target)
-		if err != nil {
-			continue
-		}
-		if debugEnabled() {
-			fmt.Printf("DEBUG: Triggered UpdateActiveValidatorSet at %d by %s (tx=%s)\n", height, addr.Hex(), tx.Hash().Hex())
-		}
-		return true
-	}
-	return false
+	// External system transactions are rejected by the chain. Keep this helper
+	// as a no-op so older recovery sites do not try to submit forbidden calls.
+	_ = height
+	_ = epoch
+	return true
 }
 
 func (c *CIContext) WaitIfEpochBlock() {
-	epochVal, err := c.Validators.Epoch(nil)
-	epoch := c.configuredEpoch()
-	if err == nil && epochVal.Uint64() > 0 {
-		epoch = epochVal.Uint64()
+	epoch := c.epochValue()
+	if epoch == 0 {
+		return
 	}
 
 	lastPoke := time.Now()
 	lastLog := time.Time{}
-	lastRecovery := time.Time{}
 	lastHeight := uint64(0)
 	stuckSince := time.Time{}
 	for {
@@ -1128,14 +1214,8 @@ func (c *CIContext) WaitIfEpochBlock() {
 		if mod != 0 && mod != epoch-1 {
 			return
 		}
-		if mod == 0 {
-			if stuckSince.IsZero() {
-				stuckSince = time.Now()
-			}
-			if time.Since(stuckSince) > 3*time.Second && time.Since(lastRecovery) > 3*time.Second {
-				_ = c.triggerEpochTransition(height, epoch)
-				lastRecovery = time.Now()
-			}
+		if stuckSince.IsZero() {
+			stuckSince = time.Now()
 		}
 		if time.Since(lastLog) > 5*time.Second {
 			fmt.Printf("⏳ At epoch block %d, waiting for next block...\n", height)

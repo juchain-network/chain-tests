@@ -474,7 +474,7 @@ func TestB_Governance(t *testing.T) {
 	t.Run("G-07_FrontRunning", func(t *testing.T) {
 		fakeValKey, _, _ := ctx.CreateAndFundAccount(utils.ToWei(100005))
 		regOpts, _ := ctx.GetTransactor(fakeValKey)
-		regOpts.Value = utils.ToWei(100000)
+		regOpts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 		_, err := ctx.Staking.RegisterValidator(regOpts, big.NewInt(1000))
 		if err == nil {
 			t.Fatal("Expected register failure (no proposal)")
@@ -543,7 +543,7 @@ func TestB_Governance(t *testing.T) {
 		v1Registered := false
 		for attempt := 0; attempt < 2; attempt++ {
 			v1Opts, _ := ctx.GetTransactor(v1Key)
-			v1Opts.Value = utils.ToWei(100000)
+			v1Opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 			ctx.WaitIfEpochBlock()
 			tx1, err = ctx.Staking.RegisterValidator(v1Opts, big.NewInt(1000))
 			if err != nil {
@@ -579,7 +579,7 @@ func TestB_Governance(t *testing.T) {
 		createAndPassProposal(v2Addr, true, "G-16 V2")
 
 		v2Opts, _ := ctx.GetTransactor(v2Key)
-		v2Opts.Value = utils.ToWei(100000)
+		v2Opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 		tx2, err := ctx.Staking.RegisterValidator(v2Opts, big.NewInt(1000))
 		if err != nil {
 			ctx.RefreshNonce(crypto.PubkeyToAddress(v2Key.PublicKey))

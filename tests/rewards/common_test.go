@@ -398,7 +398,7 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 			time.Sleep(retrySleep())
 			continue
 		}
-		opts.Value = utils.ToWei(100000)
+		opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 
 		txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
@@ -615,6 +615,68 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 	}
 }
 
+func robustResignValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	var lastErr error
+	for retry := 0; retry < 10; retry++ {
+		opts, errG := ctx.GetTransactor(key)
+		if errG != nil {
+			lastErr = errG
+			time.Sleep(retrySleep())
+			continue
+		}
+
+		tx, err := ctx.Staking.ResignValidator(opts)
+		if err == nil {
+			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
+				return
+			} else {
+				lastErr = errW
+				msg := strings.ToLower(errW.Error())
+				if strings.Contains(msg, "epoch block forbidden") || strings.Contains(msg, "validator not registered") {
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(msg, "too many removals") {
+					waitForNextEpochBlock(t)
+					continue
+				}
+				if strings.Contains(msg, "already resigned") {
+					return
+				}
+				continue
+			}
+		}
+
+		lastErr = err
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "epoch block forbidden") {
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "too many removals") {
+			waitForNextEpochBlock(t)
+			continue
+		}
+		if strings.Contains(msg, "validator not registered") {
+			if addr != (common.Address{}) {
+				if exists, errV := ctx.Validators.IsValidatorExist(nil, addr); errV == nil && !exists {
+					waitBlocks(t, 1)
+					continue
+				}
+			}
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(msg, "already resigned") {
+			return
+		}
+		break
+	}
+	if t != nil && lastErr != nil {
+		t.Fatalf("resign failed: %v", lastErr)
+	}
+}
+
 func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
@@ -651,6 +713,25 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 }
 
 func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	waitUntilJailPeriodComplete := func() {
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		if errInfo != nil || info.JailUntilBlock == nil || info.JailUntilBlock.Sign() <= 0 {
+			waitBlocks(t, 1)
+			return
+		}
+		current, errHeight := ctx.Clients[0].BlockNumber(context.Background())
+		if errHeight != nil {
+			waitBlocks(t, 1)
+			return
+		}
+		targetHeight := info.JailUntilBlock.Uint64() + 1
+		if targetHeight > current {
+			waitBlocks(t, int(targetHeight-current))
+			return
+		}
+		waitBlocks(t, 1)
+	}
+
 	for retry := 0; retry < 10; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
@@ -666,6 +747,10 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 					waitForNextEpochBlock(t)
 					continue
 				}
+				if strings.Contains(errW.Error(), "Jail period not complete") {
+					waitUntilJailPeriodComplete()
+					continue
+				}
 				if t != nil {
 					t.Fatalf("unjail tx failed: %v", errW)
 				}
@@ -674,6 +759,23 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 		}
 		if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
 			waitForNextEpochBlock(t)
+			continue
+		}
+		if strings.Contains(err.Error(), "Jail period not complete") {
+			waitUntilJailPeriodComplete()
+			continue
+		}
+		if strings.Contains(err.Error(), "Must pass reproposal first") {
+			if t != nil {
+				t.Logf("unjail requires reproposal, retrying after passProposalFor: %s", addr.Hex())
+			}
+			if errP := passProposalFor(t, addr, "Unjail Reproposal"); errP != nil {
+				if t != nil {
+					t.Fatalf("reproposal before unjail failed: %v", errP)
+				}
+				return
+			}
+			waitNextBlock()
 			continue
 		}
 		if t != nil {

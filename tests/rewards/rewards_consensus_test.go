@@ -259,6 +259,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 			t.Fatalf("target validator was not jailed in time: %v", err)
 		}
 
+		eligibleAfterAddrs := append([]common.Address(nil), eligibleBefore.Validators...)
 		err = testkit.WaitUntil(testkit.WaitUntilOptions{
 			MaxAttempts: 8,
 			Interval:    retrySleep(),
@@ -270,6 +271,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 			if err != nil {
 				return false, err
 			}
+			eligibleAfterAddrs = append(eligibleAfterAddrs[:0], eligibleNow.Validators...)
 			return !containsAddress(eligibleNow.Validators, targetAddr), nil
 		})
 		if err != nil {
@@ -279,15 +281,44 @@ func TestI_ConsensusRewards(t *testing.T) {
 		activeNow, _ := ctx.Validators.GetActiveValidators(nil)
 		if containsAddress(activeNow, targetAddr) {
 			t.Logf("validator %s still in active set but excluded from reward-eligible set as expected", targetAddr.Hex())
+		} else {
+			t.Logf("validator %s removed from both active set and reward-eligible set", targetAddr.Hex())
 		}
 
-		_, minerAddr := minerKeyOrSkip(t)
-		beforeInfo, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
-		before := new(big.Int).Set(beforeInfo.AccumulatedRewards)
-		if !waitForRewardIncrease(t, minerAddr, before, rewardIncreaseProbeBlocks(40)) {
-			infoAfter, _ := ctx.Staking.GetValidatorInfo(nil, minerAddr)
-			t.Fatalf("rewards did not progress after jailed exclusion: before=%s after=%s", before.String(), infoAfter.AccumulatedRewards.String())
+		if len(eligibleAfterAddrs) == 0 {
+			t.Fatalf(
+				"reward-eligible set became empty after jailed exclusion: target=%s active=%s eligible=%s",
+				targetAddr.Hex(),
+				formatAddressList(activeNow),
+				formatAddressList(eligibleAfterAddrs),
+			)
 		}
+
+		beforeSnapshots, err := snapshotAccumulatedRewards(eligibleAfterAddrs)
+		if err != nil {
+			t.Fatalf("failed to snapshot reward-eligible validator rewards: %v", err)
+		}
+
+		probeBlocks := rewardObservationProbeBlocks(len(eligibleAfterAddrs))
+		rewardedAddr, afterSnapshots, ok := waitForAnyRewardIncrease(t, eligibleAfterAddrs, beforeSnapshots, probeBlocks)
+		if !ok {
+			t.Fatalf(
+				"rewards did not progress after jailed exclusion within %d blocks: target=%s active=%s eligible=%s latestCoinbase=%s before={%s} after={%s}",
+				probeBlocks,
+				targetAddr.Hex(),
+				formatAddressList(activeNow),
+				formatAddressList(eligibleAfterAddrs),
+				currentCoinbaseHex(),
+				formatRewardSnapshots(eligibleAfterAddrs, beforeSnapshots),
+				formatRewardSnapshots(eligibleAfterAddrs, afterSnapshots),
+			)
+		}
+		t.Logf(
+			"rewards continued after jailed exclusion via %s: %s -> %s",
+			rewardedAddr.Hex(),
+			rewardValueFor(beforeSnapshots, rewardedAddr).String(),
+			rewardValueFor(afterSnapshots, rewardedAddr).String(),
+		)
 	})
 
 	t.Run("QueryRewards", func(t *testing.T) {
@@ -446,6 +477,159 @@ func signHeaderCliqueForRewards(h *types.Header, key *ecdsa.PrivateKey) ([]byte,
 	}
 	copy(h.Extra[len(h.Extra)-65:], sig)
 	return rlp.EncodeToBytes(h)
+}
+
+func rewardObservationProbeBlocks(validatorCount int) int {
+	base := 24
+	if validatorCount > 0 {
+		dynamic := validatorCount * 8
+		if dynamic > base {
+			base = dynamic
+		}
+	}
+	return rewardIncreaseProbeBlocks(base)
+}
+
+func snapshotAccumulatedRewards(addrs []common.Address) (map[common.Address]*big.Int, error) {
+	snapshots := make(map[common.Address]*big.Int, len(addrs))
+	for _, addr := range addrs {
+		info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+		if err != nil {
+			return nil, fmt.Errorf("read validator %s rewards failed: %w", addr.Hex(), err)
+		}
+		rewards := big.NewInt(0)
+		if info.AccumulatedRewards != nil {
+			rewards = new(big.Int).Set(info.AccumulatedRewards)
+		}
+		snapshots[addr] = rewards
+	}
+	return snapshots, nil
+}
+
+func rewardValueFor(snapshots map[common.Address]*big.Int, addr common.Address) *big.Int {
+	if snapshots == nil {
+		return big.NewInt(0)
+	}
+	if value, ok := snapshots[addr]; ok && value != nil {
+		return value
+	}
+	return big.NewInt(0)
+}
+
+func findRewardIncrease(addrs []common.Address, before map[common.Address]*big.Int, after map[common.Address]*big.Int) (common.Address, bool) {
+	for _, addr := range addrs {
+		if rewardValueFor(after, addr).Cmp(rewardValueFor(before, addr)) > 0 {
+			return addr, true
+		}
+	}
+	return common.Address{}, false
+}
+
+func waitForAnyRewardIncrease(t *testing.T, validatorAddrs []common.Address, before map[common.Address]*big.Int, maxBlocks int) (common.Address, map[common.Address]*big.Int, bool) {
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if len(validatorAddrs) == 0 {
+		t.Fatalf("validatorAddrs is empty")
+	}
+
+	current, err := snapshotAccumulatedRewards(validatorAddrs)
+	if err != nil {
+		t.Fatalf("failed to snapshot current rewards: %v", err)
+	}
+	if addr, ok := findRewardIncrease(validatorAddrs, before, current); ok {
+		return addr, current, true
+	}
+
+	nextStart, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("failed to read block number: %v", err)
+	}
+	for i := 0; i < maxBlocks; i++ {
+		waitBlocks(t, 1)
+
+		current, err = snapshotAccumulatedRewards(validatorAddrs)
+		if err != nil {
+			t.Fatalf("failed to snapshot rewards after waiting: %v", err)
+		}
+		if addr, ok := findRewardIncrease(validatorAddrs, before, current); ok {
+			return addr, current, true
+		}
+
+		if !debugEnabled() && i%5 != 0 {
+			continue
+		}
+
+		end, err := ctx.Clients[0].BlockNumber(context.Background())
+		if err != nil {
+			continue
+		}
+		if end < nextStart {
+			nextStart = end
+		}
+		iter, err := ctx.Staking.FilterRewardsDistributed(&bind.FilterOpts{
+			Start: nextStart,
+			End:   &end,
+		}, validatorAddrs)
+		if err == nil {
+			for iter.Next() {
+				if ev := iter.Event; ev != nil {
+					t.Logf("RewardsDistributed: validator=%s amount=%s block=%d", ev.Validator.Hex(), ev.Amount.String(), ev.Raw.BlockNumber)
+				}
+			}
+			if err := iter.Error(); err != nil {
+				t.Logf("reward log filter error: %v", err)
+			}
+			_ = iter.Close()
+		} else {
+			t.Logf("reward log filter failed: %v", err)
+		}
+		if end >= nextStart {
+			nextStart = end + 1
+		}
+	}
+
+	current, err = snapshotAccumulatedRewards(validatorAddrs)
+	if err != nil {
+		t.Fatalf("failed to snapshot final rewards: %v", err)
+	}
+	return common.Address{}, current, false
+}
+
+func formatAddressList(addrs []common.Address) string {
+	if len(addrs) == 0 {
+		return "<empty>"
+	}
+	parts := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		parts = append(parts, addr.Hex())
+	}
+	return strings.Join(parts, ",")
+}
+
+func formatRewardSnapshots(addrs []common.Address, snapshots map[common.Address]*big.Int) string {
+	if len(addrs) == 0 {
+		return "<empty>"
+	}
+	parts := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		parts = append(parts, fmt.Sprintf("%s=%s", addr.Hex(), rewardValueFor(snapshots, addr).String()))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func currentCoinbaseHex() string {
+	if ctx == nil || len(ctx.Clients) == 0 {
+		return "<unavailable>"
+	}
+	header, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return fmt.Sprintf("<unavailable:%v>", err)
+	}
+	if header == nil {
+		return "<unavailable:nil-header>"
+	}
+	return header.Coinbase.Hex()
 }
 
 func waitForRewardIncrease(t *testing.T, minerAddr common.Address, before *big.Int, maxBlocks int) bool {

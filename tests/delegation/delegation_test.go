@@ -368,7 +368,7 @@ func TestE_Delegation(t *testing.T) {
 				ctx.RefreshNonce(userAddr)
 				continue
 			}
-			opts.Value = utils.ToWei(100000)
+			opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 			opts.GasLimit = 5000000
 
 			txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(500))

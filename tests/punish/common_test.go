@@ -425,7 +425,7 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 			time.Sleep(retrySleep())
 			continue
 		}
-		opts.Value = utils.ToWei(100000)
+		opts.Value = testkit.RequireMinValidatorStake(t, func() (*big.Int, error) { return ctx.Proposal.MinValidatorStake(nil) })
 
 		txReg, err := ctx.Staking.RegisterValidator(opts, big.NewInt(1000))
 		if err == nil {
@@ -629,7 +629,73 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 	}
 }
 
+func validatorExitReadyHeight(addr common.Address) (uint64, error) {
+	if ctx == nil || len(ctx.Clients) == 0 {
+		return 0, fmt.Errorf("context not initialized")
+	}
+
+	current, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("read current block failed: %w", err)
+	}
+
+	targetHeight := current
+	info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+	if err != nil {
+		return 0, fmt.Errorf("read validator info failed: %w", err)
+	}
+	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+		if ready := info.JailUntilBlock.Uint64() + 1; ready > targetHeight {
+			targetHeight = ready
+		}
+	}
+
+	lastActive, err := ctx.Staking.LastActiveBlock(nil, addr)
+	if err != nil {
+		return 0, fmt.Errorf("read last active block failed: %w", err)
+	}
+	if lastActive != nil && lastActive.Sign() > 0 {
+		doubleSignWindow, err := ctx.Proposal.DoubleSignWindow(nil)
+		if err != nil {
+			return 0, fmt.Errorf("read double sign window failed: %w", err)
+		}
+		if doubleSignWindow != nil && doubleSignWindow.Sign() > 0 {
+			if ready := lastActive.Uint64() + doubleSignWindow.Uint64() + 1; ready > targetHeight {
+				targetHeight = ready
+			}
+		}
+	}
+
+	return targetHeight, nil
+}
+
+func waitUntilValidatorExitReady(t *testing.T, addr common.Address) {
+	t.Helper()
+
+	targetHeight, err := validatorExitReadyHeight(addr)
+	if err != nil {
+		t.Fatalf("compute validator exit-ready height failed: %v", err)
+	}
+
+	current, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read current block failed before exit wait: %v", err)
+	}
+	if targetHeight > current {
+		waitBlocks(t, int(targetHeight-current))
+	}
+
+	height, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read current block failed after exit wait: %v", err)
+	}
+	if height < targetHeight {
+		t.Fatalf("exit-ready wait incomplete: target=%d current=%d", targetHeight, height)
+	}
+}
+
 func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
+	addr := crypto.PubkeyToAddress(key.PublicKey)
 	handleExitTransient := func(msg string) bool {
 		lower := strings.ToLower(msg)
 		switch {
@@ -641,6 +707,9 @@ func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
 			return true
 		case strings.Contains(msg, "Too many removals"):
 			waitForNextEpochBlock(t)
+			return true
+		case strings.Contains(lower, "doublesignwindow"):
+			waitUntilValidatorExitReady(t, addr)
 			return true
 		case strings.Contains(lower, "revert"):
 			// Generic reverted receipts often hide transient epoch/proposer races.

@@ -80,4 +80,4 @@ CFG_ABS="$ROOT_DIR/data/test_config.yaml"
   go test ./tests/smoke -v -run '^TestS_SmokeSingleNodeLiveness$' -count=1 -timeout "$SMOKE_TIMEOUT" -config "$CFG_ABS"
 )
 
-echo "[smoke-single] PASS impl=$SMOKE_IMPL genesis_mode=$SMOKE_GENESIS_MODE"
+echo "[smoke-single] 🟢 PASS impl=$SMOKE_IMPL genesis_mode=$SMOKE_GENESIS_MODE"

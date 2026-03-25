@@ -7,7 +7,39 @@ if [ ! -d "/data/geth/chaindata" ]; then
     juchain --datadir /data init /genesis.json 
 fi
 
+UPGRADE_OVERRIDE_POSA_TIME="${UPGRADE_OVERRIDE_POSA_TIME:-}"
+UPGRADE_OVERRIDE_POSA_VALIDATORS="${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}"
+UPGRADE_OVERRIDE_POSA_SIGNERS="${UPGRADE_OVERRIDE_POSA_SIGNERS:-}"
+
+build_upgrade_override_args() {
+    local -n out_ref=$1
+    out_ref=()
+
+    if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]; then
+        case "$UPGRADE_OVERRIDE_POSA_TIME" in
+            ''|*[!0-9]*)
+                echo "❌ UPGRADE_OVERRIDE_POSA_TIME must be an unsigned integer timestamp"
+                exit 1
+                ;;
+        esac
+        out_ref+=("--override.posaTime=$UPGRADE_OVERRIDE_POSA_TIME")
+    fi
+
+    if { [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" ] && [ -z "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]; } || \
+       { [ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS" ] && [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]; }; then
+        echo "❌ UPGRADE_OVERRIDE_POSA_VALIDATORS and UPGRADE_OVERRIDE_POSA_SIGNERS must be provided together"
+        exit 1
+    fi
+
+    if [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" ]; then
+        out_ref+=("--override.posaValidators=$UPGRADE_OVERRIDE_POSA_VALIDATORS")
+        out_ref+=("--override.posaSigners=$UPGRADE_OVERRIDE_POSA_SIGNERS")
+    fi
+}
+
 SYNC_NODE="${SYNC_NODE:-false}"
+OVERRIDE_ARGS=()
+build_upgrade_override_args OVERRIDE_ARGS
 
 if [ "$SYNC_NODE" = "true" ]; then
     echo "Starting SYNC NODE (Non-Validator)..."
@@ -28,7 +60,8 @@ if [ "$SYNC_NODE" = "true" ]; then
         --ws.api "eth,net,web3,debug,admin,personal,miner,txpool" \
         --ws.origins "*" \
         --ws.addr "0.0.0.0" \
-        --nat extip:$(hostname -i) &
+        --nat extip:$(hostname -i) \
+        "${OVERRIDE_ARGS[@]}" &
         
     NODE_PID=$!
     
@@ -38,16 +71,23 @@ else
 
     # Import validator key if present
     echo "123456" > /tmp/password
-    if [ -f "/data/validator.key" ] && [ ! "$(ls -A /data/keystore 2>/dev/null)" ]; then
+    SIGNER_KEY_FILE="/data/signer.key"
+    [ -f "$SIGNER_KEY_FILE" ] || SIGNER_KEY_FILE="/data/validator.key"
+
+    if [ -f "$SIGNER_KEY_FILE" ] && [ ! "$(ls -A /data/keystore 2>/dev/null)" ]; then
         echo "Importing validator key..."
         echo "123456" > /tmp/password
-        juchain account import --datadir /data --password /tmp/password /data/validator.key
+        juchain account import --datadir /data --password /tmp/password "$SIGNER_KEY_FILE"
     fi
 
     # Get address
-    VAL_ADDR=${VAL_ADDR:-$(juchain account list --datadir /data | head -n 1 | cut -d '{' -f 2 | cut -d '}' -f 1)}
+    if [ -f "/data/signer.addr" ]; then
+        VAL_ADDR=${VAL_ADDR:-$(tr -d '[:space:]' < /data/signer.addr)}
+    else
+        VAL_ADDR=${VAL_ADDR:-$(juchain account list --datadir /data | head -n 1 | cut -d '{' -f 2 | cut -d '}' -f 1)}
+    fi
 
-    echo "Starting VALIDATOR node: $VAL_ADDR"
+    echo "Starting VALIDATOR node: $VAL_ADDR overrideValidators=${UPGRADE_OVERRIDE_POSA_VALIDATORS:-<none>} overrideSigners=${UPGRADE_OVERRIDE_POSA_SIGNERS:-<none>}"
 
     MIN_PEERS="${MIN_PEERS:-3}"
     MINER_START_DELAY="${MINER_START_DELAY:-0}"
@@ -73,7 +113,8 @@ else
         --unlock "$VAL_ADDR" \
         --password /tmp/password \
         --allow-insecure-unlock \
-        --nat extip:$(hostname -i) &
+        --nat extip:$(hostname -i) \
+        "${OVERRIDE_ARGS[@]}" &
 
     NODE_PID=$!
 fi

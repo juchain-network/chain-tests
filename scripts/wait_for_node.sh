@@ -24,7 +24,7 @@ while [ $RETRIES -gt 0 ]; do
             fi
             if [ -n "$MIN_BLOCK" ] && [ "$CUR" -ge "$MIN_BLOCK" ]; then
                 echo ""
-                echo "✅ Node is up (block >= $MIN_BLOCK)"
+                echo "ℹ️  Node is up (block >= $MIN_BLOCK)"
                 exit 0
             fi
             if [ -n "$PREV_BLOCK" ] && [ "$CUR" -gt "$PREV_BLOCK" ]; then
@@ -33,12 +33,12 @@ while [ $RETRIES -gt 0 ]; do
             PREV_BLOCK=$CUR
             if [ "$INCREMENTS_REQUIRED" -le 0 ]; then
                 echo ""
-                echo "✅ Node is up (RPC responding)"
+                echo "ℹ️  Node is up (RPC responding)"
                 exit 0
             fi
             if [ "$INCREMENTS" -ge "$INCREMENTS_REQUIRED" ]; then
                 echo ""
-                echo "✅ Node is up and producing blocks!"
+                echo "ℹ️  Node is up and producing blocks!"
                 exit 0
             fi
         fi

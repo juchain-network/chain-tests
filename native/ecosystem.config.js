@@ -33,6 +33,9 @@ const validatorAuthMode = (process.env.VALIDATOR_AUTH_MODE || 'auto').toLowerCas
 const defaultImpl = (process.env.DEFAULT_RUNTIME_IMPL || 'geth').toLowerCase();
 const genesisFile = process.env.GENESIS_FILE;
 const rethTrustedOnly = (process.env.RETH_TRUSTED_ONLY || 'true').toLowerCase();
+const upgradeOverridePosaTime = (process.env.UPGRADE_OVERRIDE_POSA_TIME || '').trim();
+const upgradeOverridePosaValidators = (process.env.UPGRADE_OVERRIDE_POSA_VALIDATORS || '').trim();
+const upgradeOverridePosaSigners = (process.env.UPGRADE_OVERRIDE_POSA_SIGNERS || '').trim();
 
 function nameOf(suffix) {
   return `${ns}-${suffix}`;
@@ -86,6 +89,24 @@ function resolveNodeImpl(index) {
   return raw;
 }
 
+function migrationOverrideArgs() {
+  if ((upgradeOverridePosaValidators && !upgradeOverridePosaSigners) || (!upgradeOverridePosaValidators && upgradeOverridePosaSigners)) {
+    throw new Error('UPGRADE_OVERRIDE_POSA_VALIDATORS and UPGRADE_OVERRIDE_POSA_SIGNERS must be provided together');
+  }
+
+  const args = [];
+  if (upgradeOverridePosaTime) {
+    args.push(`--override.posaTime=${upgradeOverridePosaTime}`);
+  }
+  if (upgradeOverridePosaValidators) {
+    args.push(`--override.posaValidators=${upgradeOverridePosaValidators}`);
+  }
+  if (upgradeOverridePosaSigners) {
+    args.push(`--override.posaSigners=${upgradeOverridePosaSigners}`);
+  }
+  return args;
+}
+
 function gethCommonArgs(opts) {
   const args = [
     '--networkid', networkId,
@@ -122,6 +143,7 @@ function gethCommonArgs(opts) {
   if (historyState) {
     args.push('--history.state=' + historyState);
   }
+  args.push(...migrationOverrideArgs());
 
   if (opts.mine) {
     args.push(
@@ -187,6 +209,9 @@ function resolveRethValidatorAuthArgs(index) {
 function rethCommonArgs(opts) {
   if (!genesisFile) {
     throw new Error('GENESIS_FILE is required for reth runtime');
+  }
+  if (upgradeOverridePosaTime || upgradeOverridePosaValidators || upgradeOverridePosaSigners) {
+    throw new Error('upgrade override currently supports geth runtime only');
   }
   const args = [
     'node',

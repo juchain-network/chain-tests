@@ -167,6 +167,11 @@ type CIContext struct {
 	ProposalAddr      common.Address
 	FunderKey         *ecdsa.PrivateKey
 	GenesisValidators []*ecdsa.PrivateKey
+	GenesisSigners    []*ecdsa.PrivateKey
+
+	validatorKeysByAddress map[common.Address]*ecdsa.PrivateKey
+	signerKeysByAddress    map[common.Address]*ecdsa.PrivateKey
+	validatorRPCByAddress  map[common.Address]string
 
 	mu            sync.Mutex
 	nonces        map[common.Address]uint64
@@ -219,26 +224,50 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 	}
 
 	var genesisValidators []*ecdsa.PrivateKey
+	var genesisSigners []*ecdsa.PrivateKey
+	validatorKeysByAddress := make(map[common.Address]*ecdsa.PrivateKey)
+	signerKeysByAddress := make(map[common.Address]*ecdsa.PrivateKey)
+	validatorRPCByAddress := make(map[common.Address]string)
 	for i, v := range cfg.Validators {
 		key, err := crypto.HexToECDSA(v.PrivateKey)
 		if err != nil {
 			return nil, fmt.Errorf("invalid validator private key at index %d: %w", i, err)
 		}
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		validatorKeysByAddress[addr] = key
 		genesisValidators = append(genesisValidators, key)
+
+		signerKey := key
+		if strings.TrimSpace(v.SignerPrivateKey) != "" {
+			signerKey, err = crypto.HexToECDSA(v.SignerPrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("invalid signer private key at index %d: %w", i, err)
+			}
+		}
+		genesisSigners = append(genesisSigners, signerKey)
+		signerAddr := crypto.PubkeyToAddress(signerKey.PublicKey)
+		signerKeysByAddress[signerAddr] = signerKey
+		if i < len(cfg.ValidatorRPCs) && strings.TrimSpace(cfg.ValidatorRPCs[i]) != "" {
+			validatorRPCByAddress[addr] = strings.TrimSpace(cfg.ValidatorRPCs[i])
+		}
 	}
 
 	c := &CIContext{
-		Config:            cfg,
-		Clients:           clients,
-		ChainID:           chainID,
-		Validators:        val,
-		Punish:            pun,
-		Proposal:          prop,
-		Staking:           stk,
-		ProposalAddr:      ProposalAddr,
-		FunderKey:         funderKey,
-		GenesisValidators: genesisValidators,
-		nonces:            make(map[common.Address]uint64),
+		Config:                 cfg,
+		Clients:                clients,
+		ChainID:                chainID,
+		Validators:             val,
+		Punish:                 pun,
+		Proposal:               prop,
+		Staking:                stk,
+		ProposalAddr:           ProposalAddr,
+		FunderKey:              funderKey,
+		GenesisValidators:      genesisValidators,
+		GenesisSigners:         genesisSigners,
+		validatorKeysByAddress: validatorKeysByAddress,
+		signerKeysByAddress:    signerKeysByAddress,
+		validatorRPCByAddress:  validatorRPCByAddress,
+		nonces:                 make(map[common.Address]uint64),
 	}
 
 	// Prime the network with a dummy tx and use a lightweight readiness probe.
@@ -412,7 +441,7 @@ func (c *CIContext) autoInitialize() error {
 	// Robust check: if MinValidatorStake is default (100k JU), we need setup.
 	minStake, err := c.Proposal.MinValidatorStake(nil)
 	if err == nil && minStake.Cmp(big.NewInt(1000000000000000000)) == 0 {
-		fmt.Printf("✅ System already configured (MinValidatorStake = 1 JU).\n")
+		fmt.Printf("ℹ️  System already configured (MinValidatorStake = 1 JU).\n")
 	}
 
 	// Check if we need to call initialize() at all
@@ -420,8 +449,15 @@ func (c *CIContext) autoInitialize() error {
 	if !initialized {
 		fmt.Printf("🔧 System unconfigured, performing auto-initialization...\n")
 		var valAddrs []common.Address
+		var signerAddrs []common.Address
 		for _, vk := range c.GenesisValidators {
 			valAddrs = append(valAddrs, crypto.PubkeyToAddress(vk.PublicKey))
+		}
+		for _, sk := range c.GenesisSigners {
+			signerAddrs = append(signerAddrs, crypto.PubkeyToAddress(sk.PublicKey))
+		}
+		if len(signerAddrs) != len(valAddrs) {
+			return fmt.Errorf("genesis signer count mismatch: validators=%d signers=%d", len(valAddrs), len(signerAddrs))
 		}
 
 		// 1. Initialize Proposal
@@ -446,7 +482,7 @@ func (c *CIContext) autoInitialize() error {
 		opts, _ = c.GetTransactor(pickValidator(2))
 		opts.GasLimit = 1000000
 		fmt.Printf("  > Initializing Validators...\n")
-		tx, err = c.Validators.Initialize(opts, valAddrs, ProposalAddr, PunishAddr, StakingAddr)
+		tx, err = c.Validators.Initialize(opts, valAddrs, signerAddrs, ProposalAddr, PunishAddr, StakingAddr)
 		if err == nil {
 			c.WaitMined(tx.Hash())
 		}
@@ -511,11 +547,143 @@ func (c *CIContext) autoInitialize() error {
 		}
 	}
 
-	fmt.Printf("✅ Auto-initialization complete.\n")
+	fmt.Printf("ℹ️  Auto-initialization complete.\n")
 	if len(unresolved) > 0 {
 		return fmt.Errorf("auto-initialize unresolved configs: %s", strings.Join(unresolved, "; "))
 	}
 	return nil
+}
+
+func (c *CIContext) ValidatorKeyByAddress(addr common.Address) *ecdsa.PrivateKey {
+	if c == nil {
+		return nil
+	}
+	if key := c.validatorKeysByAddress[addr]; key != nil {
+		return key
+	}
+	return c.signerKeysByAddress[addr]
+}
+
+func (c *CIContext) SignerKeyByAddress(addr common.Address) *ecdsa.PrivateKey {
+	if c == nil {
+		return nil
+	}
+	if key := c.signerKeysByAddress[addr]; key != nil {
+		return key
+	}
+	return c.validatorKeysByAddress[addr]
+}
+
+func (c *CIContext) SignerAddressByValidator(addr common.Address) (common.Address, error) {
+	if c == nil {
+		return common.Address{}, fmt.Errorf("nil context")
+	}
+	if c.Validators != nil {
+		signer, err := c.Validators.GetValidatorSigner(nil, addr)
+		if err == nil && signer != (common.Address{}) {
+			return signer, nil
+		}
+	}
+	for _, validator := range c.Config.Validators {
+		if !strings.EqualFold(validator.Address, addr.Hex()) {
+			continue
+		}
+		if strings.TrimSpace(validator.SignerAddress) != "" {
+			return common.HexToAddress(validator.SignerAddress), nil
+		}
+		break
+	}
+	return addr, nil
+}
+
+func (c *CIContext) ValidatorAddressBySigner(addr common.Address) (common.Address, error) {
+	if c == nil {
+		return common.Address{}, fmt.Errorf("nil context")
+	}
+	if c.Validators != nil {
+		validator, err := c.Validators.GetValidatorBySigner(nil, addr)
+		if err == nil && validator != (common.Address{}) {
+			return validator, nil
+		}
+		historical, err := c.Validators.GetValidatorBySignerHistory(nil, addr)
+		if err == nil && historical != (common.Address{}) {
+			return historical, nil
+		}
+	}
+	for _, validator := range c.Config.Validators {
+		if strings.EqualFold(validator.Address, addr.Hex()) {
+			return common.HexToAddress(validator.Address), nil
+		}
+		if strings.TrimSpace(validator.SignerAddress) != "" && strings.EqualFold(validator.SignerAddress, addr.Hex()) {
+			return common.HexToAddress(validator.Address), nil
+		}
+	}
+	return addr, nil
+}
+
+func (c *CIContext) FeeAddressByValidator(addr common.Address) (common.Address, error) {
+	if c == nil {
+		return common.Address{}, fmt.Errorf("nil context")
+	}
+	if c.Validators != nil {
+		feeAddr, _, _, _, _, err := c.Validators.GetValidatorInfo(nil, addr)
+		if err == nil && feeAddr != (common.Address{}) {
+			return feeAddr, nil
+		}
+	}
+	for _, validator := range c.Config.Validators {
+		if strings.EqualFold(validator.Address, addr.Hex()) {
+			if strings.TrimSpace(validator.FeeAddress) != "" {
+				return common.HexToAddress(validator.FeeAddress), nil
+			}
+			break
+		}
+	}
+	return addr, nil
+}
+
+func (c *CIContext) CurrentCoinbaseSigner() (common.Address, error) {
+	if c == nil || len(c.Clients) == 0 {
+		return common.Address{}, fmt.Errorf("no rpc clients configured")
+	}
+	header, err := c.Clients[0].HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return header.Coinbase, nil
+}
+
+func (c *CIContext) CurrentCoinbaseValidator() (common.Address, error) {
+	signer, err := c.CurrentCoinbaseSigner()
+	if err != nil {
+		return common.Address{}, err
+	}
+	return c.ValidatorAddressBySigner(signer)
+}
+
+func (c *CIContext) TopRuntimeSigners() ([]common.Address, error) {
+	if c == nil || c.Validators == nil {
+		return nil, fmt.Errorf("validators contract not initialized")
+	}
+	return c.Validators.GetTopSigners(nil)
+}
+
+func (c *CIContext) TopTransitionSigners() ([]common.Address, error) {
+	if c == nil || c.Validators == nil {
+		return nil, fmt.Errorf("validators contract not initialized")
+	}
+	signers, err := c.Validators.GetTopSignersForEpochTransition(nil)
+	if err == nil {
+		return signers, nil
+	}
+	return c.Validators.GetTopSigners(nil)
+}
+
+func (c *CIContext) ValidatorRPCByValidator(addr common.Address) string {
+	if c == nil {
+		return ""
+	}
+	return c.validatorRPCByAddress[addr]
 }
 
 func (c *CIContext) GetTransactor(key *ecdsa.PrivateKey) (*bind.TransactOpts, error) {
@@ -1079,6 +1247,10 @@ func (c *CIContext) waitUntilHeight(target uint64, timeout time.Duration) (uint6
 		c.sendDummyTx()
 		time.Sleep(c.BlockPollInterval())
 	}
+}
+
+func (c *CIContext) WaitUntilHeight(target uint64, timeout time.Duration) (uint64, error) {
+	return c.waitUntilHeight(target, timeout)
 }
 
 func (c *CIContext) waitBlocks(n uint64) {

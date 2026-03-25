@@ -491,7 +491,7 @@ func TestB_Governance(t *testing.T) {
 		opts, _ := ctx.GetTransactor(proposerKey)
 		valAddr := crypto.PubkeyToAddress(proposerKey.PublicKey)
 		longMoniker := strings.Repeat("a", 71)
-		_, err := ctx.Validators.CreateOrEditValidator(opts, valAddr, longMoniker, "", "", "", "")
+		_, err := ctx.Validators.CreateOrEditValidator0(opts, valAddr, longMoniker, "", "", "", "")
 		if err == nil {
 			t.Fatal("Should fail with moniker > 70 bytes")
 		}

@@ -571,22 +571,22 @@ func TestI_ValidatorExtras(t *testing.T) {
 		}
 
 		// identity > 3000
-		_, err := ctx.Validators.CreateOrEditValidator(opts, valAddr, "ok", tooLong(3001), "", "", "")
+		_, err := ctx.Validators.CreateOrEditValidator0(opts, valAddr, "ok", tooLong(3001), "", "", "")
 		if err == nil {
 			t.Fatal("identity > 3000 should fail")
 		}
 		// website > 140
-		_, err = ctx.Validators.CreateOrEditValidator(opts, valAddr, "ok", "", tooLong(141), "", "")
+		_, err = ctx.Validators.CreateOrEditValidator0(opts, valAddr, "ok", "", tooLong(141), "", "")
 		if err == nil {
 			t.Fatal("website > 140 should fail")
 		}
 		// email > 140
-		_, err = ctx.Validators.CreateOrEditValidator(opts, valAddr, "ok", "", "", tooLong(141), "")
+		_, err = ctx.Validators.CreateOrEditValidator0(opts, valAddr, "ok", "", "", tooLong(141), "")
 		if err == nil {
 			t.Fatal("email > 140 should fail")
 		}
 		// details > 280
-		_, err = ctx.Validators.CreateOrEditValidator(opts, valAddr, "ok", "", "", "", tooLong(281))
+		_, err = ctx.Validators.CreateOrEditValidator0(opts, valAddr, "ok", "", "", "", tooLong(281))
 		if err == nil {
 			t.Fatal("details > 280 should fail")
 		}
@@ -610,7 +610,7 @@ func TestI_ValidatorExtras(t *testing.T) {
 
 		opts, err := ctx.GetTransactor(key)
 		utils.AssertNoError(t, err, "failed to get validator transactor")
-		tx, err := ctx.Validators.CreateOrEditValidator(opts, feeAddr, "V-03 Updated", "identity", "site", "email", "details")
+		tx, err := ctx.Validators.CreateOrEditValidator0(opts, feeAddr, "V-03 Updated", "identity", "site", "email", "details")
 		utils.AssertNoError(t, err, "edit after pass=false should succeed")
 		utils.AssertNoError(t, ctx.WaitMined(tx.Hash()), "edit after pass=false tx failed")
 		waitForValidatorFeeAddr(t, addr, feeAddr)
@@ -630,7 +630,7 @@ func TestI_ValidatorExtras(t *testing.T) {
 
 		// Ensure fee address is a known key (validator address).
 		opts, _ := ctx.GetTransactor(valKey)
-		if tx, err := ctx.Validators.CreateOrEditValidator(opts, valAddr, "Genesis", "", "", "", ""); err == nil {
+		if tx, err := ctx.Validators.CreateOrEditValidator0(opts, valAddr, "Genesis", "", "", "", ""); err == nil {
 			ctx.WaitMined(tx.Hash())
 		} else {
 			t.Fatalf("failed to set fee address for zero-profit check: %v", err)
@@ -763,7 +763,7 @@ func TestI_ValidatorExtras(t *testing.T) {
 			currentFeeAddr, _, _, _, _, infoErr := ctx.Validators.GetValidatorInfo(nil, valAddr)
 			if infoErr == nil && currentFeeAddr != originalFeeAddr {
 				if opts, err := ctx.GetTransactor(valKey); err == nil {
-					if tx, err := ctx.Validators.CreateOrEditValidator(opts, originalFeeAddr, moniker, identity, website, email, details); err == nil {
+					if tx, err := ctx.Validators.CreateOrEditValidator0(opts, originalFeeAddr, moniker, identity, website, email, details); err == nil {
 						_ = ctx.WaitMined(tx.Hash())
 					} else {
 						t.Logf("cleanup: restore fee address failed: %v", err)
@@ -840,7 +840,7 @@ func TestI_ValidatorExtras(t *testing.T) {
 
 		opts, err := ctx.GetTransactor(valKey)
 		utils.AssertNoError(t, err, "failed to get validator transactor for fee rotation")
-		tx, err := ctx.Validators.CreateOrEditValidator(opts, feeAddr, moniker, identity, website, email, details)
+		tx, err := ctx.Validators.CreateOrEditValidator0(opts, feeAddr, moniker, identity, website, email, details)
 		utils.AssertNoError(t, err, "fee rotation after resign/pass=false should succeed")
 		utils.AssertNoError(t, ctx.WaitMined(tx.Hash()), "fee rotation tx failed")
 		waitForValidatorFeeAddr(t, valAddr, feeAddr)
@@ -861,7 +861,7 @@ func TestI_ValidatorExtras(t *testing.T) {
 
 		opts, err = ctx.GetTransactor(valKey)
 		utils.AssertNoError(t, err, "failed to get validator transactor for fee restore")
-		restoreTx, err := ctx.Validators.CreateOrEditValidator(opts, originalFeeAddr, moniker, identity, website, email, details)
+		restoreTx, err := ctx.Validators.CreateOrEditValidator0(opts, originalFeeAddr, moniker, identity, website, email, details)
 		utils.AssertNoError(t, err, "restore original fee address failed")
 		utils.AssertNoError(t, ctx.WaitMined(restoreTx.Hash()), "restore original fee address tx failed")
 		waitForValidatorFeeAddr(t, valAddr, originalFeeAddr)

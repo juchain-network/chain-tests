@@ -53,7 +53,7 @@ func TestZ_UpgradesAndInitGuards(t *testing.T) {
 
 		// Validators.initialize
 		checkReinit("Validators", func() (*types.Transaction, error) {
-			return ctx.Validators.Initialize(opts, []common.Address{dummy}, dummy, dummy, dummy)
+			return ctx.Validators.Initialize(opts, []common.Address{dummy}, []common.Address{dummy}, dummy, dummy, dummy)
 		})
 
 		// Punish.initialize
@@ -113,9 +113,18 @@ func pickInTurnValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address, *ethc
 			waitNextBlock()
 			continue
 		}
-		next := header.Number.Uint64() + 1
-		idx := next % uint64(len(validators))
-		addr := validators[idx]
+		currentValidator, err := ctx.ValidatorAddressBySigner(header.Coinbase)
+		if err != nil {
+			t.Fatalf("map coinbase signer to validator failed: %v", err)
+		}
+		start := 0
+		for i, v := range validators {
+			if v == currentValidator {
+				start = (i + 1) % len(validators)
+				break
+			}
+		}
+		addr := validators[start]
 		key := keyForAddress(addr)
 		if key == nil {
 			known := make([]string, 0, len(ctx.GenesisValidators))
@@ -128,8 +137,8 @@ func pickInTurnValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address, *ethc
 		if client != nil {
 			h2, err := client.HeaderByNumber(context.Background(), nil)
 			if err == nil && h2 != nil {
-				next2 := h2.Number.Uint64() + 1
-				if validators[next2%uint64(len(validators))] == addr {
+				currentValidator2, err := ctx.ValidatorAddressBySigner(h2.Coinbase)
+				if err == nil && currentValidator2 == addr {
 					return key, addr, client
 				}
 			}
@@ -147,10 +156,20 @@ func clientForValidator(t *testing.T, addr common.Address) *ethclient.Client {
 	if len(ctx.Clients) > 1 {
 		for _, c := range ctx.Clients {
 			var cb common.Address
-			if err := c.Client().Call(&cb, "eth_coinbase"); err == nil && cb == addr {
-				return c
+			if err := c.Client().Call(&cb, "eth_coinbase"); err == nil {
+				validator, mapErr := ctx.ValidatorAddressBySigner(cb)
+				if mapErr == nil && validator == addr {
+					return c
+				}
 			}
 		}
+	}
+	if rpcURL := ctx.ValidatorRPCByValidator(addr); rpcURL != "" {
+		client, err := ethclient.Dial(rpcURL)
+		if err != nil {
+			t.Fatalf("failed to dial validator RPC %s: %v", rpcURL, err)
+		}
+		return client
 	}
 	if len(ctx.Config.Validators) == 0 {
 		t.Fatalf("no validator config available; update test_config.yaml validators list")

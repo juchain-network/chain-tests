@@ -48,7 +48,7 @@ is_compatible_elf() {
 echo "=== Preparing docker runtime binary (target linux/${TARGET_GOARCH}) ==="
 
 if is_compatible_elf "$DOCKER_BIN"; then
-    echo "✅ Reusing existing docker binary: $DOCKER_BIN"
+    echo "ℹ️  Reusing existing docker binary: $DOCKER_BIN"
     exit 0
 fi
 
@@ -66,7 +66,7 @@ fi
 
 for bin in "${CANDIDATES[@]}"; do
     if is_compatible_elf "$bin"; then
-        echo "✅ Using prebuilt docker binary: $bin"
+        echo "ℹ️  Using prebuilt docker binary: $bin"
         cp "$bin" "$DOCKER_BIN"
         chmod +x "$DOCKER_BIN"
         exit 0

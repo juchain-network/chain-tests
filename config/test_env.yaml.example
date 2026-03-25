@@ -12,7 +12,7 @@ runtime:
 
 paths:
   # Supports relative paths, resolved from chain-tests repo root.
-  chain_root: "../chain-1.16/chain-1.16"
+  chain_root: "../chain"
   reth_root: "../rchain"
   chain_contract_root: "../chain-contract"
   reth_bytecode_file: "../rchain/crates/congress-core/src/bytecode.rs"
@@ -88,12 +88,32 @@ network:
   fork_target: ""
   # Fork activation delay from init time (seconds), upgrade mode only.
   fork_delay_seconds: 120
-  # Prefund Staking (0x...f013) with min stake * validator_count before block #1.
-  # Required for newer contract/binary combinations where initializeWithValidators
-  # validates staking contract balance during init.
-  prefund_staking_initial_stake: true
-  # Unit: wei per validator (default 1 ETH).
-  min_validator_stake_wei: "1000000000000000000"
+  # Bootstrap identity generation/funding.
+  # signer_mode:
+  # - same_address: validator cold address is also the runtime signer
+  # - separate: generate a dedicated signer hot key per validator node
+  # fee_mode:
+  # - validator: fee income is withdrawn by validator cold address
+  # - signer: fee income is withdrawn by signer hot address
+  bootstrap:
+    signer_mode: "same_address"
+    fee_mode: "validator"
+    # Bootstrap validators must hold enough balance for block-1 self-stake.
+    # Keep this comfortably above Proposal.minValidatorStake.
+    validator_balance_wei: "1000000000000000000000000000"
+    # Optional gas balances for signer / fee identities when they differ from validator.
+    signer_balance_wei: "1000000000000000000"
+    fee_balance_wei: "1000000000000000000"
+  # Optional CLI overrides for PoA->PoSA migration.
+  # Applies only to in-place upgrade paths; fresh PoSA still uses config.congress.initial*.
+  # These values are forwarded to node startup as:
+  # - --override.posaTime
+  # - --override.posaValidators
+  # - --override.posaSigners
+  upgrade_override:
+    posa_time: ""
+    posa_validators: []
+    posa_signers: []
   # Epoch length in blocks (smaller value speeds up epoch-bound tests).
   # Can be overridden at runtime by: make init EPOCH=60
   # (internally sets TEST_NETWORK_EPOCH).

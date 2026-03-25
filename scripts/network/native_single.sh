@@ -28,6 +28,37 @@ BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "
 BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
 BLACKLIST_ALERT_FAIL_OPEN="$(cfg_get "$CONFIG_FILE" "blacklist.alert_fail_open" "true")"
 BLACKLIST_REFRESH_SECONDS="$(cfg_get "$CONFIG_FILE" "blacklist.refresh_interval_seconds" "")"
+UPGRADE_OVERRIDE_POSA_TIME="${UPGRADE_OVERRIDE_POSA_TIME:-$(cfg_get "$CONFIG_FILE" "fork.override.posa_time" "$(cfg_get "$CONFIG_FILE" "network.upgrade_override.posa_time" "")")}"
+UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="${UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON:-}"
+UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="${UPGRADE_OVERRIDE_POSA_SIGNERS_JSON:-}"
+if [[ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" ]]; then
+  if [[ -n "${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}" ]]; then
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(python3 - "${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}" <<'PY'
+import json
+import sys
+raw = sys.argv[1].strip()
+items = [item.strip() for item in raw.split(",") if item.strip()]
+print(json.dumps(items))
+PY
+)"
+  else
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(cfg_get_json "$CONFIG_FILE" "fork.override.posa_validators" "$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_validators" "[]")")"
+  fi
+fi
+if [[ -z "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" ]]; then
+  if [[ -n "${UPGRADE_OVERRIDE_POSA_SIGNERS:-}" ]]; then
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(python3 - "${UPGRADE_OVERRIDE_POSA_SIGNERS:-}" <<'PY'
+import json
+import sys
+raw = sys.argv[1].strip()
+items = [item.strip() for item in raw.split(",") if item.strip()]
+print(json.dumps(items))
+PY
+)"
+  else
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(cfg_get_json "$CONFIG_FILE" "fork.override.posa_signers" "$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_signers" "[]")")"
+  fi
+fi
 VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
 KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
 KEYSTORE_PASSWORD_ENV_NAME="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
@@ -49,8 +80,10 @@ LOG_FILE="$SINGLE_DIR/node.log"
 PASSWORD_FILE="$DATA_DIR/node0/password.txt"
 NODE_DATADIR="$DATA_DIR/node0"
 NODE_KEY="$DATA_DIR/node0/nodekey"
-VALIDATOR_KEY="$DATA_DIR/node0/validator.key"
-VALIDATOR_ADDR_FILE="$DATA_DIR/node0/validator.addr"
+VALIDATOR_KEY="$DATA_DIR/node0/signer.key"
+VALIDATOR_ADDR_FILE="$DATA_DIR/node0/signer.addr"
+[[ -f "$VALIDATOR_KEY" ]] || VALIDATOR_KEY="$DATA_DIR/node0/validator.key"
+[[ -f "$VALIDATOR_ADDR_FILE" ]] || VALIDATOR_ADDR_FILE="$DATA_DIR/node0/validator.addr"
 KEYSTORE_DIR="$DATA_DIR/node0/keystore"
 KEYSTORE_ADDR_FILE="$DATA_DIR/node0/keystore.addr"
 
@@ -99,6 +132,24 @@ resolve_validator_auth_mode() {
   esac
 }
 
+json_addresses_to_csv() {
+  local raw_json="${1:-[]}"
+  python3 - "$raw_json" <<'PY'
+import json
+import sys
+
+try:
+    items = json.loads(sys.argv[1] or "[]")
+except Exception:
+    items = []
+
+if not isinstance(items, list):
+    items = []
+
+print(",".join(str(item).strip() for item in items if str(item).strip()))
+PY
+}
+
 is_running() {
   if [[ ! -f "$PID_FILE" ]]; then
     return 1
@@ -109,9 +160,9 @@ is_running() {
   kill -0 "$pid" >/dev/null 2>&1
 }
 
-validator_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE" 2>/dev/null || true)"
-if [[ -z "$validator_addr" && -f "$VALIDATOR_ADDR_FILE" ]]; then
-  validator_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE")"
+signer_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE" 2>/dev/null || true)"
+if [[ -z "$signer_addr" && -f "$VALIDATOR_ADDR_FILE" ]]; then
+  signer_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE")"
 fi
 
 if ! GETH_BINARY="$(resolve_binary "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
@@ -122,13 +173,25 @@ if ! RETH_BINARY="$(resolve_binary "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_RO
 fi
 NODE_IMPL="$(resolve_node_impl)"
 AUTH_MODE="$(resolve_validator_auth_mode)"
+UPGRADE_OVERRIDE_POSA_VALIDATORS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
+UPGRADE_OVERRIDE_POSA_SIGNERS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
+
+if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]] && ! [[ "$UPGRADE_OVERRIDE_POSA_TIME" =~ ^[0-9]+$ ]]; then
+  die "fork.override.posa_time must be an unsigned integer timestamp, got: $UPGRADE_OVERRIDE_POSA_TIME"
+fi
+if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -z "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]] || [[ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
+  die "fork.override.posa_validators and fork.override.posa_signers must be provided together"
+fi
+if [[ "$NODE_IMPL" == "reth" ]] && [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" || -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" || -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
+  die "upgrade override currently supports geth runtime only"
+fi
 
 [[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
 [[ -d "$NODE_DATADIR" ]] || die "missing node data dir: $NODE_DATADIR (run make init first)"
 [[ -f "$NODE_KEY" ]] || die "missing node key: $NODE_KEY"
 [[ -f "$VALIDATOR_KEY" ]] || die "missing validator key: $VALIDATOR_KEY"
 [[ -f "$VALIDATOR_ADDR_FILE" ]] || die "missing validator addr: $VALIDATOR_ADDR_FILE"
-[[ -n "$validator_addr" ]] || die "empty validator address in $VALIDATOR_ADDR_FILE"
+[[ -n "$signer_addr" ]] || die "empty signer address in $VALIDATOR_ADDR_FILE"
 
 mkdir -p "$SINGLE_DIR"
 
@@ -145,7 +208,7 @@ init_geth() {
   if [[ ! -f "$PASSWORD_FILE" ]]; then
     printf '%s\n' "123456" > "$PASSWORD_FILE"
   fi
-  if ! "$GETH_BINARY" account list --datadir "$NODE_DATADIR" 2>/dev/null | grep -qi "${validator_addr#0x}"; then
+  if ! "$GETH_BINARY" account list --datadir "$NODE_DATADIR" 2>/dev/null | grep -qi "${signer_addr#0x}"; then
     "$GETH_BINARY" account import --datadir "$NODE_DATADIR" --password "$PASSWORD_FILE" "$VALIDATOR_KEY" >/dev/null
   fi
 }
@@ -228,9 +291,9 @@ start_geth() {
     "--syncmode=full"
     "--gcmode=full"
     "--mine"
-    "--miner.etherbase" "$validator_addr"
+    "--miner.etherbase" "$signer_addr"
     "--miner.gasprice" "0"
-    "--unlock" "$validator_addr"
+    "--unlock" "$signer_addr"
     "--password" "$PASSWORD_FILE"
     "--allow-insecure-unlock"
     "--http"
@@ -258,6 +321,15 @@ start_geth() {
   if [[ -n "$HISTORY_STATE" ]]; then
     args+=("--history.state=$HISTORY_STATE")
   fi
+  if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]]; then
+    args+=("--override.posaTime=$UPGRADE_OVERRIDE_POSA_TIME")
+  fi
+  if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" ]]; then
+    args+=("--override.posaValidators=$UPGRADE_OVERRIDE_POSA_VALIDATORS")
+    args+=("--override.posaSigners=$UPGRADE_OVERRIDE_POSA_SIGNERS")
+  fi
+
+  log "starting native single geth signer=$signer_addr overrideValidators=${UPGRADE_OVERRIDE_POSA_VALIDATORS:-<none>} overrideSigners=${UPGRADE_OVERRIDE_POSA_SIGNERS:-<none>}"
 
   BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
   BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \

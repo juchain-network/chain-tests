@@ -34,6 +34,16 @@ rows.sort(key=lambda r: (r.get("topology", ""), r.get("case", "")))
 passed = sum(1 for r in rows if r.get("status") == "PASS")
 failed = sum(1 for r in rows if r.get("status") != "PASS")
 
+def display_status(status: str) -> str:
+    normalized = (status or "").strip().upper()
+    if normalized == "PASS":
+        return "🟢 PASS"
+    if normalized == "FAIL":
+        return "🔴 FAIL"
+    if normalized == "SKIP":
+        return "🟡 SKIP"
+    return status or "UNKNOWN"
+
 matrix = {
     "generated_at": datetime.now(timezone.utc).isoformat(),
     "total": len(rows),
@@ -55,13 +65,13 @@ with open(md_path, "w", encoding="utf-8") as f:
     f.write(f"- Total: {matrix['total']}\n")
     f.write(f"- Passed: {matrix['passed']}\n")
     f.write(f"- Failed: {matrix['failed']}\n")
-    f.write(f"- Status: {matrix['status']}\n\n")
+    f.write(f"- Status: {display_status(matrix['status'])}\n\n")
     f.write("| Topology | Case | Mode | Target | Status | RC | Log | Repro |\n")
     f.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
     for r in rows:
         f.write(
             f"| {r.get('topology','')} | {r.get('case','')} | {r.get('mode','')} | "
-            f"{r.get('target','')} | {r.get('status','')} | {r.get('rc',0)} | "
+            f"{r.get('target','')} | {display_status(r.get('status',''))} | {r.get('rc',0)} | "
             f"{r.get('log','')} | `{r.get('repro','')}` |\n"
         )
 

@@ -22,11 +22,22 @@ def parse_report_status(report_md):
             text = f.read()
     except Exception:
         return "UNKNOWN"
-    if "| FAIL |" in text or "Status: FAIL" in text:
+    if "| 🔴 FAIL |" in text or "Status: 🔴 FAIL" in text or "| FAIL |" in text or "Status: FAIL" in text:
         return "FAIL"
-    if "| PASS |" in text or "Status: PASS" in text:
+    if "| 🟢 PASS |" in text or "Status: 🟢 PASS" in text or "| PASS |" in text or "Status: PASS" in text:
         return "PASS"
     return "UNKNOWN"
+
+
+def display_status(status):
+    normalized = (status or "").strip().upper()
+    if normalized == "PASS":
+        return "🟢 PASS"
+    if normalized == "FAIL":
+        return "🔴 FAIL"
+    if normalized == "SKIP":
+        return "🟡 SKIP"
+    return status or "UNKNOWN"
 
 
 def collect_ci(ci_dir):
@@ -138,7 +149,7 @@ def main():
         f.write(f"- Generated: {index['generated_at']}\n")
         f.write(f"- Total Reports: {index['total']}\n")
         f.write(f"- Failed Reports: {index['failed']}\n")
-        f.write(f"- Status: {index['status']}\n\n")
+        f.write(f"- Status: {display_status(index['status'])}\n\n")
         f.write("| Type | ID | Mode | Status | Report | Summary | Manifest |\n")
         f.write("| --- | --- | --- | --- | --- | --- | --- |\n")
         for r in records:
@@ -146,7 +157,7 @@ def main():
             summary = r.get("summary_json", "")
             manifest = r.get("manifest_json", "")
             f.write(
-                f"| {r.get('type','')} | {r.get('id','')} | {r.get('mode','')} | {r.get('status','')} | "
+                f"| {r.get('type','')} | {r.get('id','')} | {r.get('mode','')} | {display_status(r.get('status',''))} | "
                 f"{report} | {summary or '-'} | {manifest or '-'} |\n"
             )
 

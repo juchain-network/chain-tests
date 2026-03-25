@@ -38,6 +38,15 @@ sanitize_case() {
   printf '%s' "$1" | tr '[:space:]' '_' | tr -c 'a-zA-Z0-9._:-' '_' | tr ':' '_'
 }
 
+status_display() {
+  case "${1:-}" in
+    PASS) printf '🟢 PASS' ;;
+    FAIL) printf '🔴 FAIL' ;;
+    SKIP) printf '🟡 SKIP' ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
 case_to_mode_target() {
   local label="$1"
   case "$label" in
@@ -83,6 +92,8 @@ emit_single_case_artifacts() {
   local manifest_path="$case_dir/manifest.json"
   local generated_at
   generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local status_display_text
+  status_display_text="$(status_display "$status")"
 
   cat > "$report_path" <<REPORT
 # Smoke Matrix Case Report
@@ -92,7 +103,7 @@ emit_single_case_artifacts() {
 - Case: $label
 - Genesis Mode: $mode
 - Target: ${target:-<none>}
-- Status: $status
+- Status: $status_display_text
 - RC: $rc
 - Log: $case_log
 - Repro: \`$repro\`
@@ -157,6 +168,13 @@ MANIFEST
   printf '%s\t%s\t%s\n' "$report_path" "$summary_path" "$manifest_path"
 }
 
+resolve_artifact_paths() {
+  local artifact_triplet="$1"
+  report_path="$(printf '%s\n' "$artifact_triplet" | awk -F '\t' 'NR==1 {print $1}')"
+  summary_path="$(printf '%s\n' "$artifact_triplet" | awk -F '\t' 'NR==1 {print $2}')"
+  manifest_path="$(printf '%s\n' "$artifact_triplet" | awk -F '\t' 'NR==1 {print $3}')"
+}
+
 run_case() {
   local mode="$1"
   local target="$2"
@@ -211,16 +229,18 @@ run_case() {
     status="FAIL"
   fi
 
+  echo "$(status_display "$status") [smoke/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} rc=$rc"
+
   if [[ "$TOPOLOGY" == "multi" ]]; then
     report_path="$(find_ci_artifact "$case_dir/reports" report.md)"
     summary_path="$(find_ci_artifact "$case_dir/reports" summary.json)"
     manifest_path="$(find_ci_artifact "$case_dir/reports" manifest.json)"
   else
-    IFS=$'\t' read -r report_path summary_path manifest_path < <(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")
+    resolve_artifact_paths "$(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
   fi
 
   if [[ -z "$report_path" || -z "$summary_path" || -z "$manifest_path" ]]; then
-    IFS=$'\t' read -r report_path summary_path manifest_path < <(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")
+    resolve_artifact_paths "$(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n' \
@@ -230,8 +250,9 @@ run_case() {
 }
 
 overall_rc=0
-IFS=',' read -r -a CASE_ARRAY <<< "$SMOKE_CASES"
-for raw_case in "${CASE_ARRAY[@]}"; do
+OLD_IFS="$IFS"
+IFS=','
+for raw_case in $SMOKE_CASES; do
   case_item="$(echo "$raw_case" | tr -d '[:space:]')"
   [[ -n "$case_item" ]] || continue
 
@@ -249,6 +270,7 @@ for raw_case in "${CASE_ARRAY[@]}"; do
     overall_rc=1
   fi
 done
+IFS="$OLD_IFS"
 
 if [[ -x "$COLLECTOR_SCRIPT" ]]; then
   "$COLLECTOR_SCRIPT" "$RESULTS_TSV" "$SMOKE_REPORT_DIR"

@@ -129,7 +129,7 @@ help:
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
-	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop CHECK=sync|state-root|all"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak"
 	@echo ""
@@ -154,7 +154,7 @@ help:
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
 	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
-	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative"
 	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
 	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
 	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
@@ -268,7 +268,7 @@ clean:
 		fi; \
 	fi
 	@rm -f tests.test
-	@echo "✅ Clean complete."
+	@echo "ℹ️  Clean complete."
 
 logs:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" NODE="$(NODE)" "$(NETWORK_DISPATCH)" logs
@@ -436,10 +436,22 @@ test-scenario:
 	scenario="$(SCENARIO)"; \
 	check="$(if $(CHECK),$(CHECK),all)"; \
 	if [ -z "$$scenario" ]; then \
-		echo "Set SCENARIO=<posa|interop>"; \
+		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative>"; \
 		exit 1; \
 	fi; \
 	case "$$scenario" in \
+		checkpoint) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/checkpoint_split_checks.sh; \
+			;; \
+		negative) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/negative_checks.sh; \
+			;; \
+		bootstrap) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/bootstrap_checks.sh; \
+			;; \
+		upgrade) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/upgrade_checks.sh; \
+			;; \
 		posa) \
 			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups posa)"; \
 			echo "⏱ posa epoch=$$epoch"; \
@@ -471,7 +483,7 @@ test-scenario:
 			;; \
 		*) \
 			echo "Unsupported SCENARIO=$$scenario"; \
-			echo "Expected one of: posa interop"; \
+			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative"; \
 			exit 1; \
 			;; \
 	esac

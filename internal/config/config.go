@@ -3,11 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
+	SourcePath string `yaml:"-"`
+
 	RPCs []string `yaml:"rpcs"` // List of RPC endpoints (e.g., node 1, node 2...)
 	// Optional: Per-validator RPCs aligned with Validators order.
 	ValidatorRPCs []string `yaml:"validator_rpcs"`
@@ -31,6 +34,11 @@ type Config struct {
 			FixHeaderTime int64 `yaml:"fix_header_time"`
 			PosaTime      int64 `yaml:"posa_time"`
 		} `yaml:"schedule"`
+		Override struct {
+			PosaTime       int64    `yaml:"posa_time"`
+			PosaValidators []string `yaml:"posa_validators"`
+			PosaSigners    []string `yaml:"posa_signers"`
+		} `yaml:"override"`
 	} `yaml:"fork"`
 
 	Runtime struct {
@@ -64,10 +72,7 @@ type Config struct {
 	} `yaml:"funder"`
 
 	// Optional: Pre-existing validators keys to test proposal voting etc.
-	Validators []struct {
-		PrivateKey string `yaml:"private_key"`
-		Address    string `yaml:"address"`
-	} `yaml:"validators"`
+	Validators []Validator `yaml:"validators"`
 
 	// Test settings
 	Test struct {
@@ -97,14 +102,32 @@ type NodeRPC struct {
 	URL  string `yaml:"url"`
 }
 
+type Validator struct {
+	PrivateKey       string `yaml:"private_key"`
+	Address          string `yaml:"address"`
+	SignerPrivateKey string `yaml:"signer_private_key"`
+	SignerAddress    string `yaml:"signer_address"`
+	FeeAddress       string `yaml:"fee_address"`
+}
+
 type RuntimeNode struct {
-	Name string `yaml:"name"`
-	Role string `yaml:"role"`
-	Impl string `yaml:"impl"`
+	Name             string `yaml:"name"`
+	Role             string `yaml:"role"`
+	Impl             string `yaml:"impl"`
+	ValidatorKey     string `yaml:"validator_key"`
+	ValidatorAddress string `yaml:"validator_address"`
+	SignerKey        string `yaml:"signer_key"`
+	SignerAddress    string `yaml:"signer_address"`
+	FeeAddress       string `yaml:"fee_address"`
 }
 
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config path: %w", err)
+	}
+
+	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -113,6 +136,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	cfg.SourcePath = absPath
 
 	return &cfg, nil
 }

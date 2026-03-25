@@ -24,6 +24,19 @@ func TestParseTimedCase(t *testing.T) {
 	}
 }
 
+func TestDisplayStatus(t *testing.T) {
+	cases := map[string]string{
+		"PASS": "🟢 PASS",
+		"FAIL": "🔴 FAIL",
+		"SKIP": "🟡 SKIP",
+	}
+	for raw, want := range cases {
+		if got := displayStatus(raw); got != want {
+			t.Fatalf("displayStatus(%q)=%q want %q", raw, got, want)
+		}
+	}
+}
+
 func TestParseTestOutput(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "go_test.log")
@@ -215,7 +228,7 @@ func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 	if !strings.Contains(text, "## Slow Tests (Top 10)") {
 		t.Fatalf("slow tests section not found in report")
 	}
-	if !strings.Contains(text, "| 1 | TestB | 6s | PASS | group_config |") {
+	if !strings.Contains(text, "| 1 | TestB | 6s | 🟢 PASS | group_config |") {
 		t.Fatalf("expected sorted slow case row not found:\n%s", text)
 	}
 	if !strings.Contains(text, "## Group Runtime Profile") {
@@ -226,6 +239,9 @@ func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 	}
 	if !strings.Contains(text, "## Slow Alerts (>= 5s)") {
 		t.Fatalf("slow alerts section not found in report")
+	}
+	if !strings.Contains(text, "- Status: 🟢 PASS") {
+		t.Fatalf("details status line not decorated:\n%s", text)
 	}
 }
 

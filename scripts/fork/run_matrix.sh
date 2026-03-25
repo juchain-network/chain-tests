@@ -34,6 +34,15 @@ sanitize_case() {
   echo "$1" | tr '[:space:]' '_' | tr -c 'a-zA-Z0-9._:-' '_' | tr ':' '_'
 }
 
+status_display() {
+  case "${1:-}" in
+    PASS) printf '🟢 PASS' ;;
+    FAIL) printf '🔴 FAIL' ;;
+    SKIP) printf '🟡 SKIP' ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
 run_case() {
   local mode="$1"
   local target="$2"
@@ -128,6 +137,7 @@ run_case() {
   if [[ $rc -ne 0 ]]; then
     status="FAIL"
   fi
+  echo "$(status_display "$status") [fork/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} rc=$rc"
   printf '%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n' "$TOPOLOGY" "$label" "$mode" "${target:-}" "$status" "$rc" "$case_log" "$repro" >> "$RESULTS_TSV"
   return "$rc"
 }

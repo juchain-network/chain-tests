@@ -949,7 +949,7 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 		}
 		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
 			res.Name,
-			res.Status,
+			displayStatus(res.Status),
 			res.Duration.Round(time.Second),
 			skips,
 			res.LogPath,
@@ -971,7 +971,7 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 				i+1,
 				tc.Name,
 				tc.Duration,
-				tc.Status,
+				displayStatus(tc.Status),
 				tc.Step,
 			))
 		}
@@ -991,7 +991,7 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 					i+1,
 					tc.Name,
 					tc.Duration,
-					tc.Status,
+					displayStatus(tc.Status),
 					tc.Step,
 				))
 			}
@@ -1002,7 +1002,7 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 	sb.WriteString("\n## Details\n\n")
 	for _, res := range results {
 		sb.WriteString(fmt.Sprintf("### %s\n\n", res.Name))
-		sb.WriteString(fmt.Sprintf("- Status: %s\n", res.Status))
+		sb.WriteString(fmt.Sprintf("- Status: %s\n", displayStatus(res.Status)))
 		sb.WriteString(fmt.Sprintf("- Duration: %s\n", res.Duration.Round(time.Second)))
 		sb.WriteString(fmt.Sprintf("- Command: `%s`\n", res.Command))
 		sb.WriteString(fmt.Sprintf("- Log: %s\n", res.LogPath))
@@ -1025,7 +1025,7 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 }
 
 func printResult(res stepResult) {
-	fmt.Printf("<== %s: %s (%s) log: %s\n", res.Name, res.Status, res.Duration.Round(time.Second), res.LogPath)
+	fmt.Printf("<== %s: %s (%s) log: %s\n", res.Name, displayStatus(res.Status), res.Duration.Round(time.Second), res.LogPath)
 	printCaseList("PASS", res.PassTests)
 	printCaseList("FAIL", res.FailTests)
 	printCaseList("SKIP", res.SkipTests)
@@ -1038,7 +1038,20 @@ func printCaseList(label string, items []string) {
 	list := append([]string{}, items...)
 	sort.Strings(list)
 	for _, item := range list {
-		fmt.Printf("  %s: %s\n", label, item)
+		fmt.Printf("  %s: %s\n", displayStatus(label), item)
+	}
+}
+
+func displayStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "PASS":
+		return "🟢 PASS"
+	case "FAIL":
+		return "🔴 FAIL"
+	case "SKIP":
+		return "🟡 SKIP"
+	default:
+		return strings.TrimSpace(status)
 	}
 }
 

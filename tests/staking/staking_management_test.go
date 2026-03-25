@@ -275,7 +275,7 @@ func TestD_StakingManagement(t *testing.T) {
 		ctx.WaitIfEpochBlock()
 		newFeeAddr := common.HexToAddress("0xFEebFEebFEebFEebFEebFEebFEebFEebFEebFEeb")
 		opts, _ := ctx.GetTransactor(valKey)
-		tx, err := ctx.Validators.CreateOrEditValidator(opts, newFeeAddr, "NewMoniker", "ident", "site", "email", "details")
+		tx, err := ctx.Validators.CreateOrEditValidator0(opts, newFeeAddr, "NewMoniker", "ident", "site", "email", "details")
 		utils.AssertNoError(t, err, "edit validator failed")
 		ctx.WaitMined(tx.Hash())
 
@@ -298,7 +298,7 @@ func TestD_StakingManagement(t *testing.T) {
 		// Restore original state
 		ctx.WaitIfEpochBlock()
 		opts2, _ := ctx.GetTransactor(valKey)
-		tx2, _ := ctx.Validators.CreateOrEditValidator(opts2, valAddr, "Genesis", "", "", "", "")
+		tx2, _ := ctx.Validators.CreateOrEditValidator0(opts2, valAddr, "Genesis", "", "", "", "")
 		ctx.WaitMined(tx2.Hash())
 	})
 

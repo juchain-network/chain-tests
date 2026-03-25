@@ -133,6 +133,42 @@ cfg_get() {
   echo "$value"
 }
 
+cfg_get_json() {
+  local config_file="$1"
+  local key_path="$2"
+  local default_json="${3:-null}"
+
+  python3 - "$config_file" "$key_path" "$default_json" <<'PY'
+import json
+import sys
+
+try:
+    import yaml
+except Exception:
+    print(sys.argv[3])
+    raise SystemExit(0)
+
+config_file, key_path, default_json = sys.argv[1], sys.argv[2], sys.argv[3]
+
+try:
+    with open(config_file, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+except Exception:
+    print(default_json)
+    raise SystemExit(0)
+
+value = data
+for part in key_path.split("."):
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        print(default_json)
+        raise SystemExit(0)
+
+print(json.dumps(value))
+PY
+}
+
 wait_for_rpc_ready() {
   local rpc_url="$1"
   local timeout="${2:-120}"

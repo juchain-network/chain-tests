@@ -55,7 +55,7 @@ func TestZ_SystemInitSecurityGuards(t *testing.T) {
 				addr:   testctx.ValidatorsAddr,
 				meta:   contracts.ValidatorsMetaData,
 				method: "initialize",
-				args:   []interface{}{vals, dummy, dummy, dummy},
+				args:   []interface{}{vals, vals, dummy, dummy, dummy},
 			},
 			{
 				name:   "Punish.initialize",
@@ -182,6 +182,7 @@ func TestZ_SystemInitSecurityGuards(t *testing.T) {
 				t,
 				contracts.ValidatorsMetaData,
 				"initialize",
+				initVals,
 				initVals,
 				wrong,
 				testctx.PunishAddr,

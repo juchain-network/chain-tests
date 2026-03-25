@@ -30,6 +30,7 @@ LOG_DIR="$(to_abs_path "$(cfg_get "$SOURCE_FILE" "native.log_dir" "./data/native
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 NODE_COUNT="$(cfg_get "$SOURCE_FILE" "network.node_count" "4")"
 VALIDATOR_COUNT="$(cfg_get "$SOURCE_FILE" "network.validator_count" "3")"
+TOPOLOGY="$(cfg_get "$SOURCE_FILE" "runtime.topology" "")"
 
 [[ -f "$INIT_SCRIPT" ]] || die "init script not found: $INIT_SCRIPT"
 [[ -f "$ECOSYSTEM_FILE" ]] || die "ecosystem file not found: $ECOSYSTEM_FILE"
@@ -38,6 +39,20 @@ command -v "$MANAGER" >/dev/null 2>&1 || die "$MANAGER is required for native ba
 
 if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$VALIDATOR_COUNT" =~ ^[0-9]+$ ]]; then
   die "network.node_count and network.validator_count must be integers"
+fi
+
+if [[ -z "$TOPOLOGY" ]]; then
+  if [[ "$NODE_COUNT" == "1" && "$VALIDATOR_COUNT" == "1" ]]; then
+    TOPOLOGY="single"
+  else
+    TOPOLOGY="multi"
+  fi
+fi
+
+if [[ "$TOPOLOGY" == "single" ]]; then
+  SINGLE_SCRIPT="$SCRIPT_DIR/native_single.sh"
+  [[ -f "$SINGLE_SCRIPT" ]] || die "native single script not found: $SINGLE_SCRIPT"
+  exec "$SINGLE_SCRIPT" "$ACTION" "$SOURCE_FILE"
 fi
 
 PM2_PROCS=()

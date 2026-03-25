@@ -45,8 +45,16 @@ network:
   chain_id: 666666
   data_dir: "./data"
   reports_dir: "./reports"
-  prefund_staking_initial_stake: true
-  min_validator_stake_wei: "1000000000000000000"
+  bootstrap:
+    signer_mode: "same_address"
+    fee_mode: "validator"
+    validator_balance_wei: "1000000000000000000000000000"
+    signer_balance_wei: "1000000000000000000"
+    fee_balance_wei: "1000000000000000000"
+  upgrade_override:
+    posa_time: ""
+    posa_validators: []
+    posa_signers: []
 
 docker:
   compose_file: "./docker/docker-compose.yml"

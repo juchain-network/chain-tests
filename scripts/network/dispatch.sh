@@ -20,9 +20,14 @@ EFFECTIVE_CONFIG="$CONFIG_FILE"
 case "$ACTION" in
   init)
     ;;
-  up|down|reset|ready|logs|status|resolve-backend)
+  up|reset|ready|logs|status)
     SESSION_FILE="$(require_runtime_session "$ACTION" "$SESSION_FILE")"
     EFFECTIVE_CONFIG="$SESSION_FILE"
+    ;;
+  down|resolve-backend)
+    if [[ -f "$SESSION_FILE" ]]; then
+      EFFECTIVE_CONFIG="$SESSION_FILE"
+    fi
     ;;
   *)
     ;;

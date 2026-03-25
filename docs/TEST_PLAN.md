@@ -7,6 +7,31 @@ This document outlines the end-to-end integration test paths for JuChain system 
 2.  **Core Functionalities (Phase 1)**: Execute the full flow of validator onboarding, staking, and delegation under the new parameters.
 3.  **Boundaries & Exceptions (Phase 2)**: Interleave various exception scenario tests throughout the process.
 
+**Signer Query Semantics**:
+- `getTopSigners()` = current-block runtime signer set.
+- `getTopSignersForEpochTransition()` = checkpoint-only signer set committed into `header.Extra` for the next epoch.
+- On the checkpoint block itself, runtime hooks still resolve the old signer; the rotated signer becomes effective from the first block after the checkpoint.
+- `getValidatorBySignerHistory()` only records signers that have actually entered the effective consensus signer set; a pre-activation rotated signer must still resolve to zero and must not be punishable through `submitDoubleSignEvidence(...)`.
+
+**Bootstrap Generation Semantics**:
+- Fresh PoSA genesis must write both `config.congress.initialValidators` and `config.congress.initialSigners`.
+- `extraData` must commit the signer hot-address set, not the validator cold-address set.
+- Bootstrap self-stake is funded from validator cold-address alloc; the test generator must not rely on prefunding the `Staking` contract.
+- Local generation should support both `same_address` and `separate` signer modes so the same test cases can cover cold/hot identity split.
+
+**Scenario Entrypoints**:
+- `make test-scenario SCENARIO=bootstrap` validates same/separate bootstrap generation and the single-topology native dispatcher path.
+- `make test-scenario SCENARIO=upgrade` validates CLI override propagation (`--override.posaTime`, `--override.posaValidators`, `--override.posaSigners`) and the PoA->PoSA override mapping path.
+- `make test-scenario SCENARIO=checkpoint` validates all three checkpoint signer-split paths:
+  - rewards still settle through the old runtime signer on the checkpoint block
+  - punish checkpoint flow still resolves the old runtime signer, while `header.Extra` already commits the transition signer set
+  - the first block after the checkpoint accepts the new signer as runtime `coinbase`
+- `make test-scenario SCENARIO=negative` validates:
+  - partial override inputs are rejected at generation time
+  - fresh PoSA underfunded bootstrap does not progress past genesis
+  - underfunded PoA->PoSA upgrade is deferred while the chain stays live
+  - override drift restart either fails immediately or keeps the persisted stored mapping instead of activating the drifted override
+
 ---
 
 ## 0. System Config & Setup - **PRIORITY 1**
@@ -210,8 +235,10 @@ This section covers validation logic for all configuration parameters.
         *   External transaction path: rejected by node with `forbidden system transaction`.
         *   Direct contract execution path (eth_call/simulation): reverts with `Already initialized`.
 *   **[S-22] Distribute Rewards & Claim Cooldown**
-    *   **Steps**: Miner calls `distributeRewards` -> validator claims -> distribute again -> claim before cooldown.
-    *   **Expected**: First claim success; second claim reverts "Must wait withdrawProfitPeriod blocks between claims".
+    *   **Steps**: Miner calls `distributeRewards` -> validator claims -> distribute again -> claim before cooldown. Include one checkpoint-block execution.
+    *   **Expected**:
+        *   First claim success; second claim reverts "Must wait withdrawProfitPeriod blocks between claims".
+        *   On the checkpoint block, `Staking.distributeRewards()` still resolves the validator through the old runtime signer, not the transition signer set.
 
 ---
 
@@ -299,7 +326,10 @@ This section covers validation logic for all configuration parameters.
     *   **Expected**: Validator fully removed, Stake cleared.
 *   **[P-07] Submit Evidence**
     *   **Steps**: Construct and submit double-sign evidence.
-    *   **Expected**: Slash + Jail.
+    *   **Expected**:
+        *   Slash + Jail.
+        *   Evidence is built on signer identity.
+        *   If the evidence targets the checkpoint block, validator resolution still follows the old runtime signer.
 *   **[P-08] Withdraw Profits**
     *   **Steps**: Call `withdrawProfits`.
     *   **Expected**: Success.
@@ -349,7 +379,9 @@ This section covers validation logic for all configuration parameters.
 ### 4.4 Punish Engine & Consensus Hooks
 *   **[P-23] Punish Normal Path**
     *   **Steps**: Miner calls `punish(val)` once on non-epoch block.
-    *   **Expected**: `missedBlocksCounter` increments; validator appears in punish list.
+    *   **Expected**:
+        *   `missedBlocksCounter` increments; validator appears in punish list.
+        *   Runtime punish resolution uses the current effective signer.
 *   **[P-24] Execute Pending (Consensus-Only)**
     *   **Steps**:
         1. Try to call `executePending(1)` via normal external transaction.
@@ -361,6 +393,22 @@ This section covers validation logic for all configuration parameters.
 *   **[P-25] Decrease Missed Blocks Counter (Epoch)**
     *   **Steps**: Miner calls `decreaseMissedBlocksCounter(epoch)` on epoch block.
     *   **Expected**: Counter decreases (or no-op if list empty), event emitted.
+*   **[P-27] Checkpoint Runtime Hooks Still Use Old Signer**
+    *   **Steps**:
+        1. Schedule a signer rotation for a top validator.
+        2. Reach the checkpoint block.
+        3. Execute punish/runtime hooks that resolve validator-by-signer on the checkpoint block.
+    *   **Expected**:
+        *   The checkpoint block still resolves the validator through the old runtime signer.
+        *   The transition signer set does not leak into punish/runtime routing on the checkpoint block.
+*   **[P-28] Pending Signer Cleanup Before Activation**
+    *   **Steps**:
+        1. Schedule a pending signer rotation.
+        2. Before activation, resign/remove/exit the validator.
+        3. Query `getTopSignersForEpochTransition()` around the next checkpoint.
+    *   **Expected**:
+        *   The transition signer query does not expose a stale signer.
+        *   The following epoch does not retain a dirty signer entry.
 
 ---
 
@@ -369,10 +417,14 @@ This section covers validation logic for all configuration parameters.
 ### 5.1 Rewards & Fees
 *   **[V-03] Distribute Block Reward**
     *   **Steps**: Miner calls `Validators.distributeBlockReward()` with non-zero value.
-    *   **Expected**: Fee income increases for active miner (or redistributes if jailed).
+    *   **Expected**:
+        *   Fee income increases for the validator resolved from the current runtime signer (or redistributes if jailed / below minimum stake).
+        *   On the checkpoint block, routing still uses the old signer even though `header.Extra` already contains the transition signer set.
 *   **[S-22] Distribute Rewards & Claim Cooldown**
     *   **Steps**: Miner calls `Staking.distributeRewards()` -> validator claims -> distribute again -> claim before cooldown.
-    *   **Expected**: First claim success; second claim reverts due to cooldown.
+    *   **Expected**:
+        *   First claim success; second claim reverts due to cooldown.
+        *   On the checkpoint block, `Staking.distributeRewards()` still resolves the validator through the old runtime signer, not the transition signer set.
 *   **[V-04] Withdraw Profits Exceptions**
     *   **Steps**: Non-fee caller withdraws; fee caller withdraws with zero profit.
     *   **Expected**: Revert "You are not the fee receiver..." / "You don't have any profits".
@@ -384,6 +436,30 @@ This section covers validation logic for all configuration parameters.
 *   **[V-08] Update Active Validator Set (Epoch)**
     *   **Steps**: Miner calls `updateActiveValidatorSet` on epoch block with expected set.
     *   **Expected**: `currentValidatorSet` updated.
+*   **[V-09] Runtime vs Transition Signer Query Split**
+    *   **Steps**:
+        1. Query `getTopSigners()` and `getTopSignersForEpochTransition()` before the checkpoint.
+        2. Query both again on the checkpoint block after a signer rotation has been scheduled.
+        3. Query both again on block `N+1`.
+    *   **Expected**:
+        *   Before the checkpoint, both queries return the old signer set.
+        *   On the checkpoint block, `getTopSigners()` still returns the old signer set while `getTopSignersForEpochTransition()` returns the new signer set.
+        *   On block `N+1`, both queries return the new signer set.
+*   **[V-10] Checkpoint Header Extra Uses Transition Set**
+    *   **Steps**:
+        1. Reach a checkpoint block with a pending signer rotation.
+        2. Read `header.Extra`.
+        3. Compare it with the parent-state result of `getTopSignersForEpochTransition()`.
+    *   **Expected**:
+        *   `header.Extra` matches `getTopSignersForEpochTransition()`.
+        *   The test does not rely on any projected-header / simulated-next-block derivation.
+*   **[V-11] Block N+1 Accepts Only New Signer**
+    *   **Steps**:
+        1. Finish the checkpoint block that commits the transition signer set.
+        2. Attempt block production / signer validation on block `N+1` with both the old signer and the new signer.
+    *   **Expected**:
+        *   Only the new signer is accepted by snapshot/consensus on block `N+1`.
+        *   The old signer is no longer treated as valid for the next epoch.
 
 ### 5.3 Validator Info Validation & Queries
 *   **[V-02] Description Boundary (Moniker)**
@@ -392,15 +468,18 @@ This section covers validation logic for all configuration parameters.
 *   **[V-02b] Description Boundary (Identity/Website/Email/Details)**
     *   **Steps**: Exceed max lengths (identity 3000, website 140, email 140, details 280).
     *   **Expected**: Revert with corresponding "Invalid ... length".
-*   **[V-05] Reward-Eligible / Effective-Top Queries**
+*   **[V-05] Reward-Eligible / Effective-Top / Signer Queries**
     *   **Steps**:
         1. Call `getActiveValidatorsWithStakes`, `getRewardEligibleValidatorsWithStakes`.
         2. Call `getEffectiveTopValidators`, `getEffectiveTopValidatorCount`, `isLastEffectiveValidator`.
-        3. Jail one validator and re-query reward-eligible list.
+        3. Call `getTopSigners`, `getTopSignersForEpochTransition`.
+        4. Jail one validator and re-query reward-eligible list.
     *   **Expected**:
         *   Validators/stakes array lengths match.
         *   Effective-top count equals returned list length.
         *   Jailed validator is excluded from reward-eligible list immediately.
+        *   Outside checkpoint boundaries, `getTopSigners()` and `getTopSignersForEpochTransition()` match.
+        *   At checkpoint boundaries, runtime and transition signer queries may intentionally diverge.
 *   **[V-06] Genesis POSA First-Block Reward Path**
     *   **Steps**:
         1. Start multi-node network with `GENESIS_MODE=posa`.
@@ -409,6 +488,7 @@ This section covers validation logic for all configuration parameters.
     *   **Expected**:
         *   Network progresses past the first post-genesis block.
         *   Reward eligibility path does not stall block production during initial POSA startup.
+        *   Bootstrap self-stake is funded by deducting from validator cold-address balances, not by pre-funding the `Staking` contract.
 
 ---
 
@@ -425,13 +505,35 @@ This section covers validation logic for all configuration parameters.
 *   **[U-04] Punish Staking Parameter Completeness**
     *   **Steps**: Call fresh `Punish.initialize` with `staking_ = address(0)`.
     *   **Expected**: Revert `Invalid staking address`.
+*   **[U-05] Epoch Transition Query Does Not Regress Migration**
+    *   **Steps**:
+        1. Run fresh PoSA startup.
+        2. Run the PoA->PoSA epoch-boundary upgrade path.
+        3. Verify checkpoint signer selection around the upgrade boundary.
+    *   **Expected**:
+        *   Fresh PoSA uses `getTopSignersForEpochTransition()` semantics correctly.
+        *   PoA->PoSA migration behavior is unchanged for its special transition path.
+*   **[U-06] CLI Override Bootstrap Mapping**
+    *   **Steps**:
+        1. Start an upgrade-mode network with `--override.posaValidators` and `--override.posaSigners`.
+        2. Ensure the generated runtime artifacts expose the same override values.
+        3. Wait for PoSA activation and query `getValidatorBySigner()` / `getValidatorSigner()`.
+    *   **Expected**:
+        *   CLI override values propagate into native/docker runtime startup.
+        *   After migration, signer-to-validator mapping follows the override set, not the genesis fallback mapping.
+        *   The overridden validator shows initialized self-stake after migration.
 
 ---
 
 ## 7. Public Query APIs (Smoke)
 *   **[Q-01] Core Query Coverage**
-    *   **Steps**: Call view getters for proposal/pass/nonces, validator status, staking counts, unbonding counts, reward-eligible/effective-top APIs.
-    *   **Expected**: No revert; basic invariants hold (lengths match, counts non-negative).
+    *   **Steps**:
+        1. Call view getters for proposal/pass/nonces, validator status, staking counts, unbonding counts, reward-eligible/effective-top APIs.
+        2. Include `getTopSigners()` and `getTopSignersForEpochTransition()`.
+        3. Repeat signer queries before checkpoint, on checkpoint, and on block `N+1`.
+    *   **Expected**:
+        *   No revert; basic invariants hold (lengths match, counts non-negative).
+        *   Query semantics match the documented split: checkpoint block runtime signer remains old, transition signer is already new, and block `N+1` uses the new signer for both views.
 
 **Notes**:
 *   Ensure `config/test_env.yaml` is configured and `data/test_config.yaml` has been generated before execution.

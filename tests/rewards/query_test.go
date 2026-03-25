@@ -16,6 +16,8 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 
 	// Validators query APIs
 	active, _ := ctx.Validators.GetActiveValidators(nil)
+	activeSigners, err := ctx.Validators.GetActiveSigners(nil)
+	utils.AssertNoError(t, err, "getActiveSigners failed")
 	info, err := ctx.Validators.GetActiveValidatorsWithStakes(nil)
 	utils.AssertNoError(t, err, "getActiveValidatorsWithStakes failed")
 	if len(info.Validators) != len(info.TotalStakes) {
@@ -27,6 +29,19 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	}
 	_, _ = ctx.Validators.GetTopValidators(nil)
 	_, _ = ctx.Validators.GetHighestValidators(nil)
+	runtimeSigners, err := ctx.Validators.GetTopSigners(nil)
+	utils.AssertNoError(t, err, "getTopSigners failed")
+	transitionSigners, err := ctx.Validators.GetTopSignersForEpochTransition(nil)
+	utils.AssertNoError(t, err, "getTopSignersForEpochTransition failed")
+	if len(runtimeSigners) == 0 {
+		t.Fatalf("runtime signer set is empty")
+	}
+	if len(transitionSigners) == 0 {
+		t.Fatalf("transition signer set is empty")
+	}
+	if len(activeSigners) == 0 {
+		t.Fatalf("active signer set is empty")
+	}
 	effectiveTop, err := ctx.Validators.GetEffectiveTopValidators(nil)
 	utils.AssertNoError(t, err, "getEffectiveTopValidators failed")
 	effectiveCount, err := ctx.Validators.GetEffectiveTopValidatorCount(nil)
@@ -64,6 +79,16 @@ func TestI_PublicQueryCoverage(t *testing.T) {
 	_, _ = ctx.Validators.IsValidatorActive(nil, valAddr)
 	_, _ = ctx.Validators.IsValidatorJailed(nil, valAddr)
 	_, _ = ctx.Validators.IsValidatorExist(nil, valAddr)
+	signerAddr, err := ctx.Validators.GetValidatorSigner(nil, valAddr)
+	utils.AssertNoError(t, err, "getValidatorSigner failed")
+	if signerAddr == (common.Address{}) {
+		t.Fatalf("validator signer is zero for %s", valAddr.Hex())
+	}
+	mappedValidator, err := ctx.Validators.GetValidatorBySigner(nil, signerAddr)
+	utils.AssertNoError(t, err, "getValidatorBySigner failed")
+	if mappedValidator != valAddr {
+		t.Fatalf("validator/signer mapping mismatch: signer=%s got=%s want=%s", signerAddr.Hex(), mappedValidator.Hex(), valAddr.Hex())
+	}
 
 	// Staking query APIs
 	_, _ = ctx.Staking.GetValidatorStatus(nil, valAddr)

@@ -15,12 +15,7 @@ func keyForAddress(addr common.Address) *ecdsa.PrivateKey {
 	if ctx == nil {
 		return nil
 	}
-	for _, k := range ctx.GenesisValidators {
-		if crypto.PubkeyToAddress(k.PublicKey) == addr {
-			return k
-		}
-	}
-	return nil
+	return ctx.ValidatorKeyByAddress(addr)
 }
 
 func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
@@ -29,6 +24,7 @@ func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 	}
 
 	var lastCoinbase common.Address
+	var lastValidator common.Address
 	for attempt := 0; attempt < 30; attempt++ {
 		header, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
 		if err != nil {
@@ -37,8 +33,12 @@ func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 		coinbase := header.Coinbase
 		lastCoinbase = coinbase
 		if coinbase != (common.Address{}) {
-			if key := keyForAddress(coinbase); key != nil {
-				return key, coinbase
+			validator, err := ctx.ValidatorAddressBySigner(coinbase)
+			if err == nil {
+				lastValidator = validator
+				if key := keyForAddress(validator); key != nil {
+					return key, validator
+				}
 			}
 		}
 		waitBlocks(t, 1)
@@ -48,7 +48,7 @@ func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 	for _, k := range ctx.GenesisValidators {
 		known = append(known, crypto.PubkeyToAddress(k.PublicKey).Hex())
 	}
-	t.Fatalf("no validator key matches current coinbase after 30 blocks; last=%s known=%s", lastCoinbase.Hex(), strings.Join(known, ","))
+	t.Fatalf("no validator key matches current coinbase signer after 30 blocks; lastSigner=%s lastValidator=%s known=%s", lastCoinbase.Hex(), lastValidator.Hex(), strings.Join(known, ","))
 	return nil, common.Address{} // unreachable
 }
 
@@ -140,10 +140,13 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 	if err != nil || header == nil {
 		t.Fatalf("failed to read header: %v", err)
 	}
-	coinbase := header.Coinbase
+	currentValidator, err := ctx.ValidatorAddressBySigner(header.Coinbase)
+	if err != nil {
+		t.Fatalf("failed to map coinbase signer %s to validator: %v", header.Coinbase.Hex(), err)
+	}
 	start := 0
 	for i, v := range validators {
-		if v == coinbase {
+		if v == currentValidator {
 			start = (i + 1) % len(validators)
 			break
 		}
@@ -165,7 +168,7 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 	for _, k := range ctx.GenesisValidators {
 		known = append(known, crypto.PubkeyToAddress(k.PublicKey).Hex())
 	}
-	t.Fatalf("no key for active validator set; coinbase=%s active=%s known=%s", coinbase.Hex(), strings.Join(active, ","), strings.Join(known, ","))
+	t.Fatalf("no key for active validator set; coinbaseSigner=%s currentValidator=%s active=%s known=%s", header.Coinbase.Hex(), currentValidator.Hex(), strings.Join(active, ","), strings.Join(known, ","))
 	return nil, common.Address{} // unreachable
 }
 

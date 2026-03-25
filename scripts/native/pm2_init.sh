@@ -32,6 +32,37 @@ BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "
 BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
 BLACKLIST_ALERT_FAIL_OPEN="$(cfg_get "$CONFIG_FILE" "blacklist.alert_fail_open" "true")"
 BLACKLIST_REFRESH_SECONDS="$(cfg_get "$CONFIG_FILE" "blacklist.refresh_interval_seconds" "")"
+UPGRADE_OVERRIDE_POSA_TIME="${UPGRADE_OVERRIDE_POSA_TIME:-$(cfg_get "$CONFIG_FILE" "fork.override.posa_time" "$(cfg_get "$CONFIG_FILE" "network.upgrade_override.posa_time" "")")}"
+UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="${UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON:-}"
+UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="${UPGRADE_OVERRIDE_POSA_SIGNERS_JSON:-}"
+if [[ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" ]]; then
+  if [[ -n "${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}" ]]; then
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(python3 - "${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}" <<'PY'
+import json
+import sys
+raw = sys.argv[1].strip()
+items = [item.strip() for item in raw.split(",") if item.strip()]
+print(json.dumps(items))
+PY
+)"
+  else
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(cfg_get_json "$CONFIG_FILE" "fork.override.posa_validators" "$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_validators" "[]")")"
+  fi
+fi
+if [[ -z "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" ]]; then
+  if [[ -n "${UPGRADE_OVERRIDE_POSA_SIGNERS:-}" ]]; then
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(python3 - "${UPGRADE_OVERRIDE_POSA_SIGNERS:-}" <<'PY'
+import json
+import sys
+raw = sys.argv[1].strip()
+items = [item.strip() for item in raw.split(",") if item.strip()]
+print(json.dumps(items))
+PY
+)"
+  else
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(cfg_get_json "$CONFIG_FILE" "fork.override.posa_signers" "$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_signers" "[]")")"
+  fi
+fi
 
 NODE_COUNT="$(cfg_get "$CONFIG_FILE" "network.node_count" "4")"
 VALIDATOR_COUNT="$(cfg_get "$CONFIG_FILE" "network.validator_count" "3")"
@@ -105,6 +136,24 @@ is_true() {
   esac
 }
 
+json_addresses_to_csv() {
+  local raw_json="${1:-[]}"
+  python3 - "$raw_json" <<'PY'
+import json
+import sys
+
+try:
+    items = json.loads(sys.argv[1] or "[]")
+except Exception:
+    items = []
+
+if not isinstance(items, list):
+    items = []
+
+print(",".join(str(item).strip() for item in items if str(item).strip()))
+PY
+}
+
 if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$VALIDATOR_COUNT" =~ ^[0-9]+$ ]]; then
   die "network.node_count and network.validator_count must be integers"
 fi
@@ -120,6 +169,15 @@ case "$VALIDATOR_AUTH_MODE" in
   auto|private_key|keystore) ;;
   *) die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE" ;;
 esac
+if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]] && ! [[ "$UPGRADE_OVERRIDE_POSA_TIME" =~ ^[0-9]+$ ]]; then
+  die "fork.override.posa_time must be an unsigned integer timestamp, got: $UPGRADE_OVERRIDE_POSA_TIME"
+fi
+
+UPGRADE_OVERRIDE_POSA_VALIDATORS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
+UPGRADE_OVERRIDE_POSA_SIGNERS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
+if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -z "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]] || [[ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
+  die "fork.override.posa_validators and fork.override.posa_signers must be provided together"
+fi
 
 GETH_BINARY=""
 RETH_BINARY=""
@@ -142,6 +200,14 @@ for ((i=0; i<NODE_COUNT; i++)); do
     need_reth=true
   fi
 done
+
+if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" || -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" || -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
+  for impl in "${NODE_IMPLS[@]}"; do
+    if [[ "$impl" == "reth" ]]; then
+      die "upgrade override currently supports geth runtime only; reth node detected"
+    fi
+  done
+fi
 
 if $need_geth && [[ -z "$GETH_BINARY" ]]; then
   die "geth binary not found. tried: $(to_abs_path "$GETH_BINARY_CFG") $CHAIN_ROOT/build/bin/geth"
@@ -177,10 +243,17 @@ init_reth_node() {
 import_geth_validator_if_needed() {
   local idx="$1"
   local datadir="$DATA_DIR/node$idx"
-  local keyfile="$datadir/validator.key"
+  local keyfile="$datadir/signer.key"
+  if [[ ! -f "$keyfile" ]]; then
+    keyfile="$datadir/validator.key"
+  fi
   local password="$datadir/password.txt"
+  local addr_file="$datadir/signer.addr"
+  if [[ ! -f "$addr_file" ]]; then
+    addr_file="$datadir/validator.addr"
+  fi
   local addr
-  addr="$(tr -d '[:space:]' < "$datadir/validator.addr")"
+  addr="$(tr -d '[:space:]' < "$addr_file")"
   [[ -n "$addr" ]] || die "empty validator addr: $datadir/validator.addr"
 
   if [[ ! -f "$password" ]]; then
@@ -246,6 +319,9 @@ BLACKLIST_CONTRACT_ADDR=$BLACKLIST_CONTRACT_ADDR
 BLACKLIST_MODE=$BLACKLIST_MODE
 BLACKLIST_ALERT_FAIL_OPEN=$BLACKLIST_ALERT_FAIL_OPEN
 BLACKLIST_REFRESH_INTERVAL_SECONDS=$BLACKLIST_REFRESH_SECONDS
+UPGRADE_OVERRIDE_POSA_TIME=$UPGRADE_OVERRIDE_POSA_TIME
+UPGRADE_OVERRIDE_POSA_VALIDATORS=$UPGRADE_OVERRIDE_POSA_VALIDATORS
+UPGRADE_OVERRIDE_POSA_SIGNERS=$UPGRADE_OVERRIDE_POSA_SIGNERS
 RUNTIME_IMPL_MODE=$RUNTIME_IMPL_MODE
 DEFAULT_RUNTIME_IMPL=$DEFAULT_RUNTIME_IMPL
 VALIDATOR_AUTH_MODE=$VALIDATOR_AUTH_MODE
@@ -292,7 +368,15 @@ EOF_ENV
 for ((i=0; i<VALIDATOR_COUNT; i++)); do
   idx=$((i+1))
   datadir="$DATA_DIR/node$i"
-  validator_addr="$(tr -d '[:space:]' < "$datadir/validator.addr")"
+  signer_addr_file="$datadir/signer.addr"
+  signer_key_file="$datadir/signer.key"
+  if [[ ! -f "$signer_addr_file" ]]; then
+    signer_addr_file="$datadir/validator.addr"
+  fi
+  if [[ ! -f "$signer_key_file" ]]; then
+    signer_key_file="$datadir/validator.key"
+  fi
+  validator_addr="$(tr -d '[:space:]' < "$signer_addr_file")"
   keystore_file="$(find "$datadir/keystore" -type f | head -n 1 || true)"
   if [[ -z "$keystore_file" ]]; then
     die "missing keystore file for validator node$i in $datadir/keystore"
@@ -316,7 +400,7 @@ for ((i=0; i<VALIDATOR_COUNT; i++)); do
   cat >> "$ENV_FILE" <<EOF_ENV
 VALIDATOR${idx}_ADDRESS=$validator_addr
 VALIDATOR${idx}_PASSWORD=$pass_file
-VALIDATOR${idx}_PRIVATE_KEY_FILE=$datadir/validator.key
+VALIDATOR${idx}_PRIVATE_KEY_FILE=$signer_key_file
 VALIDATOR${idx}_KEYSTORE_DIR=$datadir/keystore
 VALIDATOR${idx}_KEYSTORE_PATH=$keystore_file
 VALIDATOR${idx}_KEYSTORE_ADDRESS=$keystore_addr

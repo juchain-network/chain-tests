@@ -41,8 +41,16 @@ PROFILE_WITHDRAW_PROFIT_PERIOD="$(profile_get "withdraw_profit_period" "2")"
 PROFILE_COMMISSION_UPDATE_COOLDOWN="$(profile_get "commission_update_cooldown" "1")"
 PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
-PREFUND_STAKING_INITIAL_STAKE="$(cfg_get "$CONFIG_FILE" "network.prefund_staking_initial_stake" "true")"
-MIN_VALIDATOR_STAKE_WEI="$(cfg_get "$CONFIG_FILE" "network.min_validator_stake_wei" "1000000000000000000")"
+BOOTSTRAP_SIGNER_MODE="${BOOTSTRAP_SIGNER_MODE:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.signer_mode" "same_address")}"
+BOOTSTRAP_FEE_MODE="${BOOTSTRAP_FEE_MODE:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.fee_mode" "validator")}"
+BOOTSTRAP_VALIDATOR_BALANCE_WEI="${BOOTSTRAP_VALIDATOR_BALANCE_WEI:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.validator_balance_wei" "1000000000000000000000000000")}"
+BOOTSTRAP_SIGNER_BALANCE_WEI="${BOOTSTRAP_SIGNER_BALANCE_WEI:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.signer_balance_wei" "1000000000000000000")}"
+BOOTSTRAP_FEE_BALANCE_WEI="${BOOTSTRAP_FEE_BALANCE_WEI:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.fee_balance_wei" "1000000000000000000")}"
+UPGRADE_OVERRIDE_POSA_TIME="${UPGRADE_OVERRIDE_POSA_TIME:-$(cfg_get "$CONFIG_FILE" "network.upgrade_override.posa_time" "")}"
+UPGRADE_OVERRIDE_POSA_VALIDATORS_RAW="${UPGRADE_OVERRIDE_POSA_VALIDATORS:-}"
+UPGRADE_OVERRIDE_POSA_SIGNERS_RAW="${UPGRADE_OVERRIDE_POSA_SIGNERS:-}"
+CFG_UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_validators" "[]")"
+CFG_UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(cfg_get_json "$CONFIG_FILE" "network.upgrade_override.posa_signers" "[]")"
 TOPOLOGY="${TOPOLOGY:-${INIT_TOPOLOGY:-}}"
 INIT_MODE="${INIT_MODE:-}"
 INIT_TARGET="${INIT_TARGET:-}"
@@ -253,12 +261,16 @@ echo "Using test profile: $TEST_PROFILE"
 echo "Requested topology: ${TOPOLOGY:-auto}"
 echo "Using genesis mode: $GENESIS_MODE"
 echo "Using runtime impl: mode=$RUNTIME_IMPL_MODE default=$DEFAULT_RUNTIME_IMPL auth=$VALIDATOR_AUTH_MODE"
+echo "Using bootstrap identities: signer_mode=$BOOTSTRAP_SIGNER_MODE fee_mode=$BOOTSTRAP_FEE_MODE"
 echo "Using runtime backend: $SESSION_BACKEND"
 echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     echo "Using upgrade fork target: $FORK_TARGET (delay=${FORK_DELAY_SECONDS}s)"
 elif [ "$GENESIS_MODE" = "smoke" ]; then
     echo "Using smoke static fork case: $FORK_TARGET"
+fi
+if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ] || [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS_RAW" ] || [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS_RAW" ] || [ "$CFG_UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" != "[]" ] || [ "$CFG_UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" != "[]" ]; then
+    echo "Using upgrade override inputs: posaTime=${UPGRADE_OVERRIDE_POSA_TIME:-<empty>}"
 fi
 
 generate_key() {
@@ -282,6 +294,124 @@ generate_keystore() {
         exit 1
     fi
     echo "$output"
+}
+
+validate_bootstrap_mapping() {
+    local validators_json="$1"
+    local signers_json="$2"
+    python3 - "$validators_json" "$signers_json" <<'PY'
+import json
+import sys
+
+validators = json.loads(sys.argv[1])
+signers = json.loads(sys.argv[2])
+
+if not validators or not signers:
+    raise SystemExit("bootstrap validator/signer set must not be empty")
+if len(validators) != len(signers):
+    raise SystemExit(f"bootstrap validator/signer length mismatch: {len(validators)} != {len(signers)}")
+if len(validators) > 21:
+    raise SystemExit(f"bootstrap validator/signer count exceeds max 21: {len(validators)}")
+
+def validate(name, values):
+    seen = set()
+    for idx, value in enumerate(values):
+        if not isinstance(value, str) or not value.startswith("0x") or len(value) != 42:
+            raise SystemExit(f"{name}[{idx}] is not a hex address: {value!r}")
+        if value.lower() == "0x0000000000000000000000000000000000000000":
+            raise SystemExit(f"{name}[{idx}] must not be zero address")
+        lowered = value.lower()
+        if lowered in seen:
+            raise SystemExit(f"{name}[{idx}] duplicates address {value}")
+        seen.add(lowered)
+
+validate("validators", validators)
+validate("signers", signers)
+PY
+}
+
+csv_addresses_to_json() {
+    local raw="${1:-}"
+    python3 - "$raw" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1].strip()
+if not raw:
+    print("[]")
+    raise SystemExit(0)
+
+items = []
+for item in raw.split(","):
+    value = item.strip()
+    if value:
+        items.append(value)
+
+print(json.dumps(items))
+PY
+}
+
+json_addresses_to_csv() {
+    local raw_json="${1:-[]}"
+    python3 - "$raw_json" <<'PY'
+import json
+import sys
+
+try:
+    items = json.loads(sys.argv[1] or "[]")
+except Exception:
+    items = []
+
+if not isinstance(items, list):
+    items = []
+
+print(",".join(str(item).strip() for item in items if str(item).strip()))
+PY
+}
+
+validate_optional_upgrade_override() {
+    local validators_json="$1"
+    local signers_json="$2"
+    local mode="$3"
+    local target="$4"
+    python3 - "$validators_json" "$signers_json" "$mode" "$target" <<'PY'
+import json
+import sys
+
+validators = json.loads(sys.argv[1] or "[]")
+signers = json.loads(sys.argv[2] or "[]")
+mode = (sys.argv[3] or "").strip().lower()
+target = (sys.argv[4] or "").strip()
+
+if not validators and not signers:
+    raise SystemExit(0)
+
+if not validators or not signers:
+    raise SystemExit("upgrade override validators/signers must be provided together")
+
+if mode not in {"upgrade", "smoke"}:
+    raise SystemExit(f"upgrade override only supports upgrade/smoke migration modes, got: {mode or '<empty>'}")
+
+if mode == "smoke" and target != "poa_shanghai_cancun_fixheader_posa":
+    raise SystemExit(
+        "upgrade override in smoke mode only supports fork target poa_shanghai_cancun_fixheader_posa"
+    )
+
+def validate(name, values):
+    seen = set()
+    for idx, value in enumerate(values):
+        if not isinstance(value, str) or not value.startswith("0x") or len(value) != 42:
+            raise SystemExit(f"{name}[{idx}] is not a hex address: {value!r}")
+        if value.lower() == "0x0000000000000000000000000000000000000000":
+            raise SystemExit(f"{name}[{idx}] must not be zero address")
+        lowered = value.lower()
+        if lowered in seen:
+            raise SystemExit(f"{name}[{idx}] duplicates address {value}")
+        seen.add(lowered)
+
+validate("override.validators", validators)
+validate("override.signers", signers)
+PY
 }
 
 # Generate Keys
@@ -319,6 +449,9 @@ TOPOLOGY_MODE=""
 NODE_IPS=("172.28.0.10" "172.28.0.11" "172.28.0.12" "172.28.0.13")
 VAL_ADDRS=()
 VAL_PRIVS=()
+SIGNER_ADDRS=()
+SIGNER_PRIVS=()
+FEE_ADDRS=()
 ENODES=()
 NODE_PUBS=()
 RUNTIME_NODE_IMPLS=()
@@ -339,12 +472,33 @@ if [ "$NUM_NODES" -eq 1 ] && [ "$NUM_VALIDATORS" -eq 1 ]; then
     TOPOLOGY_MODE="single"
 fi
 echo "Resolved topology: $TOPOLOGY_MODE (nodes=$NUM_NODES, validators=$NUM_VALIDATORS)"
-if ! [[ "$MIN_VALIDATOR_STAKE_WEI" =~ ^[0-9]+$ ]]; then
-    die "network.min_validator_stake_wei must be an unsigned integer in wei, got: $MIN_VALIDATOR_STAKE_WEI"
-fi
 if ! [[ "$FORK_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
     die "network.fork_delay_seconds must be an unsigned integer in seconds, got: $FORK_DELAY_SECONDS"
 fi
+case "$BOOTSTRAP_SIGNER_MODE" in
+    same_address|separate)
+        ;;
+    *)
+        die "network.bootstrap.signer_mode must be one of same_address|separate, got: $BOOTSTRAP_SIGNER_MODE"
+        ;;
+esac
+case "$BOOTSTRAP_FEE_MODE" in
+    validator|signer)
+        ;;
+    *)
+        die "network.bootstrap.fee_mode must be one of validator|signer, got: $BOOTSTRAP_FEE_MODE"
+        ;;
+esac
+for balance_spec in \
+    "network.bootstrap.validator_balance_wei:$BOOTSTRAP_VALIDATOR_BALANCE_WEI" \
+    "network.bootstrap.signer_balance_wei:$BOOTSTRAP_SIGNER_BALANCE_WEI" \
+    "network.bootstrap.fee_balance_wei:$BOOTSTRAP_FEE_BALANCE_WEI"; do
+    key="${balance_spec%%:*}"
+    value="${balance_spec#*:}"
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        die "$key must be an unsigned integer in wei, got: $value"
+    fi
+done
 case "$BLACKLIST_MODE" in
     mock|real)
         ;;
@@ -380,6 +534,24 @@ if [ "$GENESIS_MODE" = "smoke" ]; then
             ;;
     esac
 fi
+if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ] && ! [[ "$UPGRADE_OVERRIDE_POSA_TIME" =~ ^[0-9]+$ ]]; then
+    die "network.upgrade_override.posa_time must be an unsigned integer timestamp, got: $UPGRADE_OVERRIDE_POSA_TIME"
+fi
+
+if [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS_RAW" ]; then
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$(csv_addresses_to_json "$UPGRADE_OVERRIDE_POSA_VALIDATORS_RAW")"
+else
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$CFG_UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON"
+fi
+if [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS_RAW" ]; then
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$(csv_addresses_to_json "$UPGRADE_OVERRIDE_POSA_SIGNERS_RAW")"
+else
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$CFG_UPGRADE_OVERRIDE_POSA_SIGNERS_JSON"
+fi
+
+validate_optional_upgrade_override "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" "$GENESIS_MODE" "$FORK_TARGET"
+UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
+UPGRADE_OVERRIDE_POSA_SIGNERS_CSV="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
 
 NODE_IMPL_CONFIGS=("$NODE0_IMPL_CFG" "$NODE1_IMPL_CFG" "$NODE2_IMPL_CFG" "$NODE3_IMPL_CFG")
 for i in $(seq 0 $((NUM_NODES-1))); do
@@ -390,6 +562,14 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     node_impl="$(resolve_node_impl "$i" "$node_cfg")"
     RUNTIME_NODE_IMPLS+=("$node_impl")
 done
+
+if { [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ] || [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV" ] || [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS_CSV" ]; }; then
+    for node_impl in "${RUNTIME_NODE_IMPLS[@]}"; do
+        if [ "$node_impl" = "reth" ]; then
+            die "upgrade override currently supports geth runtime only; reth node detected"
+        fi
+    done
+fi
 
 # We generate for 0..3 (4 nodes). 0-2 are validators, 3 is sync.
 for i in $(seq 0 $((NUM_NODES-1))); do
@@ -416,20 +596,41 @@ for i in $(seq 0 $((NUM_NODES-1))); do
         IFS=',' read -r ADDR PRIV PUB <<< "$(generate_key "validator-$i")"
         ADDR=$(echo "$ADDR" | tr -d '[:space:]')
         [ -n "$ADDR" ] || die "failed to generate validator key for node$i"
+        SIGNER_ADDR="$ADDR"
+        SIGNER_PRIV="$PRIV"
+        if [ "$BOOTSTRAP_SIGNER_MODE" = "separate" ]; then
+            IFS=',' read -r SIGNER_ADDR SIGNER_PRIV SIGNER_PUB <<< "$(generate_key "signer-$i")"
+            SIGNER_ADDR=$(echo "$SIGNER_ADDR" | tr -d '[:space:]')
+            [ -n "$SIGNER_ADDR" ] || die "failed to generate signer key for node$i"
+        fi
+        FEE_ADDR="$ADDR"
+        if [ "$BOOTSTRAP_FEE_MODE" = "signer" ]; then
+            FEE_ADDR="$SIGNER_ADDR"
+        fi
         VAL_ADDRS+=("$ADDR")
         VAL_PRIVS+=("$PRIV")
-        echo "Validator $i: $ADDR"
+        SIGNER_ADDRS+=("$SIGNER_ADDR")
+        SIGNER_PRIVS+=("$SIGNER_PRIV")
+        FEE_ADDRS+=("$FEE_ADDR")
+        echo "Validator $i: cold=$ADDR signer=$SIGNER_ADDR fee=$FEE_ADDR"
         echo "$PRIV" > "$DATA_DIR/node$i/validator.key"
         echo "$ADDR" > "$DATA_DIR/node$i/validator.addr"
+        echo "$SIGNER_PRIV" > "$DATA_DIR/node$i/signer.key"
+        echo "$SIGNER_ADDR" > "$DATA_DIR/node$i/signer.addr"
         printf '%s\n' "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" > "$DATA_DIR/node$i/password.txt"
 
-        keystore_file="$(generate_keystore "$PRIV" "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" "$DATA_DIR/node$i/keystore" "$DATA_DIR/node$i/keystore.addr")"
+        keystore_file="$(generate_keystore "$SIGNER_PRIV" "$VALIDATOR_KEYSTORE_PASSWORD_VALUE" "$DATA_DIR/node$i/keystore" "$DATA_DIR/node$i/keystore.addr")"
         VAL_KEYSTORE_FILES+=("$keystore_file")
         VAL_KEYSTORE_ADDRS+=("$(tr -d '[:space:]' < "$DATA_DIR/node$i/keystore.addr")")
     else
         echo "Node $i: Sync Node (No validator key)"
     fi
 done
+
+BOOTSTRAP_VALIDATORS_JSON="$(printf '%s\n' "${VAL_ADDRS[@]}" | jq -R . | jq -cs .)"
+BOOTSTRAP_SIGNERS_JSON="$(printf '%s\n' "${SIGNER_ADDRS[@]}" | jq -R . | jq -cs .)"
+BOOTSTRAP_FEE_ADDRS_JSON="$(printf '%s\n' "${FEE_ADDRS[@]}" | jq -R . | jq -cs .)"
+validate_bootstrap_mapping "$BOOTSTRAP_VALIDATORS_JSON" "$BOOTSTRAP_SIGNERS_JSON"
 
 cat > "$DATA_DIR/runtime_nodes.yaml" <<EOF
 runtime:
@@ -457,6 +658,9 @@ EOF
         cat >> "$DATA_DIR/runtime_nodes.yaml" <<EOF
     validator_key: "$DATA_DIR/node$i/validator.key"
     validator_address: "$(tr -d '[:space:]' < "$DATA_DIR/node$i/validator.addr")"
+    signer_key: "$DATA_DIR/node$i/signer.key"
+    signer_address: "$(tr -d '[:space:]' < "$DATA_DIR/node$i/signer.addr")"
+    fee_address: "${FEE_ADDRS[$i]}"
     keystore_file: "${VAL_KEYSTORE_FILES[$i]}"
     keystore_address: "${VAL_KEYSTORE_ADDRS[$i]}"
     password_file: "$DATA_DIR/node$i/password.txt"
@@ -526,9 +730,6 @@ if [ "$USE_POA_ALLOC" = true ]; then
 else
     CHAIN_CONTRACT_ROOT="$CHAIN_CONTRACT_ROOT" \
     CHAIN_CONTRACT_OUT="$CONTRACT_OUT_DIR" \
-    PREFUND_STAKING="$PREFUND_STAKING_INITIAL_STAKE" \
-    MIN_VALIDATOR_STAKE_WEI="$MIN_VALIDATOR_STAKE_WEI" \
-    VALIDATOR_COUNT="$NUM_VALIDATORS" \
     node "$SCRIPT_DIR/build_alloc.js" > "$DATA_DIR/sys_contracts.json"
     if [ $? -ne 0 ]; then
         echo "❌ Failed to generate system contracts alloc"
@@ -536,12 +737,19 @@ else
     fi
 fi
 
-# Add Funder and Validators to Alloc
-# Prepare comma-separated validators list
-VAL_ADDRS_CSV=$(IFS=,; echo "${VAL_ADDRS[*]}")
-
-echo "Merging alloc with funder and validators..."
-ALLOC_JSON=$(node "$SCRIPT_DIR/merge_alloc.js" "$DATA_DIR/sys_contracts.json" "$FUNDER_ADDR" "$VAL_ADDRS_CSV")
+# Add Funder and bootstrap identities to alloc
+echo "Merging alloc with funder and bootstrap validator/signer balances..."
+ALLOC_JSON=$(
+    BOOTSTRAP_VALIDATORS_JSON="$BOOTSTRAP_VALIDATORS_JSON" \
+    BOOTSTRAP_SIGNERS_JSON="$BOOTSTRAP_SIGNERS_JSON" \
+    BOOTSTRAP_FEE_ADDRESSES_JSON="$BOOTSTRAP_FEE_ADDRS_JSON" \
+    UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON="$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" \
+    UPGRADE_OVERRIDE_POSA_SIGNERS_JSON="$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" \
+    BOOTSTRAP_VALIDATOR_BALANCE_WEI="$BOOTSTRAP_VALIDATOR_BALANCE_WEI" \
+    BOOTSTRAP_SIGNER_BALANCE_WEI="$BOOTSTRAP_SIGNER_BALANCE_WEI" \
+    BOOTSTRAP_FEE_BALANCE_WEI="$BOOTSTRAP_FEE_BALANCE_WEI" \
+    node "$SCRIPT_DIR/merge_alloc.js" "$DATA_DIR/sys_contracts.json" "$FUNDER_ADDR"
+)
 if [ $? -ne 0 ]; then
     echo "❌ Failed to merge alloc"
     exit 1
@@ -549,7 +757,7 @@ fi
 
 VANITY="0000000000000000000000000000000000000000000000000000000000000000"
 VALIDATORS_HEX=""
-for addr in "${VAL_ADDRS[@]}"; do
+for addr in "${SIGNER_ADDRS[@]}"; do
     # Remove 0x prefix
     VALIDATORS_HEX+="${addr:2}"
 done
@@ -566,8 +774,17 @@ if [ "$BLACKLIST_ENABLED" = true ] && [ "$BLACKLIST_MODE" = "mock" ] && [ "$BLAC
     mv "$DATA_DIR/alloc.with_blacklist.json" "$DATA_DIR/alloc.json"
 fi
 
-jq --slurpfile allocList "$DATA_DIR/alloc.json" --arg extra "$EXTRA_DATA" --arg epoch "$NETWORK_EPOCH" \
-   '.alloc = $allocList[0] | .extraData = $extra | .config.congress.epoch = ($epoch | tonumber)' "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
+jq --slurpfile allocList "$DATA_DIR/alloc.json" \
+   --arg extra "$EXTRA_DATA" \
+   --arg epoch "$NETWORK_EPOCH" \
+   --argjson initialValidators "$BOOTSTRAP_VALIDATORS_JSON" \
+   --argjson initialSigners "$BOOTSTRAP_SIGNERS_JSON" \
+   '.alloc = $allocList[0]
+    | .extraData = $extra
+    | .config.congress.epoch = ($epoch | tonumber)
+    | .config.congress.initialValidators = $initialValidators
+    | .config.congress.initialSigners = $initialSigners' \
+   "$TEMPLATE_GENESIS" > "$DATA_DIR/genesis.json"
 
 # Apply mode-specific fork schedule after template merge.
 if [ ! -f "$FORK_SCHEDULER_SCRIPT" ]; then
@@ -585,6 +802,50 @@ FORK_SHANGHAI_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.shanghaiT
 FORK_CANCUN_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.cancunTime // 0')"
 FORK_FIX_HEADER_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.fixHeaderTime // 0')"
 FORK_POSA_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.posaTime // 0')"
+FORK_RUNTIME_SHANGHAI_TIME="$FORK_SHANGHAI_TIME"
+FORK_RUNTIME_CANCUN_TIME="$FORK_CANCUN_TIME"
+FORK_RUNTIME_FIX_HEADER_TIME="$FORK_FIX_HEADER_TIME"
+FORK_RUNTIME_POSA_TIME="$FORK_POSA_TIME"
+FORK_RUNTIME_SCHEDULED_TIME="$FORK_SCHEDULED_TIME"
+if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]; then
+    FORK_RUNTIME_POSA_TIME="$UPGRADE_OVERRIDE_POSA_TIME"
+    case "$FORK_EFFECTIVE_TARGET" in
+        posaTime|poa_shanghai_cancun_fixheader_posa)
+            FORK_RUNTIME_SCHEDULED_TIME="$UPGRADE_OVERRIDE_POSA_TIME"
+            ;;
+    esac
+fi
+
+python3 - "$DATA_DIR/genesis.json" "$BOOTSTRAP_SIGNERS_JSON" "$BOOTSTRAP_VALIDATORS_JSON" <<'PY'
+import json
+import sys
+
+genesis_path, expected_signers_json, expected_validators_json = sys.argv[1:]
+expected_signers = json.loads(expected_signers_json)
+expected_validators = json.loads(expected_validators_json)
+
+with open(genesis_path, "r", encoding="utf-8") as fh:
+    genesis = json.load(fh)
+
+congress = genesis.get("config", {}).get("congress", {})
+actual_validators = congress.get("initialValidators", [])
+actual_signers = congress.get("initialSigners", [])
+if actual_validators != expected_validators:
+    raise SystemExit(f"genesis initialValidators mismatch: {actual_validators} != {expected_validators}")
+if actual_signers != expected_signers:
+    raise SystemExit(f"genesis initialSigners mismatch: {actual_signers} != {expected_signers}")
+
+extra = genesis.get("extraData", "")
+if not isinstance(extra, str) or not extra.startswith("0x"):
+    raise SystemExit("genesis extraData is missing or invalid")
+hexdata = extra[2:]
+if len(hexdata) < (64 + 130):
+    raise SystemExit("genesis extraData too short for congress signers")
+signer_hex = hexdata[64:-130]
+actual_extra_signers = [f"0x{signer_hex[i:i+40]}" for i in range(0, len(signer_hex), 40) if signer_hex[i:i+40]]
+if sorted(addr.lower() for addr in actual_extra_signers) != sorted(addr.lower() for addr in expected_signers):
+    raise SystemExit(f"genesis extraData signer set mismatch: {actual_extra_signers} != {expected_signers}")
+PY
 
 # 3. Generate test_config.yaml
 echo "Generating test_config.yaml..."
@@ -603,6 +864,9 @@ for i in $(seq 0 $((NUM_VALIDATORS-1))); do
 cat >> "$DATA_DIR/test_config.yaml" <<EOF
   - address: "${VAL_ADDRS[$i]}"
     private_key: "${VAL_PRIVS[$i]}"
+    signer_address: "${SIGNER_ADDRS[$i]}"
+    signer_private_key: "${SIGNER_PRIVS[$i]}"
+    fee_address: "${FEE_ADDRS[$i]}"
 EOF
 done
 
@@ -678,13 +942,17 @@ test:
 fork:
   mode: "$GENESIS_MODE"
   target: "$FORK_EFFECTIVE_TARGET"
-  scheduled_time: $FORK_SCHEDULED_TIME
+  scheduled_time: $FORK_RUNTIME_SCHEDULED_TIME
   delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
   schedule:
-    shanghai_time: $FORK_SHANGHAI_TIME
-    cancun_time: $FORK_CANCUN_TIME
-    fix_header_time: $FORK_FIX_HEADER_TIME
-    posa_time: $FORK_POSA_TIME
+    shanghai_time: $FORK_RUNTIME_SHANGHAI_TIME
+    cancun_time: $FORK_RUNTIME_CANCUN_TIME
+    fix_header_time: $FORK_RUNTIME_FIX_HEADER_TIME
+    posa_time: $FORK_RUNTIME_POSA_TIME
+  override:
+    posa_time: ${UPGRADE_OVERRIDE_POSA_TIME:-}
+    posa_validators: $UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON
+    posa_signers: $UPGRADE_OVERRIDE_POSA_SIGNERS_JSON
 
 blacklist:
   enabled: $BLACKLIST_ENABLED
@@ -720,6 +988,15 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     role: "$role"
     impl: "${RUNTIME_NODE_IMPLS[$i]}"
 EOF
+    if [ "$i" -lt "$NUM_VALIDATORS" ]; then
+        cat >> "$DATA_DIR/test_config.yaml" <<EOF
+    validator_key: "$DATA_DIR/node$i/validator.key"
+    validator_address: "${VAL_ADDRS[$i]}"
+    signer_key: "$DATA_DIR/node$i/signer.key"
+    signer_address: "${SIGNER_ADDRS[$i]}"
+    fee_address: "${FEE_ADDRS[$i]}"
+EOF
+    fi
 done
 
 awk \
@@ -797,7 +1074,10 @@ awk \
   -v enabled="$BLACKLIST_ENABLED" \
   -v addr="$BLACKLIST_CONTRACT_ADDR" \
   -v mode="$BLACKLIST_MODE" \
-  -v alert="$BLACKLIST_ALERT_FAIL_OPEN" '
+  -v alert="$BLACKLIST_ALERT_FAIL_OPEN" \
+  -v override_posa_time="${UPGRADE_OVERRIDE_POSA_TIME:-}" \
+  -v override_posa_validators="$UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV" \
+  -v override_posa_signers="$UPGRADE_OVERRIDE_POSA_SIGNERS_CSV" '
   /^  node[0-3]:$/ {
     in_node = 1
   }
@@ -810,6 +1090,9 @@ awk \
     print "      - BLACKLIST_CONTRACT_ADDR=" addr
     print "      - BLACKLIST_MODE=" mode
     print "      - BLACKLIST_ALERT_FAIL_OPEN=" alert
+    print "      - UPGRADE_OVERRIDE_POSA_TIME=" override_posa_time
+    print "      - UPGRADE_OVERRIDE_POSA_VALIDATORS=" override_posa_validators
+    print "      - UPGRADE_OVERRIDE_POSA_SIGNERS=" override_posa_signers
   }
 ' "$DATA_DIR/docker-compose.runtime.yml" > "$DATA_DIR/docker-compose.runtime.with_blacklist.yml"
 mv "$DATA_DIR/docker-compose.runtime.with_blacklist.yml" "$DATA_DIR/docker-compose.runtime.yml"
@@ -850,16 +1133,30 @@ network:
   fork_target: "$FORK_EFFECTIVE_TARGET"
   fork_delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
 
+bootstrap:
+  signer_mode: "$BOOTSTRAP_SIGNER_MODE"
+  fee_mode: "$BOOTSTRAP_FEE_MODE"
+  validator_balance_wei: "$BOOTSTRAP_VALIDATOR_BALANCE_WEI"
+  signer_balance_wei: "$BOOTSTRAP_SIGNER_BALANCE_WEI"
+  fee_balance_wei: "$BOOTSTRAP_FEE_BALANCE_WEI"
+  validators: $BOOTSTRAP_VALIDATORS_JSON
+  signers: $BOOTSTRAP_SIGNERS_JSON
+  fee_addresses: $BOOTSTRAP_FEE_ADDRS_JSON
+
 fork:
   mode: "$GENESIS_MODE"
   target: "$FORK_EFFECTIVE_TARGET"
-  scheduled_time: $FORK_SCHEDULED_TIME
+  scheduled_time: $FORK_RUNTIME_SCHEDULED_TIME
   delay_seconds: $FORK_EFFECTIVE_DELAY_SECONDS
   schedule:
-    shanghai_time: $FORK_SHANGHAI_TIME
-    cancun_time: $FORK_CANCUN_TIME
-    fix_header_time: $FORK_FIX_HEADER_TIME
-    posa_time: $FORK_POSA_TIME
+    shanghai_time: $FORK_RUNTIME_SHANGHAI_TIME
+    cancun_time: $FORK_RUNTIME_CANCUN_TIME
+    fix_header_time: $FORK_RUNTIME_FIX_HEADER_TIME
+    posa_time: $FORK_RUNTIME_POSA_TIME
+  override:
+    posa_time: ${UPGRADE_OVERRIDE_POSA_TIME:-}
+    posa_validators: $UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON
+    posa_signers: $UPGRADE_OVERRIDE_POSA_SIGNERS_JSON
 
 paths:
   chain_root: "$CHAIN_ROOT"
@@ -930,6 +1227,11 @@ jq -n \
   --arg reports_dir "$REPORTS_DIR" \
   --arg genesis_mode "$GENESIS_MODE" \
   --arg fork_target "$FORK_EFFECTIVE_TARGET" \
+  --arg bootstrap_signer_mode "$BOOTSTRAP_SIGNER_MODE" \
+  --arg bootstrap_fee_mode "$BOOTSTRAP_FEE_MODE" \
+  --arg bootstrap_validator_balance "$BOOTSTRAP_VALIDATOR_BALANCE_WEI" \
+  --arg bootstrap_signer_balance "$BOOTSTRAP_SIGNER_BALANCE_WEI" \
+  --arg bootstrap_fee_balance "$BOOTSTRAP_FEE_BALANCE_WEI" \
   --arg chain_root "$CHAIN_ROOT" \
   --arg reth_root "$RETH_ROOT" \
   --arg chain_contract_root "$CHAIN_CONTRACT_ROOT" \
@@ -959,12 +1261,18 @@ jq -n \
   --argjson node_count "$NUM_NODES" \
   --argjson validator_count "$NUM_VALIDATORS" \
   --argjson epoch "$NETWORK_EPOCH" \
-  --argjson fork_scheduled_time "$FORK_SCHEDULED_TIME" \
+  --argjson fork_scheduled_time "$FORK_RUNTIME_SCHEDULED_TIME" \
   --argjson fork_delay_seconds "$FORK_EFFECTIVE_DELAY_SECONDS" \
-  --argjson shanghai_time "$FORK_SHANGHAI_TIME" \
-  --argjson cancun_time "$FORK_CANCUN_TIME" \
-  --argjson fix_header_time "$FORK_FIX_HEADER_TIME" \
-  --argjson posa_time "$FORK_POSA_TIME" \
+  --argjson shanghai_time "$FORK_RUNTIME_SHANGHAI_TIME" \
+  --argjson cancun_time "$FORK_RUNTIME_CANCUN_TIME" \
+  --argjson fix_header_time "$FORK_RUNTIME_FIX_HEADER_TIME" \
+  --argjson posa_time "$FORK_RUNTIME_POSA_TIME" \
+  --arg override_posa_time "${UPGRADE_OVERRIDE_POSA_TIME:-}" \
+  --argjson bootstrap_validators "$BOOTSTRAP_VALIDATORS_JSON" \
+  --argjson bootstrap_signers "$BOOTSTRAP_SIGNERS_JSON" \
+  --argjson bootstrap_fee_addresses "$BOOTSTRAP_FEE_ADDRS_JSON" \
+  --argjson override_posa_validators "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" \
+  --argjson override_posa_signers "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" \
   --argjson runtime_nodes "$RUNTIME_NODES_JSON" \
   '{
     session: {
@@ -989,6 +1297,16 @@ jq -n \
       fork_target: $fork_target,
       fork_delay_seconds: $fork_delay_seconds
     },
+    bootstrap: {
+      signer_mode: $bootstrap_signer_mode,
+      fee_mode: $bootstrap_fee_mode,
+      validator_balance_wei: $bootstrap_validator_balance,
+      signer_balance_wei: $bootstrap_signer_balance,
+      fee_balance_wei: $bootstrap_fee_balance,
+      validators: $bootstrap_validators,
+      signers: $bootstrap_signers,
+      fee_addresses: $bootstrap_fee_addresses
+    },
     fork: {
       mode: $genesis_mode,
       target: $fork_target,
@@ -999,6 +1317,11 @@ jq -n \
         cancun_time: $cancun_time,
         fix_header_time: $fix_header_time,
         posa_time: $posa_time
+      },
+      override: {
+        posa_time: (if ($override_posa_time | length) == 0 then null else ($override_posa_time | tonumber) end),
+        posa_validators: $override_posa_validators,
+        posa_signers: $override_posa_signers
       }
     },
     paths: {
@@ -1044,5 +1367,5 @@ jq -n \
     }
   }' > "$SESSION_JSON_FILE"
 
-echo "✅ Configuration generated at $DATA_DIR"
-echo "✅ Runtime session snapshot: $RUNTIME_SESSION_FILE"
+echo "ℹ️  Configuration generated at $DATA_DIR"
+echo "ℹ️  Runtime session snapshot: $RUNTIME_SESSION_FILE"

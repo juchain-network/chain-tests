@@ -92,11 +92,15 @@ network:
   # signer_mode:
   # - same_address: validator cold address is also the runtime signer
   # - separate: generate a dedicated signer hot key per validator node
+  # Local bootstrap identities are pinned to the Hardhat default mnemonic:
+  # - funder: index 0
+  # - validators: index 1..3
+  # - separate signers: index 4..6
   # fee_mode:
   # - validator: fee income is withdrawn by validator cold address
   # - signer: fee income is withdrawn by signer hot address
   bootstrap:
-    signer_mode: "same_address"
+    signer_mode: "separate"
     fee_mode: "validator"
     # Bootstrap validators must hold enough balance for block-1 self-stake.
     # Keep this comfortably above Proposal.minValidatorStake.

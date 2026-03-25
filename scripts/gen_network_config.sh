@@ -41,7 +41,7 @@ PROFILE_WITHDRAW_PROFIT_PERIOD="$(profile_get "withdraw_profit_period" "2")"
 PROFILE_COMMISSION_UPDATE_COOLDOWN="$(profile_get "commission_update_cooldown" "1")"
 PROFILE_PROPOSAL_LASTING_PERIOD="$(profile_get "proposal_lasting_period" "30")"
 SMOKE_OBSERVE_SECONDS="$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")"
-BOOTSTRAP_SIGNER_MODE="${BOOTSTRAP_SIGNER_MODE:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.signer_mode" "same_address")}"
+BOOTSTRAP_SIGNER_MODE="${BOOTSTRAP_SIGNER_MODE:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.signer_mode" "separate")}"
 BOOTSTRAP_FEE_MODE="${BOOTSTRAP_FEE_MODE:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.fee_mode" "validator")}"
 BOOTSTRAP_VALIDATOR_BALANCE_WEI="${BOOTSTRAP_VALIDATOR_BALANCE_WEI:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.validator_balance_wei" "1000000000000000000000000000")}"
 BOOTSTRAP_SIGNER_BALANCE_WEI="${BOOTSTRAP_SIGNER_BALANCE_WEI:-$(cfg_get "$CONFIG_FILE" "network.bootstrap.signer_balance_wei" "1000000000000000000")}"
@@ -261,7 +261,7 @@ echo "Using test profile: $TEST_PROFILE"
 echo "Requested topology: ${TOPOLOGY:-auto}"
 echo "Using genesis mode: $GENESIS_MODE"
 echo "Using runtime impl: mode=$RUNTIME_IMPL_MODE default=$DEFAULT_RUNTIME_IMPL auth=$VALIDATOR_AUTH_MODE"
-echo "Using bootstrap identities: signer_mode=$BOOTSTRAP_SIGNER_MODE fee_mode=$BOOTSTRAP_FEE_MODE"
+echo "Using bootstrap identities: signer_mode=$BOOTSTRAP_SIGNER_MODE fee_mode=$BOOTSTRAP_FEE_MODE (Hardhat funder=0 validators=1..3 signers=4..6)"
 echo "Using runtime backend: $SESSION_BACKEND"
 echo "Using blacklist: enabled=$BLACKLIST_ENABLED mode=$BLACKLIST_MODE addr=$BLACKLIST_CONTRACT_ADDR"
 if [ "$GENESIS_MODE" = "upgrade" ]; then
@@ -278,6 +278,16 @@ generate_key() {
     local output
     if ! output=$(cd "$ROOT_DIR" && go run ./cmd/genkeys "$seed"); then
         echo "❌ genkeys failed for seed '${seed}'" >&2
+        exit 1
+    fi
+    echo "$output"
+}
+
+generate_hardhat_key() {
+    local index="$1"
+    local output
+    if ! output=$(cd "$ROOT_DIR" && go run ./cmd/genhardhat "$index"); then
+        echo "❌ genhardhat failed for index ${index}" >&2
         exit 1
     fi
     echo "$output"
@@ -414,15 +424,6 @@ validate("override.signers", signers)
 PY
 }
 
-# Generate Keys
-echo "Generating keys..."
-# Funder
-IFS=',' read -r FUNDER_ADDR FUNDER_PRIV FUNDER_PUB <<< "$(generate_key "funder-0")"
-# Trim any potential whitespace/newlines
-FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
-[ -n "$FUNDER_ADDR" ] || die "failed to generate funder key"
-echo "Funder: $FUNDER_ADDR"
-
 # Validators + sync node
 if [ "$TOPOLOGY" = "single" ]; then
     NUM_VALIDATORS=1
@@ -553,6 +554,18 @@ validate_optional_upgrade_override "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" "$UP
 UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
 UPGRADE_OVERRIDE_POSA_SIGNERS_CSV="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
 
+# Generate Keys
+echo "Generating keys..."
+if [ "$NUM_VALIDATORS" -gt 3 ] && [ "$BOOTSTRAP_SIGNER_MODE" = "separate" ]; then
+    die "separate bootstrap signer mapping currently supports up to 3 validators (Hardhat indices 1..3 for validators, 4..6 for signers), got: $NUM_VALIDATORS"
+fi
+# Funder
+IFS=',' read -r FUNDER_ADDR FUNDER_PRIV FUNDER_PUB <<< "$(generate_hardhat_key 0)"
+# Trim any potential whitespace/newlines
+FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
+[ -n "$FUNDER_ADDR" ] || die "failed to generate funder key"
+echo "Funder: $FUNDER_ADDR"
+
 NODE_IMPL_CONFIGS=("$NODE0_IMPL_CFG" "$NODE1_IMPL_CFG" "$NODE2_IMPL_CFG" "$NODE3_IMPL_CFG")
 for i in $(seq 0 $((NUM_NODES-1))); do
     node_cfg=""
@@ -593,13 +606,13 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     
     if [ $i -lt $NUM_VALIDATORS ]; then
         # Validator keys for 0-2
-        IFS=',' read -r ADDR PRIV PUB <<< "$(generate_key "validator-$i")"
+        IFS=',' read -r ADDR PRIV PUB <<< "$(generate_hardhat_key "$((i + 1))")"
         ADDR=$(echo "$ADDR" | tr -d '[:space:]')
         [ -n "$ADDR" ] || die "failed to generate validator key for node$i"
         SIGNER_ADDR="$ADDR"
         SIGNER_PRIV="$PRIV"
         if [ "$BOOTSTRAP_SIGNER_MODE" = "separate" ]; then
-            IFS=',' read -r SIGNER_ADDR SIGNER_PRIV SIGNER_PUB <<< "$(generate_key "signer-$i")"
+            IFS=',' read -r SIGNER_ADDR SIGNER_PRIV SIGNER_PUB <<< "$(generate_hardhat_key "$((i + 4))")"
             SIGNER_ADDR=$(echo "$SIGNER_ADDR" | tr -d '[:space:]')
             [ -n "$SIGNER_ADDR" ] || die "failed to generate signer key for node$i"
         fi

@@ -17,10 +17,11 @@ This document outlines the end-to-end integration test paths for JuChain system 
 - Fresh PoSA genesis must write both `config.congress.initialValidators` and `config.congress.initialSigners`.
 - `extraData` must commit the signer hot-address set, not the validator cold-address set.
 - Bootstrap self-stake is funded from validator cold-address alloc; the test generator must not rely on prefunding the `Staking` contract.
-- Local generation should support both `same_address` and `separate` signer modes so the same test cases can cover cold/hot identity split.
+- Local generation keeps supporting both `same_address` and `separate` signer modes, but the default bootstrap mode is now `separate`.
+- Base bootstrap identities are pinned to the Hardhat mnemonic set for stable local debugging: funder=index 0, single-validator cold=index 1, multi-validator colds=index 1..3, single signer=index 4, multi signers=index 4..6.
 
 **Scenario Entrypoints**:
-- `make test-scenario SCENARIO=bootstrap` validates same/separate bootstrap generation and the single-topology native dispatcher path.
+- `make test-scenario SCENARIO=bootstrap` validates Hardhat-fixed bootstrap identities, same/separate generation, single/multi topology mapping, and the single-topology native dispatcher path.
 - `make test-scenario SCENARIO=upgrade` validates CLI override propagation (`--override.posaTime`, `--override.posaValidators`, `--override.posaSigners`) and the PoA->PoSA override mapping path.
 - `make test-scenario SCENARIO=checkpoint` validates all three checkpoint signer-split paths:
   - rewards still settle through the old runtime signer on the checkpoint block

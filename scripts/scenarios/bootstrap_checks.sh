@@ -29,26 +29,53 @@ cfg_path, genesis_path, expected_mode, expected_same, expected_single = sys.argv
 want_same = expected_same == "true"
 want_single = expected_single == "true"
 
+expected_funder = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+expected_validators = [
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+    "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+]
+expected_separate_signers = [
+    "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+    "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
+    "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+]
+
 with open(cfg_path, "r", encoding="utf-8") as fh:
     cfg = yaml.safe_load(fh) or {}
 with open(genesis_path, "r", encoding="utf-8") as fh:
     genesis = json.load(fh)
+
+funder = ((cfg.get("funder") or {}).get("address") or "").lower()
+if funder != expected_funder:
+    raise SystemExit(f"unexpected funder address: {funder} != {expected_funder}")
 
 validators = cfg.get("validators") or []
 if want_single and len(validators) != 1:
     raise SystemExit(f"expected single-topology validator count=1, got {len(validators)}")
 if not validators:
     raise SystemExit("generated validators list is empty")
+if len(validators) > len(expected_validators):
+    raise SystemExit(f"unexpected validator count for fixed bootstrap mapping: {len(validators)}")
 
-for item in validators:
+for idx, item in enumerate(validators):
     validator = (item.get("address") or "").lower()
     signer = (item.get("signer_address") or "").lower()
     if not validator or not signer:
         raise SystemExit("validator or signer address missing in test_config.yaml")
+    expected_validator = expected_validators[idx]
+    if validator != expected_validator:
+        raise SystemExit(f"validator[{idx}] mismatch: {validator} != {expected_validator}")
     if want_same and validator != signer:
         raise SystemExit(f"expected same-address mode but got validator={validator} signer={signer}")
     if not want_same and validator == signer:
         raise SystemExit(f"expected separate signer mode but got same address {validator}")
+    if want_same and signer != expected_validator:
+        raise SystemExit(f"same-address signer[{idx}] mismatch: {signer} != {expected_validator}")
+    if not want_same:
+        expected_signer = expected_separate_signers[idx]
+        if signer != expected_signer:
+            raise SystemExit(f"signer[{idx}] mismatch: {signer} != {expected_signer}")
 
 congress = (genesis.get("config") or {}).get("congress") or {}
 initial_validators = congress.get("initialValidators") or []
@@ -90,7 +117,18 @@ BOOTSTRAP_SIGNER_MODE=separate \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
 validate_mode "separate" "false" "true"
 
+echo "[scenario/bootstrap] generate separate-signer multi-topology config"
+TEST_ENV_CONFIG="$CONFIG_FILE" \
+TOPOLOGY=multi \
+BOOTSTRAP_SIGNER_MODE=separate \
+bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
+validate_mode "separate" "false" "false"
+
 echo "[scenario/bootstrap] validate native main path delegates single topology"
+TEST_ENV_CONFIG="$CONFIG_FILE" \
+TOPOLOGY=single \
+BOOTSTRAP_SIGNER_MODE=separate \
+bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
 bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
 bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
 bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"

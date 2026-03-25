@@ -46,7 +46,7 @@ network:
   data_dir: "./data"
   reports_dir: "./reports"
   bootstrap:
-    signer_mode: "same_address"
+    signer_mode: "separate"
     fee_mode: "validator"
     validator_balance_wei: "1000000000000000000000000000"
     signer_balance_wei: "1000000000000000000"

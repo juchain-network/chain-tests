@@ -17,6 +17,27 @@ func keyForAddress(addr common.Address) *ecdsa.PrivateKey {
 	return ctx.ValidatorKeyByAddress(addr)
 }
 
+func signerIdentityForValidator(addr common.Address, fallbackKey *ecdsa.PrivateKey) (common.Address, *ecdsa.PrivateKey) {
+	if ctx == nil {
+		return common.Address{}, nil
+	}
+
+	signerAddr, err := ctx.SignerAddressByValidator(addr)
+	if err != nil || signerAddr == (common.Address{}) {
+		signerAddr = addr
+	}
+
+	if signerKey := ctx.SignerKeyByAddress(signerAddr); signerKey != nil {
+		return signerAddr, signerKey
+	}
+
+	if fallbackKey != nil && crypto.PubkeyToAddress(fallbackKey.PublicKey) == signerAddr {
+		return signerAddr, fallbackKey
+	}
+
+	return signerAddr, nil
+}
+
 func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 	if ctx == nil || len(ctx.Clients) == 0 {
 		t.Fatalf("Context not initialized")

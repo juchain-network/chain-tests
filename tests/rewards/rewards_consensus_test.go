@@ -200,12 +200,14 @@ func TestI_ConsensusRewards(t *testing.T) {
 		}
 
 		var (
-			targetAddr common.Address
-			targetKey  *ecdsa.PrivateKey
+			targetAddr       common.Address
+			targetSignerAddr common.Address
+			targetSignerKey  *ecdsa.PrivateKey
 		)
 		for _, addr := range active {
-			key := keyForAddress(addr)
-			if key == nil {
+			coldKey := keyForAddress(addr)
+			signerAddr, signerKey := signerIdentityForValidator(addr, coldKey)
+			if signerKey == nil {
 				continue
 			}
 			info, err := ctx.Staking.GetValidatorInfo(nil, addr)
@@ -213,11 +215,12 @@ func TestI_ConsensusRewards(t *testing.T) {
 				continue
 			}
 			targetAddr = addr
-			targetKey = key
+			targetSignerAddr = signerAddr
+			targetSignerKey = signerKey
 			break
 		}
-		if targetKey == nil || targetAddr == (common.Address{}) {
-			t.Skip("skip immediate jailed exclusion test: no eligible validator target")
+		if targetSignerKey == nil || targetAddr == (common.Address{}) || targetSignerAddr == (common.Address{}) {
+			t.Skip("skip immediate jailed exclusion test: no eligible validator signer target")
 		}
 
 		eligibleBefore, err := ctx.Validators.GetRewardEligibleValidatorsWithStakes(nil)
@@ -238,7 +241,7 @@ func TestI_ConsensusRewards(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to setup reporter: %v", err)
 		}
-		if err := submitDoubleSignEvidenceForRewardEligibility(targetKey, targetAddr, reporterKey); err != nil {
+		if err := submitDoubleSignEvidenceForRewardEligibility(targetAddr, targetSignerAddr, targetSignerKey, reporterKey); err != nil {
 			t.Fatalf("failed to submit double-sign evidence: %v", err)
 		}
 
@@ -329,15 +332,19 @@ func TestI_ConsensusRewards(t *testing.T) {
 }
 
 func submitDoubleSignEvidenceForRewardEligibility(
-	valKey *ecdsa.PrivateKey,
-	valAddr common.Address,
+	validatorAddr common.Address,
+	signerAddr common.Address,
+	signerKey *ecdsa.PrivateKey,
 	reporterKey *ecdsa.PrivateKey,
 ) error {
 	if ctx == nil {
 		return fmt.Errorf("context not initialized")
 	}
-	if valKey == nil || reporterKey == nil {
-		return fmt.Errorf("missing validator or reporter key")
+	if signerKey == nil || reporterKey == nil {
+		return fmt.Errorf("missing signer or reporter key")
+	}
+	if signerAddr == (common.Address{}) || validatorAddr == (common.Address{}) {
+		return fmt.Errorf("missing validator or signer address")
 	}
 
 	reporterAddr := crypto.PubkeyToAddress(reporterKey.PublicKey)
@@ -364,7 +371,7 @@ func submitDoubleSignEvidenceForRewardEligibility(
 		h1 := &types.Header{
 			ParentHash:  common.Hash{},
 			UncleHash:   types.EmptyUncleHash,
-			Coinbase:    valAddr,
+			Coinbase:    signerAddr,
 			Root:        common.Hash{},
 			TxHash:      types.EmptyRootHash,
 			ReceiptHash: types.EmptyRootHash,
@@ -381,7 +388,7 @@ func submitDoubleSignEvidenceForRewardEligibility(
 		h2 := &types.Header{
 			ParentHash:  common.Hash{},
 			UncleHash:   types.EmptyUncleHash,
-			Coinbase:    valAddr,
+			Coinbase:    signerAddr,
 			Root:        common.Hash{0x01},
 			TxHash:      types.EmptyRootHash,
 			ReceiptHash: types.EmptyRootHash,
@@ -396,13 +403,13 @@ func submitDoubleSignEvidenceForRewardEligibility(
 			Nonce:       types.BlockNonce{},
 		}
 
-		rlp1, err := signHeaderCliqueForRewards(h1, valKey)
+		rlp1, err := signHeaderCliqueForRewards(h1, signerKey)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to sign header 1: %w", err)
 			waitBlocks(nil, 1)
 			continue
 		}
-		rlp2, err := signHeaderCliqueForRewards(h2, valKey)
+		rlp2, err := signHeaderCliqueForRewards(h2, signerKey)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to sign header 2: %w", err)
 			waitBlocks(nil, 1)

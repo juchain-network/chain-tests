@@ -281,9 +281,12 @@ func TestZ_LastManStanding(t *testing.T) {
 			t.Fatalf("failed to create reporter account: %v", err)
 		}
 		reporterEOA := crypto.PubkeyToAddress(reporterKey.PublicKey)
-		lastKey := keyForAddress(last)
-		if lastKey == nil {
-			t.Fatalf("missing key for last validator %s", last.Hex())
+		lastSignerAddr, lastSignerKey := signerIdentityForValidator(last, keyForAddress(last))
+		if lastSignerKey == nil {
+			t.Fatalf("missing signer key for last validator %s (signer=%s)", last.Hex(), lastSignerAddr.Hex())
+		}
+		if !waitForSignerHistoricalOwner(t, lastSignerAddr, last, 2) {
+			t.Fatalf("signer %s never entered historical mapping for last validator %s", lastSignerAddr.Hex(), last.Hex())
 		}
 
 		submitDoubleSign := func() (*types.Receipt, error) {
@@ -309,7 +312,7 @@ func TestZ_LastManStanding(t *testing.T) {
 				h1 := &types.Header{
 					ParentHash:  common.Hash{},
 					UncleHash:   types.EmptyUncleHash,
-					Coinbase:    last,
+					Coinbase:    lastSignerAddr,
 					Root:        common.Hash{},
 					TxHash:      types.EmptyRootHash,
 					ReceiptHash: types.EmptyRootHash,
@@ -326,7 +329,7 @@ func TestZ_LastManStanding(t *testing.T) {
 				h2 := &types.Header{
 					ParentHash:  common.Hash{},
 					UncleHash:   types.EmptyUncleHash,
-					Coinbase:    last,
+					Coinbase:    lastSignerAddr,
 					Root:        common.Hash{0x01},
 					TxHash:      types.EmptyRootHash,
 					ReceiptHash: types.EmptyRootHash,
@@ -341,13 +344,13 @@ func TestZ_LastManStanding(t *testing.T) {
 					Nonce:       types.BlockNonce{},
 				}
 
-				rlp1, err := signHeaderCliqueForEpoch(h1, lastKey)
+				rlp1, err := signHeaderCliqueForEpoch(h1, lastSignerKey)
 				if err != nil {
 					lastErr = fmt.Errorf("failed to sign header 1: %w", err)
 					waitNextBlock()
 					continue
 				}
-				rlp2, err := signHeaderCliqueForEpoch(h2, lastKey)
+				rlp2, err := signHeaderCliqueForEpoch(h2, lastSignerKey)
 				if err != nil {
 					lastErr = fmt.Errorf("failed to sign header 2: %w", err)
 					waitNextBlock()

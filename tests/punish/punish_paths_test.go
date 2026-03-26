@@ -162,13 +162,13 @@ func TestG_PunishPaths(t *testing.T) {
 					continue
 				}
 
-				proposerKey, proposerAddr := pickInTurnValidatorForNextBlock(t)
+				proposerSignerKey, proposerAddr, _ := pickInTurnValidatorForNextBlock(t)
 				if proposerAddr == target {
 					waitBlocks(t, 1)
 					continue
 				}
 
-				opts, err := ctx.GetTransactorNoEpochWait(proposerKey, true)
+				opts, err := ctx.GetTransactorNoEpochWait(proposerSignerKey, true)
 				if err != nil {
 					lastErr = err
 					waitBlocks(t, 1)

@@ -18,6 +18,44 @@ func keyForAddress(addr common.Address) *ecdsa.PrivateKey {
 	return ctx.ValidatorKeyByAddress(addr)
 }
 
+func signerIdentityForValidator(addr common.Address, fallbackKey *ecdsa.PrivateKey) (common.Address, *ecdsa.PrivateKey) {
+	if ctx == nil {
+		return common.Address{}, nil
+	}
+
+	signerAddr, err := ctx.SignerAddressByValidator(addr)
+	if err != nil || signerAddr == (common.Address{}) {
+		signerAddr = addr
+	}
+
+	if signerKey := ctx.SignerKeyByAddress(signerAddr); signerKey != nil {
+		return signerAddr, signerKey
+	}
+
+	if fallbackKey != nil && crypto.PubkeyToAddress(fallbackKey.PublicKey) == signerAddr {
+		return signerAddr, fallbackKey
+	}
+
+	return signerAddr, nil
+}
+
+func waitForSignerHistoricalOwner(t *testing.T, signer common.Address, validator common.Address, maxEpochs int) bool {
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if maxEpochs < 1 {
+		maxEpochs = 1
+	}
+	for i := 0; i < maxEpochs; i++ {
+		owner, err := ctx.Validators.GetValidatorBySignerHistory(nil, signer)
+		if err == nil && owner == validator {
+			return true
+		}
+		waitForNextEpochBlock(t)
+	}
+	return false
+}
+
 func minerKeyOrSkip(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 	if ctx == nil || len(ctx.Clients) == 0 {
 		t.Fatalf("Context not initialized")
@@ -145,7 +183,7 @@ func getActiveProposerOrSkip(t *testing.T, maxEpochs int) *ecdsa.PrivateKey {
 	return nil
 }
 
-func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
+func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Address, common.Address) {
 	if ctx == nil {
 		t.Fatalf("Context not initialized")
 	}
@@ -172,8 +210,9 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 	for offset := 0; offset < len(validators); offset++ {
 		idx := (start + offset) % len(validators)
 		addr := validators[idx]
-		if key := keyForAddress(addr); key != nil {
-			return key, addr
+		signerAddr, signerKey := signerIdentityForValidator(addr, keyForAddress(addr))
+		if signerKey != nil {
+			return signerKey, addr, signerAddr
 		}
 	}
 
@@ -185,8 +224,8 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 	for _, k := range ctx.GenesisValidators {
 		known = append(known, crypto.PubkeyToAddress(k.PublicKey).Hex())
 	}
-	t.Fatalf("no key for active validator set; coinbaseSigner=%s currentValidator=%s active=%s known=%s", header.Coinbase.Hex(), currentValidator.Hex(), strings.Join(active, ","), strings.Join(known, ","))
-	return nil, common.Address{} // unreachable
+	t.Fatalf("no signer key for active validator set; coinbaseSigner=%s currentValidator=%s active=%s known=%s", header.Coinbase.Hex(), currentValidator.Hex(), strings.Join(active, ","), strings.Join(known, ","))
+	return nil, common.Address{}, common.Address{} // unreachable
 }
 
 func waitNextBlock() {

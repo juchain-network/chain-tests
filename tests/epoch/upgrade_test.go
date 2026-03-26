@@ -219,10 +219,15 @@ func validateOnlyMinerCall(t *testing.T, contractAddr common.Address, meta *bind
 		return false
 	}
 
-	minerAddr := common.HexToAddress(ctx.Config.Validators[0].Address)
+	minerValidator := common.HexToAddress(ctx.Config.Validators[0].Address)
+	minerAddr, _ := signerIdentityForValidator(minerValidator, ctx.GenesisValidators[0])
+	if minerAddr == (common.Address{}) {
+		t.Logf("missing signer for validator %s", minerValidator.Hex())
+		return false
+	}
 	blockNum, err := findRecentBlockByCoinbase(ctx.Clients[0], minerAddr, 200)
 	if err != nil {
-		t.Logf("no recent block for miner %s: %v", minerAddr.Hex(), err)
+		t.Logf("no recent block for miner signer %s: %v", minerAddr.Hex(), err)
 		return false
 	}
 

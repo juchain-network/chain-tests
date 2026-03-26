@@ -26,12 +26,19 @@ func TestG_DoubleSign(t *testing.T) {
 	// [P-07] Submit Double Sign Evidence
 	t.Run("P-07_DoubleSignEvidence", func(t *testing.T) {
 		submitEvidenceFor := func(valKey *ecdsa.PrivateKey, valAddr common.Address) error {
+			signerAddr, signerKey := signerIdentityForValidator(valAddr, valKey)
+			if signerKey == nil {
+				return fmt.Errorf("missing signer key for validator %s (signer=%s)", valAddr.Hex(), signerAddr.Hex())
+			}
 			active, errActive := ctx.Validators.IsValidatorActive(nil, valAddr)
 			if errActive != nil {
 				return fmt.Errorf("failed to check validator active status %s: %w", valAddr.Hex(), errActive)
 			}
 			if !active && !waitForValidatorActive(t, valAddr, 2) {
 				return fmt.Errorf("validator not active before double-sign evidence: %s", valAddr.Hex())
+			}
+			if !waitForSignerHistoricalOwner(t, signerAddr, valAddr, 2) {
+				return fmt.Errorf("signer %s never entered historical mapping for validator %s", signerAddr.Hex(), valAddr.Hex())
 			}
 			ctx.WaitIfEpochBlock()
 
@@ -62,7 +69,7 @@ func TestG_DoubleSign(t *testing.T) {
 				h1 := &types.Header{
 					ParentHash:  common.Hash{},
 					UncleHash:   types.EmptyUncleHash,
-					Coinbase:    valAddr,
+					Coinbase:    signerAddr,
 					Root:        common.Hash{},
 					TxHash:      types.EmptyRootHash,
 					ReceiptHash: types.EmptyRootHash,
@@ -79,7 +86,7 @@ func TestG_DoubleSign(t *testing.T) {
 				h2 := &types.Header{
 					ParentHash:  common.Hash{},
 					UncleHash:   types.EmptyUncleHash,
-					Coinbase:    valAddr,
+					Coinbase:    signerAddr,
 					Root:        common.Hash{0x01},
 					TxHash:      types.EmptyRootHash,
 					ReceiptHash: types.EmptyRootHash,
@@ -94,11 +101,11 @@ func TestG_DoubleSign(t *testing.T) {
 					Nonce:       types.BlockNonce{},
 				}
 
-				rlp1, err := signHeaderClique(h1, valKey)
+				rlp1, err := signHeaderClique(h1, signerKey)
 				if err != nil {
 					return fmt.Errorf("failed to sign h1: %w", err)
 				}
-				rlp2, err := signHeaderClique(h2, valKey)
+				rlp2, err := signHeaderClique(h2, signerKey)
 				if err != nil {
 					return fmt.Errorf("failed to sign h2: %w", err)
 				}
@@ -268,22 +275,48 @@ func TestG_DoubleSign(t *testing.T) {
 	// [P-21] Resign + Double Sign
 	t.Run("P-21_ResignThenDoubleSign", func(t *testing.T) {
 		var (
-			key  *ecdsa.PrivateKey
-			addr common.Address
-			err  error
+			key        *ecdsa.PrivateKey
+			addr       common.Address
+			signerKey  *ecdsa.PrivateKey
+			signerAddr common.Address
+			err        error
 		)
+		prepareSignerIdentity := func(candidateKey *ecdsa.PrivateKey, candidateAddr common.Address) (common.Address, *ecdsa.PrivateKey, error) {
+			if !waitForValidatorActive(t, candidateAddr, 3) {
+				return common.Address{}, nil, fmt.Errorf("validator not active before resign double-sign flow: %s", candidateAddr.Hex())
+			}
+			resolvedSigner, resolvedKey := signerIdentityForValidator(candidateAddr, candidateKey)
+			if resolvedKey == nil {
+				return common.Address{}, nil, fmt.Errorf("signer key unavailable for validator %s (signer=%s)", candidateAddr.Hex(), resolvedSigner.Hex())
+			}
+			if !waitForSignerHistoricalOwner(t, resolvedSigner, candidateAddr, 2) {
+				return common.Address{}, nil, fmt.Errorf("signer %s never entered historical mapping for validator %s", resolvedSigner.Hex(), candidateAddr.Hex())
+			}
+			return resolvedSigner, resolvedKey, nil
+		}
 		if cachedReentryValidatorKey != nil && cachedReentryValidatorAddr != (common.Address{}) {
 			if info, errInfo := ctx.Staking.GetValidatorInfo(nil, cachedReentryValidatorAddr); errInfo == nil && info.IsRegistered && !info.IsJailed {
 				key = cachedReentryValidatorKey
 				addr = cachedReentryValidatorAddr
 				t.Logf("Reusing validator from F2 for P-21: %s", addr.Hex())
+				signerAddr, signerKey, err = prepareSignerIdentity(key, addr)
+				if err != nil {
+					t.Logf("P-21 reuse path not ready, fallback to fresh validator: %v", err)
+					key = nil
+					addr = common.Address{}
+				}
 			}
 		}
 		if key == nil {
 			key, addr, err = createAndRegisterValidator(t, "P-21 ResignDS")
 			utils.AssertNoError(t, err, "create val failed")
+			signerAddr, signerKey, err = prepareSignerIdentity(key, addr)
+			utils.AssertNoError(t, err, "prepare signer identity failed")
 		}
 		robustResignValidator(t, key)
+
+		reporterKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(10))
+		utils.AssertNoError(t, err, "failed to setup reporter for resign double-sign")
 
 		var lastErr error
 		for attempt := 0; attempt < 8; attempt++ {
@@ -305,33 +338,33 @@ func TestG_DoubleSign(t *testing.T) {
 			}
 
 			h1 := &types.Header{
-				Coinbase: addr,
+				Coinbase: signerAddr,
 				Number:   targetHeight,
 				Extra:    make([]byte, 32+65),
 				Root:     common.Hash{0x21},
 				Time:     baseTime,
 			}
 			h2 := &types.Header{
-				Coinbase: addr,
+				Coinbase: signerAddr,
 				Number:   targetHeight,
 				Extra:    make([]byte, 32+65),
 				Root:     common.Hash{0x22},
 				Time:     baseTime,
 			}
-			rlp1, err := signHeaderClique(h1, key)
+			rlp1, err := signHeaderClique(h1, signerKey)
 			if err != nil {
 				lastErr = fmt.Errorf("failed to sign first header: %w", err)
 				waitBlocks(t, 1)
 				continue
 			}
-			rlp2, err := signHeaderClique(h2, key)
+			rlp2, err := signHeaderClique(h2, signerKey)
 			if err != nil {
 				lastErr = fmt.Errorf("failed to sign second header: %w", err)
 				waitBlocks(t, 1)
 				continue
 			}
 
-			opts, err := ctx.GetTransactor(key)
+			opts, err := ctx.GetTransactor(reporterKey)
 			if err != nil {
 				lastErr = fmt.Errorf("transactor failed for double sign: %w", err)
 				waitBlocks(t, 1)
@@ -374,6 +407,13 @@ func TestG_DoubleSign(t *testing.T) {
 		// case into a stake-floor test instead of an exit-after-clean-resign test.
 		key, addr, err := createAndRegisterValidator(t, "P-22 ExitDS")
 		utils.AssertNoError(t, err, "create val failed")
+		signerAddr, signerKey := signerIdentityForValidator(addr, key)
+		if signerKey == nil {
+			t.Fatalf("missing signer key for validator %s (signer=%s)", addr.Hex(), signerAddr.Hex())
+		}
+		if !waitForSignerHistoricalOwner(t, signerAddr, addr, 2) {
+			t.Fatalf("signer %s never entered historical mapping for validator %s", signerAddr.Hex(), addr.Hex())
+		}
 		robustResignValidator(t, key)
 
 		opts, err := ctx.GetTransactor(key)
@@ -400,10 +440,10 @@ func TestG_DoubleSign(t *testing.T) {
 		robustExitValidator(t, key)
 
 		header, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
-		h1 := &types.Header{Coinbase: addr, Number: header.Number, Extra: make([]byte, 32+65), Root: common.Hash{0x31}}
-		h2 := &types.Header{Coinbase: addr, Number: header.Number, Extra: make([]byte, 32+65), Root: common.Hash{0x32}}
-		rlp1, _ := signHeaderClique(h1, key)
-		rlp2, _ := signHeaderClique(h2, key)
+		h1 := &types.Header{Coinbase: signerAddr, Number: header.Number, Extra: make([]byte, 32+65), Root: common.Hash{0x31}}
+		h2 := &types.Header{Coinbase: signerAddr, Number: header.Number, Extra: make([]byte, 32+65), Root: common.Hash{0x32}}
+		rlp1, _ := signHeaderClique(h1, signerKey)
+		rlp2, _ := signHeaderClique(h2, signerKey)
 
 		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
 		if err == nil {
@@ -415,58 +455,72 @@ func TestG_DoubleSign(t *testing.T) {
 
 	// [P-10~P-14] Double Sign Exceptions
 	t.Run("P-10-14_DoubleSignExceptions", func(t *testing.T) {
-		key := getActiveProposerOrSkip(t, 2)
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-		opts, err := ctx.GetTransactor(key)
+		validatorKey := getActiveProposerOrSkip(t, 2)
+		validatorAddr := crypto.PubkeyToAddress(validatorKey.PublicKey)
+		signerAddr, signerKey := signerIdentityForValidator(validatorAddr, validatorKey)
+		if signerKey == nil {
+			t.Fatalf("missing signer key for validator %s (signer=%s)", validatorAddr.Hex(), signerAddr.Hex())
+		}
+		opts, err := ctx.GetTransactor(validatorKey)
 		utils.AssertNoError(t, err, "transactor failed")
 		header, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
 
-		hBase := &types.Header{Coinbase: addr, Number: header.Number, Extra: make([]byte, 32+65)}
+		requireRevertContains := func(label string, err error, want string) {
+			t.Helper()
+			if err == nil {
+				t.Fatalf("%s should fail with %q", label, want)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(want)) {
+				t.Fatalf("%s expected error containing %q, got: %v", label, want, err)
+			}
+		}
+
+		hBase := &types.Header{Coinbase: signerAddr, Number: header.Number, Extra: make([]byte, 32+65)}
 
 		// P-11: Same Header
-		h1_same, _ := signHeaderClique(hBase, key)
-		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, h1_same, h1_same)
-		if err == nil {
-			t.Fatal("Should fail with 'Same header'")
-		}
+		h1Same, err := signHeaderClique(hBase, signerKey)
+		utils.AssertNoError(t, err, "sign same-header evidence failed")
+		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, h1Same, h1Same)
+		requireRevertContains("same header", err, "same header")
 
 		// P-12: Height Mismatch
-		h1_h1 := *hBase
-		h2_h2 := *hBase
-		h2_h2.Number = new(big.Int).Add(hBase.Number, big.NewInt(1))
-		h2_h2.Root = common.Hash{0x01}
-		rlp1, _ := signHeaderClique(&h1_h1, key)
-		rlp2, _ := signHeaderClique(&h2_h2, key)
+		h1Height := *hBase
+		h2Height := *hBase
+		h2Height.Number = new(big.Int).Add(hBase.Number, big.NewInt(1))
+		h2Height.Root = common.Hash{0x01}
+		rlp1, err := signHeaderClique(&h1Height, signerKey)
+		utils.AssertNoError(t, err, "sign height-mismatch header1 failed")
+		rlp2, err := signHeaderClique(&h2Height, signerKey)
+		utils.AssertNoError(t, err, "sign height-mismatch header2 failed")
 		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
-		if err == nil {
-			t.Fatal("Should fail with 'Height mismatch'")
-		}
+		requireRevertContains("height mismatch", err, "height mismatch")
 
 		// P-14: Signer != Coinbase
-		otherKey, _, _ := ctx.CreateAndFundAccount(utils.ToWei(1))
-		h1_wrong := *hBase
-		h1_wrong.Root = common.Hash{0x05}
-		h2_wrong := *hBase
-		h2_wrong.Root = common.Hash{0x06}
-		rlp1_wrong, _ := signHeaderClique(&h1_wrong, otherKey)
-		rlp2_wrong, _ := signHeaderClique(&h2_wrong, otherKey)
-		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1_wrong, rlp2_wrong)
-		if err == nil {
-			t.Fatal("Should fail with 'Signer != coinbase'")
-		}
+		otherKey, _, err := ctx.CreateAndFundAccount(utils.ToWei(1))
+		utils.AssertNoError(t, err, "create wrong signer failed")
+		h1Wrong := *hBase
+		h1Wrong.Root = common.Hash{0x05}
+		h2Wrong := *hBase
+		h2Wrong.Root = common.Hash{0x06}
+		rlp1Wrong, err := signHeaderClique(&h1Wrong, otherKey)
+		utils.AssertNoError(t, err, "sign wrong-signer header1 failed")
+		rlp2Wrong, err := signHeaderClique(&h2Wrong, otherKey)
+		utils.AssertNoError(t, err, "sign wrong-signer header2 failed")
+		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1Wrong, rlp2Wrong)
+		requireRevertContains("signer != coinbase", err, "signer != coinbase")
 
 		// P-10: Future block
 		hFuture := *hBase
 		hFuture.Number = new(big.Int).Add(hBase.Number, big.NewInt(10))
 		hFuture.Root = common.Hash{0x07}
-		rlpFuture1, _ := signHeaderClique(&hFuture, key)
+		rlpFuture1, err := signHeaderClique(&hFuture, signerKey)
+		utils.AssertNoError(t, err, "sign future header1 failed")
 		hFuture2 := hFuture
 		hFuture2.Root = common.Hash{0x08}
-		rlpFuture2, _ := signHeaderClique(&hFuture2, key)
+		rlpFuture2, err := signHeaderClique(&hFuture2, signerKey)
+		utils.AssertNoError(t, err, "sign future header2 failed")
 		_, err = ctx.Punish.SubmitDoubleSignEvidence(opts, rlpFuture1, rlpFuture2)
-		if err == nil {
-			t.Fatal("Should fail with 'Future block'")
-		}
+		requireRevertContains("future block", err, "future block")
 	})
 
 	ctx.WaitIfEpochBlock()
@@ -492,18 +546,22 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 
 		miner := header.Coinbase
+		minerValidator, err := ctx.ValidatorAddressBySigner(miner)
+		utils.AssertNoError(t, err, "map current miner signer to validator failed")
 		type target struct {
-			key  *ecdsa.PrivateKey
-			addr common.Address
+			validator common.Address
+			signer    common.Address
+			key       *ecdsa.PrivateKey
 		}
 		targets := make([]target, 0, 2)
 		seen := make(map[common.Address]bool)
 		if activeVals, err := ctx.Validators.GetActiveValidators(nil); err == nil {
 			for _, addr := range activeVals {
-				if addr == miner || seen[addr] {
+				if addr == minerValidator || seen[addr] {
 					continue
 				}
-				key := keyForAddress(addr)
+				signerAddr, signerKey := signerIdentityForValidator(addr, nil)
+				key := signerKey
 				if key == nil {
 					continue
 				}
@@ -512,7 +570,7 @@ func TestG_DoubleSign(t *testing.T) {
 					continue
 				}
 				seen[addr] = true
-				targets = append(targets, target{key: key, addr: addr})
+				targets = append(targets, target{validator: addr, signer: signerAddr, key: key})
 				if len(targets) >= 2 {
 					break
 				}
@@ -526,8 +584,8 @@ func TestG_DoubleSign(t *testing.T) {
 		}
 
 		targetSet := map[common.Address]struct{}{
-			targets[0].addr: {},
-			targets[1].addr: {},
+			targets[0].validator: {},
+			targets[1].validator: {},
 		}
 		reporterCandidates := make([]*ecdsa.PrivateKey, 0, len(ctx.GenesisValidators)+1)
 		reporterSeen := make(map[common.Address]bool)
@@ -581,8 +639,8 @@ func TestG_DoubleSign(t *testing.T) {
 				baseTime = targetHeader.Time
 			}
 
-			h1 := &types.Header{Coinbase: tgt.addr, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase}, Time: baseTime}
-			h2 := &types.Header{Coinbase: tgt.addr, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase + 1}, Time: baseTime}
+			h1 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase}, Time: baseTime}
+			h2 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase + 1}, Time: baseTime}
 			rlp1, err := signHeaderClique(h1, tgt.key)
 			utils.AssertNoError(t, err, "failed to sign h1")
 			rlp2, err := signHeaderClique(h2, tgt.key)
@@ -646,7 +704,7 @@ func TestG_DoubleSign(t *testing.T) {
 					waitBlocks(t, 1)
 				},
 			}, func() (bool, error) {
-				info, err := ctx.Staking.GetValidatorInfo(nil, tgt.addr)
+				info, err := ctx.Staking.GetValidatorInfo(nil, tgt.validator)
 				if err != nil {
 					return false, err
 				}

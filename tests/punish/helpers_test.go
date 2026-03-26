@@ -9,6 +9,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 func keyForAddress(addr common.Address) *ecdsa.PrivateKey {
@@ -135,6 +137,36 @@ func waitForValidatorJailed(t *testing.T, addr common.Address, maxBlocks int) bo
 		waitBlocks(t, 1)
 	}
 	return false
+}
+
+func waitForIncomingProfits(t *testing.T, valAddr common.Address, maxBlocks int) *big.Int {
+	t.Helper()
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if maxBlocks < 1 {
+		maxBlocks = 1
+	}
+
+	var incoming *big.Int
+	err := testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: maxBlocks + 1,
+		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
+	}, func() (bool, error) {
+		_, _, latestIncoming, _, _, err := ctx.Validators.GetValidatorInfo(nil, valAddr)
+		if err != nil {
+			return false, err
+		}
+		incoming = latestIncoming
+		return latestIncoming != nil && latestIncoming.Sign() > 0, nil
+	})
+	if err != nil {
+		t.Fatalf("validator %s did not accrue incoming profits in time: %v", valAddr.Hex(), err)
+	}
+	return new(big.Int).Set(incoming)
 }
 
 func ensureMinActiveValidators(t *testing.T, min int, maxEpochs int) {

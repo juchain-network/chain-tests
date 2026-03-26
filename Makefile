@@ -129,7 +129,7 @@ help:
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
-	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative CHECK=sync|state-root|all"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak"
 	@echo ""
@@ -154,7 +154,7 @@ help:
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
 	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
-	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish"
 	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
 	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
 	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
@@ -436,12 +436,15 @@ test-scenario:
 	scenario="$(SCENARIO)"; \
 	check="$(if $(CHECK),$(CHECK),all)"; \
 	if [ -z "$$scenario" ]; then \
-		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative>"; \
+		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish>"; \
 		exit 1; \
 	fi; \
 	case "$$scenario" in \
 		checkpoint) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/checkpoint_split_checks.sh; \
+			;; \
+		rotation-punish) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/rotation_punish_checks.sh; \
 			;; \
 		negative) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/negative_checks.sh; \
@@ -483,7 +486,7 @@ test-scenario:
 			;; \
 		*) \
 			echo "Unsupported SCENARIO=$$scenario"; \
-			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative"; \
+			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative rotation-punish"; \
 			exit 1; \
 			;; \
 	esac

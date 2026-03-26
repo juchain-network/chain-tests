@@ -32,6 +32,11 @@ This document outlines the end-to-end integration test paths for JuChain system 
   - fresh PoSA underfunded bootstrap does not progress past genesis
   - underfunded PoA->PoSA upgrade is deferred while the chain stays live
   - override drift restart either fails immediately or keeps the persisted stored mapping instead of activating the drifted override
+- `make test-scenario SCENARIO=rotation-punish` validates the long-window signer-rotation punish path on a 3-validator separated-signer network with `epoch=240`:
+  - validator rotates to a new signer at the checkpoint, but the node is intentionally not restarted with the new signer
+  - the other two validators continue sealing blocks after the checkpoint
+  - around 24 missed turns the target validator loses incoming rewards (`removeValidatorIncoming` path)
+  - around 48 missed turns the target validator is jailed and dropped from reward-eligible query paths
 
 ---
 
@@ -410,6 +415,18 @@ This section covers validation logic for all configuration parameters.
     *   **Expected**:
         *   The transition signer query does not expose a stale signer.
         *   The following epoch does not retain a dirty signer entry.
+*   **[P-29] Rotated Signer Missing -> Punish -> Jail (Epoch > 144)**
+    *   **Steps**:
+        1. Start a 3-validator separated-signer network with `epoch=240`.
+        2. Pick one validator, wait until it has positive incoming rewards, and schedule a signer rotation.
+        3. Reach the checkpoint block and confirm `getTopSigners()` still uses the old signer while `header.Extra` already commits the new signer.
+        4. Do **not** restart the target node with the new signer; let the other two validators continue sealing.
+        5. Observe the target validator through the long post-checkpoint window.
+    *   **Expected**:
+        *   Post-checkpoint runtime signer resolution switches to the new signer immediately, but neither the old signer nor the new signer actually seals blocks for the target validator.
+        *   Around the 24-miss threshold, `getPunishRecord()` reaches the punish threshold, the validator is not jailed yet, and its incoming rewards are cleared through `removeValidatorIncoming`.
+        *   Around the 48-miss threshold, the validator becomes jailed, `getPunishRecord()` resets, `isValidatorActive()` becomes false, and reward-eligible validator/signer queries exclude the validator.
+        *   The other two validators continue producing blocks throughout the rotation-miss and post-jail window.
 
 ---
 

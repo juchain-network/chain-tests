@@ -172,7 +172,7 @@ make stop
 #### Multi-node PoSA
 ```bash
 make clean
-make init TOPOLOGY=multi INIT_MODE=posa
+make init TOPOLOGY=multi INIT_MODE=posa EPOCH=240
 make run
 make status
 make logs

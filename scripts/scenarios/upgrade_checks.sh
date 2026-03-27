@@ -16,6 +16,14 @@ gen_addr() {
   ) | awk -F',' '{print $1}' | tr -d '[:space:]'
 }
 
+hardhat_addr() {
+  local index="$1"
+  (
+    cd "$ROOT_DIR"
+    go run ./cmd/genhardhat "$index"
+  ) | awk -F',' '{print $1}' | tr -d '[:space:]'
+}
+
 cleanup() {
   if [[ -f "$SESSION_FILE" ]]; then
     bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
@@ -24,7 +32,9 @@ cleanup() {
 trap cleanup EXIT
 
 override_validator="$(gen_addr "upgrade-validator-0")"
-runtime_signer="$(gen_addr "signer-0")"
+# For PoA -> PoSA migration, override.posaSigners must cover the live POA signer set.
+# In the default single-node separated bootstrap layout, the live PoA signer is Hardhat index 4.
+runtime_signer="$(hardhat_addr 4)"
 override_time="$(( $(date +%s) + 45 ))"
 
 echo "[scenario/upgrade] generate single-node upgrade config with CLI override"

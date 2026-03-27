@@ -77,6 +77,8 @@ else
 fi
 
 BYTECODE_GO="$CHAIN_ROOT/consensus/congress/bytecode.go"
+CONGRESS_GO="$CHAIN_ROOT/consensus/congress/congress.go"
+CONGRESS_ABI_GO="$CHAIN_ROOT/consensus/congress/abi.go"
 CHECK_SCRIPT="$SCRIPT_DIR/check_bytecode_consistency.js"
 
 RUNTIME_IMPL_MODE="$(cfg_get "$SOURCE_FILE" "runtime.impl_mode" "single")"
@@ -205,6 +207,27 @@ if [[ "$BACKEND" == "native" ]]; then
       if (( reth_ts < newest_ts )); then
         diep "native reth binary is older than $newest_ref. rebuild reth binary."
       fi
+    fi
+  fi
+
+  if $need_geth; then
+    newest_geth_source_ref=""
+    newest_geth_source_ts=0
+    for geth_source in \
+      "$CONGRESS_GO" \
+      "$CONGRESS_ABI_GO" \
+      "$BYTECODE_GO"; do
+      [[ -f "$geth_source" ]] || diep "missing geth consensus source file: $geth_source"
+      source_ts="$(file_mtime "$geth_source")"
+      if (( source_ts > newest_geth_source_ts )); then
+        newest_geth_source_ts="$source_ts"
+        newest_geth_source_ref="$geth_source"
+      fi
+    done
+
+    geth_ts="$(file_mtime "$GETH_BIN")"
+    if (( geth_ts < newest_geth_source_ts )); then
+      diep "native geth binary is older than $newest_geth_source_ref. rebuild geth binary."
     fi
   fi
 fi

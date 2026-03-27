@@ -166,14 +166,17 @@ func ImportUnlockAndSetEtherbase(client *ethclient.Client, key *ecdsa.PrivateKey
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	raw := hex.EncodeToString(crypto.FromECDSA(key))
 	var imported string
-	err := client.Client().Call(&imported, "personal_importRawKey", raw, password)
-	if err != nil {
-		err = client.Client().Call(&imported, "personal_importRawKey", "0x"+raw, password)
-	}
-	if err != nil {
-		lower := strings.ToLower(err.Error())
-		if !strings.Contains(lower, "already exists") && !strings.Contains(lower, "account exists") {
-			return fmt.Errorf("import raw key failed: %w", err)
+	errRaw := client.Client().Call(&imported, "personal_importRawKey", raw, password)
+	if errRaw != nil {
+		lowerRaw := strings.ToLower(errRaw.Error())
+		if !strings.Contains(lowerRaw, "already exists") && !strings.Contains(lowerRaw, "account exists") {
+			errPrefixed := client.Client().Call(&imported, "personal_importRawKey", "0x"+raw, password)
+			if errPrefixed != nil {
+				lowerPrefixed := strings.ToLower(errPrefixed.Error())
+				if !strings.Contains(lowerPrefixed, "already exists") && !strings.Contains(lowerPrefixed, "account exists") {
+					return fmt.Errorf("import raw key failed: raw=%v prefixed=%v", errRaw, errPrefixed)
+				}
+			}
 		}
 	}
 
@@ -211,8 +214,10 @@ func MinerStart(client *ethclient.Client) error {
 		return fmt.Errorf("nil client")
 	}
 	var ok bool
-	if err := client.Client().Call(&ok, "miner_start", 1); err != nil {
-		return fmt.Errorf("miner_start failed: %w", err)
+	if err := client.Client().Call(&ok, "miner_start"); err != nil {
+		if err2 := client.Client().Call(&ok, "miner_start", 1); err2 != nil {
+			return fmt.Errorf("miner_start failed: %w", err)
+		}
 	}
 	return nil
 }
@@ -346,11 +351,61 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 	}
 
 	repoRoot := filepath.Dir(filepath.Dir(c.Config.SourcePath))
+	nativeEnvFile := filepath.Join(repoRoot, "data", "native", ".env")
+	if err := updateEnvFile(nativeEnvFile, map[string]string{
+		fmt.Sprintf("VALIDATOR%d_ADDRESS", idx+1):          addr.Hex(),
+		fmt.Sprintf("VALIDATOR%d_KEYSTORE_ADDRESS", idx+1): addr.Hex(),
+	}); err != nil {
+		return fmt.Errorf("update native env for validator restart failed: %w", err)
+	}
+
+	nodeDir := filepath.Dir(keyFile)
+	passwordFile := filepath.Join(nodeDir, "password.txt")
+	if _, statErr := os.Stat(passwordFile); statErr != nil {
+		if err := os.WriteFile(passwordFile, []byte("123456\n"), 0o600); err != nil {
+			return fmt.Errorf("write validator password file failed: %w", err)
+		}
+	}
+
+	gethBinary := envValueFromFile(nativeEnvFile, "GETH_BINARY")
+	if strings.TrimSpace(gethBinary) != "" {
+		cmd := exec.Command(gethBinary, "account", "import", "--datadir", nodeDir, "--password", passwordFile, keyFile)
+		cmd.Dir = repoRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			lower := strings.ToLower(strings.TrimSpace(string(out)))
+			if !strings.Contains(lower, "already exists") && !strings.Contains(lower, "account exists") {
+				return fmt.Errorf("import rotated signer into keystore failed: %w output=%s", err, strings.TrimSpace(string(out)))
+			}
+		}
+	}
+
 	processName := fmt.Sprintf("%s-validator%d", defaultPM2Namespace(c), idx+1)
-	cmd := exec.Command("/bin/bash", "-lc", "pm2 restart "+processName+" >/dev/null")
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("pm2 restart failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
+	envForPM2 := append(os.Environ(),
+		fmt.Sprintf("PM2_NAMESPACE=%s", defaultPM2Namespace(c)),
+		fmt.Sprintf("NATIVE_ENV_FILE=%s", nativeEnvFile),
+		fmt.Sprintf("VALIDATOR%d_ADDRESS=%s", idx+1, addr.Hex()),
+		fmt.Sprintf("VALIDATOR%d_KEYSTORE_ADDRESS=%s", idx+1, addr.Hex()),
+	)
+
+	// `pm2 restart <name>` keeps the previously materialized argv, which may still
+	// contain the old signer address. Delete + start (via ecosystem) forces argv
+	// regeneration with the updated signer env.
+	deleteCmd := exec.Command("pm2", "delete", processName)
+	deleteCmd.Dir = repoRoot
+	deleteCmd.Env = envForPM2
+	if out, err := deleteCmd.CombinedOutput(); err != nil {
+		lower := strings.ToLower(strings.TrimSpace(string(out)))
+		if !strings.Contains(lower, "process or namespace") && !strings.Contains(lower, "not found") {
+			return fmt.Errorf("pm2 delete failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	ecosystemFile := filepath.Join(repoRoot, "native", "ecosystem.config.js")
+	startCmd := exec.Command("pm2", "start", ecosystemFile, "--only", processName, "--update-env")
+	startCmd.Dir = repoRoot
+	startCmd.Env = envForPM2
+	if out, err := startCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pm2 start failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
 	}
 
 	rpcURL := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
@@ -361,18 +416,86 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 		timeout = 90 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
+	var client *ethclient.Client
 	for time.Now().Before(deadline) {
-		client, err := ethclient.Dial(rpcURL)
+		client, err = ethclient.Dial(rpcURL)
 		if err == nil {
 			_, blockErr := client.BlockNumber(context.Background())
-			client.Close()
 			if blockErr == nil {
-				return nil
+				break
 			}
+			client.Close()
+			client = nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("validator rpc %s not ready after pm2 restart", rpcURL)
+	if client == nil {
+		return fmt.Errorf("validator rpc %s not ready after pm2 restart", rpcURL)
+	}
+	defer client.Close()
+
+	nodeImpl := "geth"
+	if idx < len(c.Config.RuntimeNodes) && strings.TrimSpace(c.Config.RuntimeNodes[idx].Impl) != "" {
+		nodeImpl = strings.ToLower(strings.TrimSpace(c.Config.RuntimeNodes[idx].Impl))
+	}
+	if nodeImpl == "geth" {
+		if err := ImportUnlockAndSetEtherbase(client, key, "123456"); err != nil {
+			return fmt.Errorf("switch validator runtime signer failed: %w", err)
+		}
+		if err := MinerStart(client); err != nil {
+			return fmt.Errorf("restart validator miner with new signer failed: %w", err)
+		}
+
+		var coinbase common.Address
+		if err := client.Client().Call(&coinbase, "eth_coinbase"); err != nil {
+			return fmt.Errorf("verify validator coinbase after signer switch failed: %w", err)
+		}
+		if coinbase != addr {
+			return fmt.Errorf("validator coinbase mismatch after signer switch: got=%s want=%s", coinbase.Hex(), addr.Hex())
+		}
+	}
+	return nil
+}
+
+func envValueFromFile(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func updateEnvFile(path string, values map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	seen := make(map[string]bool, len(values))
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for key, value := range values {
+			prefix := key + "="
+			if strings.HasPrefix(trimmed, prefix) {
+				lines[i] = prefix + value
+				seen[key] = true
+			}
+		}
+	}
+	for key, value := range values {
+		if !seen[key] {
+			lines = append(lines, key+"="+value)
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 func defaultPM2Namespace(c *testctx.CIContext) string {

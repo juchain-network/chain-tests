@@ -37,6 +37,15 @@ This document outlines the end-to-end integration test paths for JuChain system 
   - the other two validators continue sealing blocks after the checkpoint
   - around 24 missed turns the target validator loses incoming rewards (`removeValidatorIncoming` path)
   - around 48 missed turns the target validator is jailed and dropped from reward-eligible query paths
+- `make test-scenario SCENARIO=rotation-live` validates the long-window positive signer-rotation path on a 3-validator separated-signer network with `epoch=240`:
+  - validator rotates to a new signer at the checkpoint and the node is restarted with that signer
+  - the new signer must actually seal blocks over a multi-round observation window while the old signer stops sealing immediately after the checkpoint
+- `make test-scenario SCENARIO=add-validator-live` validates the long-chain add-validator path on a 4-node separated-signer network with `epoch=300`:
+  - proposal -> `createOrEditValidator(..., signer)` -> `registerValidator`
+  - next epoch activation must add the candidate into the active set, and one validator process is recycled to the candidate signer only after the checkpoint has already passed so that the candidate signer must actually seal blocks without removing a required pre-checkpoint signer
+- `make test-scenario SCENARIO=add-validator-punish` validates the negative add-validator path on a 4-node separated-signer network with `epoch=300`:
+  - proposal -> `createOrEditValidator(..., signer)` -> `registerValidator`
+  - next epoch activation adds the candidate into the active set, but the signer node is intentionally not started, so the other validators continue sealing until the candidate is punished and jailed
 
 ---
 
@@ -427,6 +436,18 @@ This section covers validation logic for all configuration parameters.
         *   Around the 24-miss threshold, `getPunishRecord()` reaches the punish threshold, the validator is not jailed yet, and its incoming rewards are cleared through `removeValidatorIncoming`.
         *   Around the 48-miss threshold, the validator becomes jailed, `getPunishRecord()` resets, `isValidatorActive()` becomes false, and reward-eligible validator/signer queries exclude the validator.
         *   The other two validators continue producing blocks throughout the rotation-miss and post-jail window.
+*   **[P-30] Added Validator Missing Signer -> Punish -> Jail (Epoch > 192)**
+    *   **Steps**:
+        1. Start a 3-validator separated-signer network with one sync node and `epoch=300`.
+        2. Create a candidate validator with an explicit signer, pass proposal, and register it before the next checkpoint.
+        3. Let the candidate enter the active set at the next epoch, but do **not** start the sync node with the candidate signer.
+        4. Observe the long post-activation window while the other validators continue sealing.
+    *   **Expected**:
+        *   The candidate signer enters the active set / signer set and history mapping only after activation.
+        *   Neither the candidate signer nor the candidate cold address actually seals blocks.
+        *   Around the punish threshold, `getPunishRecord()` reaches the threshold while the candidate is not jailed yet.
+        *   Around the remove threshold, the candidate becomes jailed, `getPunishRecord()` resets, and reward-eligible validator/signer queries exclude it.
+        *   The remaining validators continue producing blocks throughout the observation window.
 
 ---
 
@@ -478,6 +499,28 @@ This section covers validation logic for all configuration parameters.
     *   **Expected**:
         *   Only the new signer is accepted by snapshot/consensus on block `N+1`.
         *   The old signer is no longer treated as valid for the next epoch.
+*   **[V-12] Rotated Signer Seals Long Window After Checkpoint**
+    *   **Steps**:
+        1. Run a 3-validator separated-signer network with `epoch=240`.
+        2. Schedule a signer rotation for one active validator.
+        3. Reach the checkpoint block and restart that validator node with the new signer.
+        4. Observe multiple sealing rounds after the checkpoint.
+    *   **Expected**:
+        *   The checkpoint block still uses the old runtime signer while `header.Extra` commits the new signer set.
+        *   The new signer seals blocks during the observation window.
+        *   The old signer stops sealing immediately after the checkpoint.
+        *   The validator stays active and does not accumulate punishments to the threshold.
+*   **[V-13] Added Validator With Separate Signer Becomes Active And Seals**
+    *   **Steps**:
+        1. Run a 3-validator separated-signer network (`epoch=300`).
+        2. Create a candidate validator with an explicit signer, pass proposal, and register it.
+        3. Before the activation checkpoint, switch one validator runtime node to the candidate signer key.
+        4. Observe the activation boundary and the following sealing window.
+    *   **Expected**:
+        *   Before activation, the candidate is not active and its signer is not in history.
+        *   After activation, the candidate enters the active validator set, top signer set, and signer history.
+        *   The signer hot address actually appears as `coinbase`.
+        *   The candidate cold validator address does not appear as `coinbase`.
 
 ### 5.3 Validator Info Validation & Queries
 *   **[V-02] Description Boundary (Moniker)**

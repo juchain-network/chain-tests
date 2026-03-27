@@ -713,9 +713,17 @@ func robustClaimValidatorRewards(t *testing.T, key *ecdsa.PrivateKey) {
 }
 
 func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Address) {
+	isCurrentlyJailed := func() bool {
+		info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+		if err != nil {
+			return false
+		}
+		return info.IsJailed
+	}
+
 	waitUntilJailPeriodComplete := func() {
 		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
-		if errInfo != nil || info.JailUntilBlock == nil || info.JailUntilBlock.Sign() <= 0 {
+		if errInfo != nil || !info.IsJailed || info.JailUntilBlock == nil || info.JailUntilBlock.Sign() <= 0 {
 			waitBlocks(t, 1)
 			return
 		}
@@ -732,7 +740,31 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 		waitBlocks(t, 1)
 	}
 
+	wasMinedOnEpochEdge := func(txHash common.Hash) bool {
+		receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
+		if err != nil || receipt == nil || receipt.BlockNumber == nil {
+			return false
+		}
+		epoch, err := ctx.Proposal.Epoch(nil)
+		if err != nil || epoch == nil || epoch.Sign() <= 0 {
+			return false
+		}
+		epochLen := epoch.Uint64()
+		if epochLen == 0 {
+			return false
+		}
+		mod := receipt.BlockNumber.Uint64() % epochLen
+		return mod == 0 || mod == epochLen-1
+	}
+
+	if !isCurrentlyJailed() {
+		return
+	}
+
 	for retry := 0; retry < 10; retry++ {
+		if !isCurrentlyJailed() {
+			return
+		}
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
 			time.Sleep(retrySleep())
@@ -743,12 +775,20 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
 				return
 			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") || strings.Contains(errW.Error(), "Too many new validators") {
+				msg := errW.Error()
+				if strings.Contains(msg, "Epoch block forbidden") || strings.Contains(msg, "Too many new validators") {
 					waitForNextEpochBlock(t)
 					continue
 				}
-				if strings.Contains(errW.Error(), "Jail period not complete") {
+				if strings.Contains(msg, "Jail period not complete") {
 					waitUntilJailPeriodComplete()
+					continue
+				}
+				if !isCurrentlyJailed() {
+					return
+				}
+				if wasMinedOnEpochEdge(tx.Hash()) {
+					waitBlocks(t, 1)
 					continue
 				}
 				if t != nil {
@@ -760,6 +800,9 @@ func robustUnjailValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 		if strings.Contains(err.Error(), "Epoch block forbidden") || strings.Contains(err.Error(), "Too many new validators") {
 			waitForNextEpochBlock(t)
 			continue
+		}
+		if strings.Contains(err.Error(), "Validator not jailed") || !isCurrentlyJailed() {
+			return
 		}
 		if strings.Contains(err.Error(), "Jail period not complete") {
 			waitUntilJailPeriodComplete()

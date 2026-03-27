@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .PHONY: all help init-config image init run ready reset stop clean logs status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready sync-contract-clients test \
-        test-group test-smoke test-fork test-scenario test-regression test-perf \
+        test-group test-smoke test-fork test-scenario test-regression test-perf test-coverage-max \
         ci ci-tool ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
@@ -63,6 +63,11 @@ PERF_SAMPLE_INTERVAL ?= 2s
 PERF_SOAK_DURATION ?= 24h
 PERF_SOAK_TPS ?= 10
 PERF_SOAK_RESTART_INTERVAL ?= 1h
+COVERAGE_OUT_DIR ?=
+COVERAGE_STEP_TIMEOUT ?= 2h
+COVERAGE_HARD_RESET ?= 1
+COVERAGE_EXIT_POLICY ?= always_zero
+COVERAGE_INCLUDE_PERF_TIERS ?= 0
 SCENARIO ?=
 CHECK ?= all
 SCOPE ?= core
@@ -129,9 +134,10 @@ help:
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
-	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish CHECK=sync|state-root|all"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak"
+	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
 	@echo ""
 	@echo "CI Commands:"
 	@echo "  ci              - PROFILE=pr|nightly|release|weekly-soak or MODE=groups|tests [BUDGET=1]"
@@ -154,7 +160,7 @@ help:
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
 	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
-	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish"
 	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
 	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
 	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
@@ -177,6 +183,11 @@ help:
 	@echo "  SMOKE_SINGLE_TEST_TIMEOUT=$(SMOKE_SINGLE_TEST_TIMEOUT) # single-smoke go test timeout"
 	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS) PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
 	@echo "  PERF_SOAK_DURATION=$(PERF_SOAK_DURATION) PERF_SOAK_TPS=$(PERF_SOAK_TPS)"
+	@echo "  COVERAGE_OUT_DIR=$(COVERAGE_OUT_DIR) # optional output dir for max-coverage run"
+	@echo "  COVERAGE_STEP_TIMEOUT=$(COVERAGE_STEP_TIMEOUT) # per-step timeout (default 2h)"
+	@echo "  COVERAGE_HARD_RESET=$(COVERAGE_HARD_RESET) # 1=clean between steps, 0=stop only"
+	@echo "  COVERAGE_EXIT_POLICY=$(COVERAGE_EXIT_POLICY) # always_zero|strict|infra_only"
+	@echo "  COVERAGE_INCLUDE_PERF_TIERS=$(COVERAGE_INCLUDE_PERF_TIERS) # 1=append test-perf MODE=tiers"
 	@echo "  REPORT_DIR=$(REPORT_DIR) REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
 	@echo "  See README.md for the full variable reference."
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
@@ -436,7 +447,7 @@ test-scenario:
 	scenario="$(SCENARIO)"; \
 	check="$(if $(CHECK),$(CHECK),all)"; \
 	if [ -z "$$scenario" ]; then \
-		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish>"; \
+		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish>"; \
 		exit 1; \
 	fi; \
 	case "$$scenario" in \
@@ -445,6 +456,15 @@ test-scenario:
 			;; \
 		rotation-punish) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/rotation_punish_checks.sh; \
+			;; \
+		rotation-live) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/rotation_live_checks.sh; \
+			;; \
+		add-validator-live) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/add_validator_live_checks.sh; \
+			;; \
+		add-validator-punish) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/add_validator_punish_checks.sh; \
 			;; \
 		negative) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/negative_checks.sh; \
@@ -486,7 +506,7 @@ test-scenario:
 			;; \
 		*) \
 			echo "Unsupported SCENARIO=$$scenario"; \
-			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative rotation-punish"; \
+			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative rotation-punish rotation-live add-validator-live add-validator-punish"; \
 			exit 1; \
 			;; \
 	esac
@@ -546,6 +566,15 @@ test-perf:
 			exit 1; \
 			;; \
 	esac
+
+test-coverage-max:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		COVERAGE_OUT_DIR="$(COVERAGE_OUT_DIR)" \
+		COVERAGE_STEP_TIMEOUT="$(COVERAGE_STEP_TIMEOUT)" \
+		COVERAGE_HARD_RESET="$(COVERAGE_HARD_RESET)" \
+		COVERAGE_EXIT_POLICY="$(COVERAGE_EXIT_POLICY)" \
+		COVERAGE_INCLUDE_PERF_TIERS="$(COVERAGE_INCLUDE_PERF_TIERS)" \
+		bash ./scripts/coverage/run_max_coverage.sh
 
 test: ready
 	@echo "🧪 Running Integration Tests (Single Pass)..."

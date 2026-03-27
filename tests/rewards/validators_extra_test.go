@@ -877,7 +877,11 @@ func TestI_ValidatorExtras(t *testing.T) {
 		if err := passProposalFor(t, valAddr, "V-05 Reproposal"); err != nil {
 			t.Fatalf("reproposal after resign/withdraw failed: %v", err)
 		}
-		robustUnjailValidator(t, valKey, valAddr)
+		infoAfterReproposal, err := ctx.Staking.GetValidatorInfo(nil, valAddr)
+		utils.AssertNoError(t, err, "read validator info after reproposal failed")
+		if infoAfterReproposal.IsJailed {
+			robustUnjailValidator(t, valKey, valAddr)
+		}
 		if !waitForValidatorActive(t, valAddr, 2) {
 			t.Fatalf("validator %s did not return to active set after withdraw flow", valAddr.Hex())
 		}

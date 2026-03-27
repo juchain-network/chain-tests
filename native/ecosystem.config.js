@@ -145,14 +145,17 @@ function gethCommonArgs(opts) {
   }
   args.push(...migrationOverrideArgs());
 
+  if (opts.allowInsecureUnlock || opts.mine) {
+    args.push('--allow-insecure-unlock');
+  }
+
   if (opts.mine) {
     args.push(
       '--mine',
       '--miner.etherbase', opts.address,
       '--miner.gasprice', '0',
       '--unlock', opts.address,
-      '--password', opts.passwordFile,
-      '--allow-insecure-unlock'
+      '--password', opts.passwordFile
     );
   }
 
@@ -322,6 +325,7 @@ const nodeDefs = [
     enginePort: process.env.SYNCNODE_ENGINE_PORT || '18556',
     p2pPort: process.env.SYNCNODE_P2P_PORT || '40407',
     mine: false,
+    allowInsecureUnlock: true,
     cache: '2048'
   }
 ];

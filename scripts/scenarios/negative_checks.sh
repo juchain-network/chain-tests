@@ -16,6 +16,14 @@ gen_addr() {
   ) | awk -F',' '{print $1}' | tr -d '[:space:]'
 }
 
+hardhat_addr() {
+  local index="$1"
+  (
+    cd "$ROOT_DIR"
+    go run ./cmd/genhardhat "$index"
+  ) | awk -F',' '{print $1}' | tr -d '[:space:]'
+}
+
 cleanup() {
   if [[ -f "$SESSION_FILE" ]]; then
     bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
@@ -100,7 +108,9 @@ bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE"
 
 echo "[scenario/negative] underfunded upgrade should defer migration and keep chain live"
 underfunded_validator="$(gen_addr "underfunded-upgrade-validator")"
-runtime_signer="$(gen_addr "signer-0")"
+# PoA -> PoSA migration signers must cover the live POA signer set.
+# In the default single-node separated bootstrap layout, that signer is Hardhat index 4.
+runtime_signer="$(hardhat_addr 4)"
 underfunded_time="$(( $(date +%s) + 45 ))"
 TEST_ENV_CONFIG="$CONFIG_FILE" \
 TOPOLOGY=single \

@@ -92,8 +92,8 @@ func TestZ_CheckpointTransitionSignerSplit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getValidatorBySignerHistory at checkpoint failed: %v", err)
 	}
-	if historyValidator != rotation.Validator {
-		t.Fatalf("checkpoint history signer mapping mismatch: got=%s want=%s", historyValidator.Hex(), rotation.Validator.Hex())
+	if historyValidator != (common.Address{}) {
+		t.Fatalf("checkpoint history signer mapping exposed transition signer too early: got=%s want=%s", historyValidator.Hex(), common.Address{}.Hex())
 	}
 
 	if err := testkit.ActivateRotatedSignerOnSingleNode(ctx, rotation, 90*time.Second); err != nil {
@@ -129,6 +129,13 @@ func TestZ_CheckpointTransitionSignerSplit(t *testing.T) {
 	}
 	if head.Coinbase != rotation.NewSigner {
 		t.Fatalf("post-checkpoint head coinbase mismatch: got=%s want=%s", head.Coinbase.Hex(), rotation.NewSigner.Hex())
+	}
+	postHistoryValidator, err := ctx.Validators.GetValidatorBySignerHistory(&bind.CallOpts{BlockNumber: head.Number}, rotation.NewSigner)
+	if err != nil {
+		t.Fatalf("getValidatorBySignerHistory after checkpoint failed: %v", err)
+	}
+	if postHistoryValidator != rotation.Validator {
+		t.Fatalf("post-checkpoint history signer mapping mismatch: got=%s want=%s", postHistoryValidator.Hex(), rotation.Validator.Hex())
 	}
 }
 

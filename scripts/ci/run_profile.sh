@@ -34,11 +34,15 @@ run_nightly() {
   local groups
   groups="$(cfg_get "$CONFIG_FILE" "ci.nightly.groups" "${CI_NIGHTLY_GROUPS:-config,governance,staking,delegation,punish,rewards,epoch}")"
   local run_smoke run_smoke_matrix run_fork run_posa run_reth_keystore
+  local run_rotation_live run_add_validator_live run_add_validator_punish
   run_smoke="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke" "true")"
   run_smoke_matrix="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_smoke_matrix" "true")"
   run_fork="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_fork_all" "true")"
   run_posa="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_posa" "true")"
   run_reth_keystore="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_reth_keystore_smoke" "false")"
+  run_rotation_live="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_rotation_live" "false")"
+  run_add_validator_live="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_add_validator_live" "false")"
+  run_add_validator_punish="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_add_validator_punish" "false")"
 
   if is_true "$run_smoke_matrix"; then
     make -C "$ROOT_DIR" test-smoke TOPOLOGY=all MATRIX=1
@@ -54,6 +58,15 @@ run_nightly() {
   fi
   if is_true "$run_reth_keystore"; then
     run_reth_keystore_smoke
+  fi
+  if is_true "$run_rotation_live"; then
+    make -C "$ROOT_DIR" test-scenario SCENARIO=rotation-live
+  fi
+  if is_true "$run_add_validator_live"; then
+    make -C "$ROOT_DIR" test-scenario SCENARIO=add-validator-live
+  fi
+  if is_true "$run_add_validator_punish"; then
+    make -C "$ROOT_DIR" test-scenario SCENARIO=add-validator-punish
   fi
 }
 

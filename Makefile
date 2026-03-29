@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 .PHONY: all help init-config image init run ready reset stop clean logs status \
+        coverage-start coverage-merge coverage-stop coverage-status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready sync-contract-clients test \
         test-group test-smoke test-fork test-scenario test-regression test-perf test-coverage-max \
@@ -60,14 +61,23 @@ SMOKE_SINGLE_TEST_TIMEOUT ?= 12m
 PERF_TPS_TIERS ?= 10,30,60
 PERF_TIER_DURATION ?= 90s
 PERF_SAMPLE_INTERVAL ?= 2s
+PERF_SCOPE ?= single
+PERF_MULTI_WARMUP_TIMEOUT ?= 60s
+PERF_MULTI_WARMUP_STABLE_SAMPLES ?= 3
+PERF_AUTO_STOP ?= 1
 PERF_SOAK_DURATION ?= 24h
 PERF_SOAK_TPS ?= 10
 PERF_SOAK_RESTART_INTERVAL ?= 1h
 COVERAGE_OUT_DIR ?=
-COVERAGE_STEP_TIMEOUT ?= 2h
+COVERAGE_STEP_TIMEOUT ?= 1h
 COVERAGE_HARD_RESET ?= 1
 COVERAGE_EXIT_POLICY ?= always_zero
+COVERAGE_INCLUDE_WRAPPERS ?= 0
 COVERAGE_INCLUDE_PERF_TIERS ?= 0
+CHAIN_COVERAGE ?= 0
+CHAIN_COVERAGE_SCOPE ?= congress
+CHAIN_COVERAGE_OUT_DIR ?=
+CHAIN_COVERAGE_KEEP_RAW ?= 1
 SCENARIO ?=
 CHECK ?= all
 SCOPE ?= core
@@ -77,6 +87,7 @@ BUDGET ?= 0
 REGRESSION_REPORT_DIR ?=
 CI_PR_GROUPS ?= config,governance,staking,punish,epoch
 CI_NIGHTLY_GROUPS ?= config,governance,staking,delegation,punish,rewards,epoch
+CI_NIGHTLY_RUN_RETH_KEYSTORE ?=
 SKIP_PRECHECK ?=
 SKIP_SETUP ?=
 SHARED_SETUP ?=
@@ -128,15 +139,19 @@ help:
 	@echo "  clean           - Stop network and remove local runtime data"
 	@echo "  logs            - View runtime logs (NODE=... optional)"
 	@echo "  status          - Show runtime status"
+	@echo "  coverage-start  - Start a multi-command congress coverage session"
+	@echo "  coverage-merge  - Merge and finalize the active congress coverage session"
+	@echo "  coverage-stop   - Stop the active congress coverage session without merging"
+	@echo "  coverage-status - Show active congress coverage session info"
 	@echo ""
 	@echo "Primary Test Commands:"
 	@echo "  test            - Run the prepared network in a single go test pass (expects ready network)"
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
-	@echo "  test-scenario   - Scenario runs: SCENARIO=posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish CHECK=sync|state-root|all"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
-	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak"
+	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak PERF_SCOPE=single|multi (default: single)"
 	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
 	@echo ""
 	@echo "CI Commands:"
@@ -160,7 +175,7 @@ help:
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
 	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
-	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish"
 	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
 	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
 	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
@@ -182,12 +197,21 @@ help:
 	@echo "  SMOKE_SINGLE_OBSERVE_SECONDS=$(SMOKE_SINGLE_OBSERVE_SECONDS) # optional override; empty -> use config tests.smoke.observe_seconds"
 	@echo "  SMOKE_SINGLE_TEST_TIMEOUT=$(SMOKE_SINGLE_TEST_TIMEOUT) # single-smoke go test timeout"
 	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS) PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
+	@echo "  PERF_SCOPE=$(PERF_SCOPE)         # test-perf lag validation scope: single|multi"
+	@echo "  PERF_MULTI_WARMUP_TIMEOUT=$(PERF_MULTI_WARMUP_TIMEOUT) # multi perf pre-measure convergence wait"
+	@echo "  PERF_MULTI_WARMUP_STABLE_SAMPLES=$(PERF_MULTI_WARMUP_STABLE_SAMPLES) # consecutive in-threshold samples before measuring multi perf"
+	@echo "  PERF_AUTO_STOP=$(PERF_AUTO_STOP) # 1=stop network after test-perf exits"
 	@echo "  PERF_SOAK_DURATION=$(PERF_SOAK_DURATION) PERF_SOAK_TPS=$(PERF_SOAK_TPS)"
 	@echo "  COVERAGE_OUT_DIR=$(COVERAGE_OUT_DIR) # optional output dir for max-coverage run"
-	@echo "  COVERAGE_STEP_TIMEOUT=$(COVERAGE_STEP_TIMEOUT) # per-step timeout (default 2h)"
+	@echo "  COVERAGE_STEP_TIMEOUT=$(COVERAGE_STEP_TIMEOUT) # per-step timeout (default 1h)"
 	@echo "  COVERAGE_HARD_RESET=$(COVERAGE_HARD_RESET) # 1=clean between steps, 0=stop only"
 	@echo "  COVERAGE_EXIT_POLICY=$(COVERAGE_EXIT_POLICY) # always_zero|strict|infra_only"
+	@echo "  COVERAGE_INCLUDE_WRAPPERS=$(COVERAGE_INCLUDE_WRAPPERS) # 1=append ci/regression wrapper entrypoints (default off)"
 	@echo "  COVERAGE_INCLUDE_PERF_TIERS=$(COVERAGE_INCLUDE_PERF_TIERS) # 1=append test-perf MODE=tiers"
+	@echo "  CHAIN_COVERAGE=$(CHAIN_COVERAGE) # 1=collect native geth Go coverage for ../chain/consensus/congress"
+	@echo "  CHAIN_COVERAGE_SCOPE=$(CHAIN_COVERAGE_SCOPE) # currently only: congress"
+	@echo "  CHAIN_COVERAGE_OUT_DIR=$(CHAIN_COVERAGE_OUT_DIR) # optional report dir for chain coverage"
+	@echo "  CHAIN_COVERAGE_KEEP_RAW=$(CHAIN_COVERAGE_KEEP_RAW) # 1=keep raw GOCOVERDIR files after merge"
 	@echo "  REPORT_DIR=$(REPORT_DIR) REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
 	@echo "  See README.md for the full variable reference."
 	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
@@ -204,6 +228,30 @@ init-config:
 	else \
 		echo "Config already exists: $(TEST_ENV_CONFIG)"; \
 	fi
+
+coverage-start:
+	@CHAIN_COVERAGE=1 \
+		CHAIN_COVERAGE_SESSION=1 \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		bash ./scripts/coverage/session_ctl.sh start
+
+coverage-merge:
+	@CHAIN_COVERAGE=1 \
+		CHAIN_COVERAGE_SESSION=1 \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		bash ./scripts/coverage/session_ctl.sh merge
+
+coverage-stop:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/coverage/session_ctl.sh stop
+
+coverage-status:
+	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/coverage/session_ctl.sh status
 
 image:
 	@echo "🚀 Building juchain binary for docker runtime..."
@@ -302,6 +350,17 @@ net-ready:
 
 test-group:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	group="$(GROUP)"; \
 	if [ -z "$$group" ]; then \
 		echo "Set GROUP=<config|governance|staking|delegation|punish|rewards|epoch|all>"; \
@@ -369,6 +428,17 @@ test-group:
 
 test-smoke:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	topology="$(if $(TOPOLOGY),$(TOPOLOGY),multi)"; \
 	matrix="$(if $(MATRIX),$(MATRIX),0)"; \
 	case "$$matrix" in \
@@ -421,6 +491,17 @@ test-smoke:
 
 test-fork:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	topology="$(if $(TOPOLOGY),$(TOPOLOGY),multi)"; \
 	case "$$topology" in \
 		single|multi|all) ;; \
@@ -444,13 +525,36 @@ test-fork:
 
 test-scenario:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	scenario="$(SCENARIO)"; \
 	check="$(if $(CHECK),$(CHECK),all)"; \
 	if [ -z "$$scenario" ]; then \
-		echo "Set SCENARIO=<posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish>"; \
+		echo "Set SCENARIO=<all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish>"; \
 		exit 1; \
 	fi; \
 	case "$$scenario" in \
+		all) \
+			$(MAKE) SCENARIO=bootstrap test-scenario; \
+			$(MAKE) SCENARIO=upgrade test-scenario; \
+			$(MAKE) SCENARIO=checkpoint test-scenario; \
+			$(MAKE) SCENARIO=negative test-scenario; \
+			$(MAKE) SCENARIO=rotation-punish test-scenario; \
+			$(MAKE) SCENARIO=rotation-live test-scenario; \
+			$(MAKE) SCENARIO=add-validator-live test-scenario; \
+			$(MAKE) SCENARIO=add-validator-punish test-scenario; \
+			$(MAKE) SCENARIO=posa test-scenario; \
+			$(MAKE) SCENARIO=interop CHECK=all test-scenario; \
+			;; \
 		checkpoint) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/checkpoint_split_checks.sh; \
 			;; \
@@ -506,13 +610,24 @@ test-scenario:
 			;; \
 		*) \
 			echo "Unsupported SCENARIO=$$scenario"; \
-			echo "Expected one of: posa interop bootstrap upgrade checkpoint negative rotation-punish rotation-live add-validator-live add-validator-punish"; \
+			echo "Expected one of: all posa interop bootstrap upgrade checkpoint negative rotation-punish rotation-live add-validator-live add-validator-punish"; \
 			exit 1; \
 			;; \
 	esac
 
 test-regression:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	scope="$(if $(SCOPE),$(SCOPE),core)"; \
 	case "$$scope" in \
 		core) \
@@ -551,6 +666,10 @@ test-perf:
 			PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
 			PERF_TIER_DURATION="$(PERF_TIER_DURATION)" \
 			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
+			PERF_SCOPE="$(PERF_SCOPE)" \
+			PERF_MULTI_WARMUP_TIMEOUT="$(PERF_MULTI_WARMUP_TIMEOUT)" \
+			PERF_MULTI_WARMUP_STABLE_SAMPLES="$(PERF_MULTI_WARMUP_STABLE_SAMPLES)" \
+			PERF_AUTO_STOP="$(PERF_AUTO_STOP)" \
 			bash ./scripts/perf/run_tps_tiers.sh; \
 			;; \
 		soak) \
@@ -559,6 +678,10 @@ test-perf:
 			PERF_SOAK_TPS="$(PERF_SOAK_TPS)" \
 			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
 			PERF_SOAK_RESTART_INTERVAL="$(PERF_SOAK_RESTART_INTERVAL)" \
+			PERF_SCOPE="$(PERF_SCOPE)" \
+			PERF_MULTI_WARMUP_TIMEOUT="$(PERF_MULTI_WARMUP_TIMEOUT)" \
+			PERF_MULTI_WARMUP_STABLE_SAMPLES="$(PERF_MULTI_WARMUP_STABLE_SAMPLES)" \
+			PERF_AUTO_STOP="$(PERF_AUTO_STOP)" \
 			bash ./scripts/perf/run_soak.sh; \
 			;; \
 		*) \
@@ -573,6 +696,7 @@ test-coverage-max:
 		COVERAGE_STEP_TIMEOUT="$(COVERAGE_STEP_TIMEOUT)" \
 		COVERAGE_HARD_RESET="$(COVERAGE_HARD_RESET)" \
 		COVERAGE_EXIT_POLICY="$(COVERAGE_EXIT_POLICY)" \
+		COVERAGE_INCLUDE_WRAPPERS="$(COVERAGE_INCLUDE_WRAPPERS)" \
 		COVERAGE_INCLUDE_PERF_TIERS="$(COVERAGE_INCLUDE_PERF_TIERS)" \
 		bash ./scripts/coverage/run_max_coverage.sh
 
@@ -582,6 +706,17 @@ test: ready
 
 ci:
 	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
 	profile="$(PROFILE)"; \
 	mode="$(MODE)"; \
 	budget="$(if $(BUDGET),$(BUDGET),0)"; \
@@ -597,7 +732,7 @@ ci:
 	if [ -n "$$profile" ]; then \
 		case "$$profile" in \
 			pr|nightly|release|weekly-soak) \
-				TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_PR_GROUPS="$(CI_PR_GROUPS)" CI_NIGHTLY_GROUPS="$(CI_NIGHTLY_GROUPS)" bash ./scripts/ci/run_profile.sh "$$profile"; \
+				TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" CI_PR_GROUPS="$(CI_PR_GROUPS)" CI_NIGHTLY_GROUPS="$(CI_NIGHTLY_GROUPS)" CI_NIGHTLY_RUN_RETH_KEYSTORE="$(CI_NIGHTLY_RUN_RETH_KEYSTORE)" bash ./scripts/ci/run_profile.sh "$$profile"; \
 				;; \
 			*) \
 				echo "PROFILE must be pr|nightly|release|weekly-soak"; \

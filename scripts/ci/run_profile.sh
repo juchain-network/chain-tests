@@ -44,6 +44,10 @@ run_nightly() {
   run_add_validator_live="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_add_validator_live" "false")"
   run_add_validator_punish="$(cfg_get "$CONFIG_FILE" "ci.nightly.run_add_validator_punish" "false")"
 
+  if [[ -n "${CI_NIGHTLY_RUN_RETH_KEYSTORE:-}" ]]; then
+    run_reth_keystore="$CI_NIGHTLY_RUN_RETH_KEYSTORE"
+  fi
+
   if is_true "$run_smoke_matrix"; then
     make -C "$ROOT_DIR" test-smoke TOPOLOGY=all MATRIX=1
   elif is_true "$run_smoke"; then

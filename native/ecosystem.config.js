@@ -41,7 +41,7 @@ function nameOf(suffix) {
   return `${ns}-${suffix}`;
 }
 
-function appConfig(name, script, args, logPrefix) {
+function appConfig(name, script, args, logPrefix, extraEnv = {}) {
   return {
     name: nameOf(name),
     script,
@@ -52,6 +52,7 @@ function appConfig(name, script, args, logPrefix) {
     watch: false,
     max_memory_restart: '2G',
     env: Object.assign({}, process.env, {
+      ...extraEnv,
       NODE_ENV: 'production'
     }),
     error_file: path.join(logDir, `${logPrefix}-error.log`),
@@ -267,6 +268,20 @@ function scriptForNode(node) {
   return binaryForImpl(resolveNodeImpl(node.index));
 }
 
+function coverageEnvForNode(node) {
+  if ((process.env.CHAIN_COVERAGE_ENABLED || '') !== '1') {
+    return {};
+  }
+  if (resolveNodeImpl(node.index) !== 'geth') {
+    return {};
+  }
+  const dir = process.env[`NODE${node.index}_GOCOVERDIR`];
+  if (!dir) {
+    return {};
+  }
+  return { GOCOVERDIR: dir };
+}
+
 const nodeDefs = [
   {
     name: 'validator1',
@@ -331,5 +346,5 @@ const nodeDefs = [
 ];
 
 module.exports = {
-  apps: nodeDefs.map((node) => appConfig(node.name, scriptForNode(node), argsForNode(node), node.logPrefix))
+  apps: nodeDefs.map((node) => appConfig(node.name, scriptForNode(node), argsForNode(node), node.logPrefix, coverageEnvForNode(node)))
 };

@@ -14,16 +14,33 @@ SAMPLE_INTERVAL="${PERF_SAMPLE_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.sample_i
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEST_CONFIG="${PERF_TEST_CONFIG:-$DATA_DIR/test_config.yaml}"
 OUT_DIR="${PERF_REPORT_DIR:-$ROOT_DIR/reports/perf_$(date +%Y%m%d_%H%M%S)}"
+PERF_SCOPE="${PERF_SCOPE:-single}"
+PERF_AUTO_STOP="${PERF_AUTO_STOP:-1}"
 
 MIN_SUCCESS_RATE="$(cfg_get "$CONFIG_FILE" "perf.thresholds.success_rate_min" "0.99")"
 MAX_STALL="$(cfg_get "$CONFIG_FILE" "perf.thresholds.stall_window_seconds_max" "15")"
 MAX_LAG="$(cfg_get "$CONFIG_FILE" "perf.thresholds.max_height_lag" "8")"
 MAX_P95="$(cfg_get "$CONFIG_FILE" "perf.thresholds.rpc_latency_p95_ms_max" "500")"
+MULTI_WARMUP_TIMEOUT="${PERF_MULTI_WARMUP_TIMEOUT:-60s}"
+MULTI_WARMUP_STABLE_SAMPLES="${PERF_MULTI_WARMUP_STABLE_SAMPLES:-3}"
 
 mkdir -p "$OUT_DIR"
 
-echo "Running TPS tiers: tiers=$TIERS duration=$DURATION sample_interval=$SAMPLE_INTERVAL"
+echo "Running TPS tiers: tiers=$TIERS duration=$DURATION sample_interval=$SAMPLE_INTERVAL scope=$PERF_SCOPE"
 echo "Output dir: $OUT_DIR"
+
+perf_cleanup() {
+  local rc=$?
+  if [[ "$PERF_AUTO_STOP" == "1" || "$PERF_AUTO_STOP" == "true" || "$PERF_AUTO_STOP" == "yes" ]]; then
+    if runtime_session_exists "${RUNTIME_SESSION_FILE:-}"; then
+      echo "Perf cleanup: stopping runtime..."
+      TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" down "$CONFIG_FILE" >/dev/null 2>&1 || true
+    fi
+  fi
+  exit "$rc"
+}
+
+trap perf_cleanup EXIT INT TERM
 
 rpc_ready() {
   local rpc_url="$1"
@@ -37,11 +54,22 @@ rpc_ready() {
 
 ensure_perf_runtime_ready() {
   local rpc_url
+  local backend
+  local session_file
+  local env_file
   rpc_url="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
+  backend="$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")"
+  session_file="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
+  env_file="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 
-  if [[ ! -f "$TEST_CONFIG" ]]; then
-    echo "Perf precheck: generated test config not found at $TEST_CONFIG, generating network config..."
+  if [[ ! -f "$TEST_CONFIG" || ! -f "$session_file" ]]; then
+    echo "Perf precheck: generated config/runtime session missing, generating network config..."
     TEST_ENV_CONFIG="$CONFIG_FILE" TEST_NETWORK_EPOCH="${EPOCH:-}" bash "$ROOT_DIR/scripts/gen_network_config.sh" "$CONFIG_FILE"
+  fi
+
+  if [[ "$backend" == "native" && ! -f "$env_file" ]]; then
+    echo "Perf precheck: native runtime artifacts missing, initializing backend..."
+    TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" init "$CONFIG_FILE"
   fi
 
   if ! rpc_ready "$rpc_url"; then
@@ -57,6 +85,7 @@ ensure_perf_runtime_ready
 cd "$ROOT_DIR"
 go run ./scripts/perf/perf_runner.go \
   -mode tiers \
+  -scope "$PERF_SCOPE" \
   -config "$TEST_CONFIG" \
   -tiers "$TIERS" \
   -duration "$DURATION" \
@@ -66,4 +95,6 @@ go run ./scripts/perf/perf_runner.go \
   -min-success-rate "$MIN_SUCCESS_RATE" \
   -max-stall-seconds "$MAX_STALL" \
   -max-height-lag "$MAX_LAG" \
-  -max-p95-latency-ms "$MAX_P95"
+  -max-p95-latency-ms "$MAX_P95" \
+  -multi-warmup-timeout "$MULTI_WARMUP_TIMEOUT" \
+  -multi-warmup-stable-samples "$MULTI_WARMUP_STABLE_SAMPLES"

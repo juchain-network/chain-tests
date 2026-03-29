@@ -42,6 +42,13 @@ normalize_impl() {
   esac
 }
 
+bool_true() {
+  case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
 SOURCE_FILE="$CONFIG_FILE"
@@ -123,6 +130,10 @@ fi
 if $need_reth; then
   [[ -d "$RETH_ROOT" ]] || diep "reth root not found: $RETH_ROOT"
 fi
+if bool_true "${CHAIN_COVERAGE:-0}"; then
+  [[ "$BACKEND" == "native" ]] || diep "CHAIN_COVERAGE=1 only supports runtime.backend=native"
+  $need_reth && diep "CHAIN_COVERAGE=1 only supports native geth; reth or mixed runtime detected"
+fi
 
 bytecode_impl=""
 if $need_geth && $need_reth; then
@@ -160,8 +171,17 @@ if [[ "$BACKEND" == "native" ]]; then
   GETH_BIN=""
   RETH_BIN=""
   if $need_geth; then
-    if ! GETH_BIN="$(resolve_binary "$(to_abs_path "$GETH_BIN_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
-      diep "native geth binary not found. tried: $(to_abs_path "$GETH_BIN_CFG") $CHAIN_ROOT/build/bin/geth"
+    if bool_true "${CHAIN_COVERAGE:-0}"; then
+      if [[ -n "${CHAIN_COVERAGE_GETH_BINARY:-}" ]]; then
+        GETH_BIN="$(to_abs_path "$CHAIN_COVERAGE_GETH_BINARY")"
+      else
+        GETH_BIN="$("$SCRIPT_DIR/coverage/prepare_chain_coverage.sh" --config "$SOURCE_FILE" --print-binary)"
+      fi
+      [[ -x "$GETH_BIN" ]] || diep "coverage geth binary not found: $GETH_BIN"
+    else
+      if ! GETH_BIN="$(resolve_binary "$(to_abs_path "$GETH_BIN_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+        diep "native geth binary not found. tried: $(to_abs_path "$GETH_BIN_CFG") $CHAIN_ROOT/build/bin/geth"
+      fi
     fi
   fi
   if $need_reth; then

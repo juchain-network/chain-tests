@@ -60,14 +60,28 @@ type tierSummary struct {
 type verdict struct {
 	GeneratedAt    string         `json:"generated_at"`
 	Mode           string         `json:"mode"`
+	Scope          string         `json:"scope"`
 	Config         string         `json:"config"`
 	DataDir        string         `json:"data_dir"`
+	Warmup         *warmupResult  `json:"warmup,omitempty"`
 	Thresholds     map[string]any `json:"thresholds"`
 	Tiers          []tierSummary  `json:"tiers"`
 	FailedReasons  []string       `json:"failed_reasons,omitempty"`
 	TopSlowWindows []slowWindow   `json:"top_slow_windows,omitempty"`
 	ResourcePeaks  resourcePeaks  `json:"resource_peaks"`
 	Status         string         `json:"status"`
+}
+
+type warmupResult struct {
+	Enabled               bool   `json:"enabled"`
+	Status                string `json:"status"`
+	DurationSeconds       int64  `json:"duration_seconds"`
+	StableSamplesRequired int    `json:"stable_samples_required"`
+	StableSamplesObserved int    `json:"stable_samples_observed"`
+	MaxHeight             uint64 `json:"max_height"`
+	MinHeight             uint64 `json:"min_height"`
+	Lag                   uint64 `json:"lag"`
+	Notes                 string `json:"notes,omitempty"`
 }
 
 type resourcePeaks struct {
@@ -216,6 +230,7 @@ func writeSummaryMD(path string, v verdict) error {
 	b.WriteString("# Performance Summary\n\n")
 	b.WriteString(fmt.Sprintf("- Generated: %s\n", v.GeneratedAt))
 	b.WriteString(fmt.Sprintf("- Mode: %s\n", v.Mode))
+	b.WriteString(fmt.Sprintf("- Scope: %s\n", v.Scope))
 	b.WriteString(fmt.Sprintf("- Config: %s\n", v.Config))
 	b.WriteString(fmt.Sprintf("- DataDir: %s\n", v.DataDir))
 	b.WriteString(fmt.Sprintf("- Status: %s\n\n", v.Status))
@@ -227,6 +242,19 @@ func writeSummaryMD(path string, v verdict) error {
 		b.WriteString("- Failed reasons:\n")
 		for _, reason := range v.FailedReasons {
 			b.WriteString(fmt.Sprintf("  - %s\n", reason))
+		}
+		b.WriteString("\n")
+	}
+
+	if v.Warmup != nil {
+		b.WriteString("## Warmup\n\n")
+		b.WriteString("| Scope | Status | Duration(s) | StableSamples | Observed | MaxHeight | MinHeight | Lag |\n")
+		b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+		b.WriteString(fmt.Sprintf("| %s | %s | %d | %d | %d | %d | %d | %d |\n",
+			v.Scope, v.Warmup.Status, v.Warmup.DurationSeconds, v.Warmup.StableSamplesRequired, v.Warmup.StableSamplesObserved, v.Warmup.MaxHeight, v.Warmup.MinHeight, v.Warmup.Lag,
+		))
+		if strings.TrimSpace(v.Warmup.Notes) != "" {
+			b.WriteString(fmt.Sprintf("\n- Notes: %s\n", v.Warmup.Notes))
 		}
 		b.WriteString("\n")
 	}
@@ -353,10 +381,79 @@ func collectTopSlowWindows(samples []sample, sampleInterval time.Duration, limit
 	return out
 }
 
+func waitForMultiScopeWarmup(clients []*ethclient.Client, sampleInterval time.Duration, maxHeightLag uint64, timeout time.Duration, stableSamplesRequired int) warmupResult {
+	result := warmupResult{
+		Enabled:               true,
+		Status:                "PASS",
+		StableSamplesRequired: stableSamplesRequired,
+	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if sampleInterval <= 0 {
+		sampleInterval = 2 * time.Second
+	}
+	if stableSamplesRequired <= 0 {
+		stableSamplesRequired = 3
+		result.StableSamplesRequired = stableSamplesRequired
+	}
+
+	start := time.Now()
+	deadline := start.Add(timeout)
+	stableSamples := 0
+	lastNote := ""
+
+	for {
+		maxHeight, minHeight, _, err := queryHeights(clients)
+		if err != nil {
+			lastNote = fmt.Sprintf("warmup height query failed: %v", err)
+			stableSamples = 0
+		} else {
+			lag := uint64(0)
+			if maxHeight >= minHeight {
+				lag = maxHeight - minHeight
+			}
+			result.MaxHeight = maxHeight
+			result.MinHeight = minHeight
+			result.Lag = lag
+
+			if minHeight > 0 && lag <= maxHeightLag {
+				stableSamples++
+				result.StableSamplesObserved = stableSamples
+				if stableSamples >= stableSamplesRequired {
+					result.DurationSeconds = int64(time.Since(start).Seconds())
+					result.Notes = fmt.Sprintf("multi-scope warmup converged within lag threshold %d", maxHeightLag)
+					return result
+				}
+			} else {
+				stableSamples = 0
+				result.StableSamplesObserved = 0
+				lastNote = fmt.Sprintf("waiting for convergence: max=%d min=%d lag=%d threshold=%d", maxHeight, minHeight, lag, maxHeightLag)
+			}
+		}
+
+		if time.Now().After(deadline) {
+			result.Status = "FAIL"
+			result.DurationSeconds = int64(time.Since(start).Seconds())
+			result.StableSamplesObserved = stableSamples
+			if strings.TrimSpace(lastNote) == "" {
+				lastNote = fmt.Sprintf("multi-scope warmup timeout: max=%d min=%d lag=%d threshold=%d", result.MaxHeight, result.MinHeight, result.Lag, maxHeightLag)
+			} else {
+				lastNote = fmt.Sprintf("multi-scope warmup timeout: %s", lastNote)
+			}
+			result.Notes = lastNote
+			return result
+		}
+
+		time.Sleep(sampleInterval)
+	}
+}
+
 func main() {
 	configPath := flag.String("config", "data/test_config.yaml", "Path to generated test config")
 	outDir := flag.String("out-dir", "reports/perf", "Output directory")
 	mode := flag.String("mode", "tiers", "tiers|soak")
+	scope := flag.String("scope", "single", "Lag validation scope: single|multi")
 	tiersRaw := flag.String("tiers", "10,30,60", "Comma-separated TPS tiers")
 	durationRaw := flag.String("duration", "90s", "Duration per tier")
 	sampleIntervalRaw := flag.String("sample-interval", "2s", "Metrics sample interval")
@@ -365,6 +462,8 @@ func main() {
 	maxStallSeconds := flag.Int("max-stall-seconds", 15, "Maximum consecutive no-growth sample window")
 	maxHeightLag := flag.Uint64("max-height-lag", 8, "Maximum allowed node height lag")
 	maxP95LatencyMS := flag.Float64("max-p95-latency-ms", 500, "Maximum allowed p95 RPC latency")
+	multiWarmupTimeoutRaw := flag.String("multi-warmup-timeout", "60s", "Maximum warmup wait before multi-scope lag checks start")
+	multiWarmupStableSamples := flag.Int("multi-warmup-stable-samples", 3, "Consecutive in-threshold samples required before multi-scope measurement starts")
 	flag.Parse()
 
 	cfg, err := intcfg.LoadConfig(*configPath)
@@ -407,6 +506,15 @@ func main() {
 	if duration <= 0 {
 		duration = 90 * time.Second
 	}
+	multiWarmupTimeout, err := time.ParseDuration(*multiWarmupTimeoutRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "multi warmup timeout parse failed: %v\n", err)
+		os.Exit(1)
+	}
+	if *multiWarmupStableSamples <= 0 {
+		fmt.Fprintln(os.Stderr, "multi warmup stable samples must be > 0")
+		os.Exit(1)
+	}
 
 	if err := ensureDir(*outDir); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create output dir: %v\n", err)
@@ -428,32 +536,46 @@ func main() {
 		}
 	}()
 
-	// Include explicit node RPCs for lag checks if provided.
-	lagClients := append([]*ethclient.Client{}, clients...)
-	if len(cfg.NodeRPCs) > 0 {
-		lagClients = lagClients[:0]
-		seen := make(map[string]struct{})
-		for _, n := range cfg.NodeRPCs {
-			url := strings.TrimSpace(n.URL)
-			if url == "" {
-				continue
+	scopeName := strings.ToLower(strings.TrimSpace(*scope))
+	switch scopeName {
+	case "", "single":
+		scopeName = "single"
+	case "multi":
+		scopeName = "multi"
+	default:
+		fmt.Fprintf(os.Stderr, "invalid scope %q: expected single|multi\n", *scope)
+		os.Exit(1)
+	}
+
+	lagClients := append([]*ethclient.Client{}, clients[:1]...)
+	if scopeName == "multi" {
+		// Include explicit node RPCs for multi-node lag checks when provided.
+		lagClients = append([]*ethclient.Client{}, clients...)
+		if len(cfg.NodeRPCs) > 0 {
+			lagClients = lagClients[:0]
+			seen := make(map[string]struct{})
+			for _, n := range cfg.NodeRPCs {
+				url := strings.TrimSpace(n.URL)
+				if url == "" {
+					continue
+				}
+				if _, ok := seen[url]; ok {
+					continue
+				}
+				seen[url] = struct{}{}
+				c, err := ethclient.Dial(url)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "dial node rpc %s failed: %v\n", url, err)
+					os.Exit(1)
+				}
+				lagClients = append(lagClients, c)
 			}
-			if _, ok := seen[url]; ok {
-				continue
-			}
-			seen[url] = struct{}{}
-			c, err := ethclient.Dial(url)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "dial node rpc %s failed: %v\n", url, err)
-				os.Exit(1)
-			}
-			lagClients = append(lagClients, c)
+			defer func() {
+				for _, c := range lagClients {
+					c.Close()
+				}
+			}()
 		}
-		defer func() {
-			for _, c := range lagClients {
-				c.Close()
-			}
-		}()
 	}
 
 	chainID, err := clients[0].ChainID(context.Background())
@@ -471,6 +593,62 @@ func main() {
 
 	allSamples := make([]sample, 0, 4096)
 	summaries := make([]tierSummary, 0, len(tiers))
+	var warmup *warmupResult
+
+	if scopeName == "multi" {
+		result := waitForMultiScopeWarmup(lagClients, sampleInterval, *maxHeightLag, multiWarmupTimeout, *multiWarmupStableSamples)
+		warmup = &result
+	}
+
+	failedReasons := make([]string, 0, len(tiers)+1)
+	if warmup != nil && warmup.Status != "PASS" {
+		failedReasons = append(failedReasons, fmt.Sprintf("warmup: %s", warmup.Notes))
+		v := verdict{
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			Mode:        *mode,
+			Scope:       scopeName,
+			Config:      *configPath,
+			DataDir:     *dataDir,
+			Warmup:      warmup,
+			Thresholds: map[string]any{
+				"success_rate_min":             *minSuccessRate,
+				"stall_window_seconds_max":     *maxStallSeconds,
+				"max_height_lag":               *maxHeightLag,
+				"rpc_latency_p95_ms_max":       *maxP95LatencyMS,
+				"multi_warmup_timeout_seconds": int64(multiWarmupTimeout.Seconds()),
+				"multi_warmup_stable_samples":  *multiWarmupStableSamples,
+			},
+			Tiers:          summaries,
+			FailedReasons:  failedReasons,
+			TopSlowWindows: collectTopSlowWindows(allSamples, sampleInterval, 10),
+			ResourcePeaks:  collectResourcePeaks(allSamples),
+			Status:         "FAIL",
+		}
+
+		metricsCSV := filepath.Join(*outDir, "metrics.csv")
+		if err := writeMetricsCSV(metricsCSV, allSamples); err != nil {
+			fmt.Fprintf(os.Stderr, "write metrics csv failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		verdictPath := filepath.Join(*outDir, "verdict.json")
+		data, _ := json.MarshalIndent(v, "", "  ")
+		if err := os.WriteFile(verdictPath, append(data, '\n'), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "write verdict failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		summaryPath := filepath.Join(*outDir, "summary.md")
+		if err := writeSummaryMD(summaryPath, v); err != nil {
+			fmt.Fprintf(os.Stderr, "write summary failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("summary: %s\n", summaryPath)
+		fmt.Printf("metrics: %s\n", metricsCSV)
+		fmt.Printf("verdict: %s\n", verdictPath)
+		os.Exit(1)
+	}
 
 	for _, tps := range tiers {
 		interval := time.Second
@@ -632,7 +810,7 @@ func main() {
 		})
 	}
 
-	failedReasons := collectFailedReasons(summaries)
+	failedReasons = append(failedReasons, collectFailedReasons(summaries)...)
 	overallStatus := "PASS"
 	if len(failedReasons) > 0 {
 		overallStatus = "FAIL"
@@ -641,13 +819,17 @@ func main() {
 	v := verdict{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Mode:        *mode,
+		Scope:       scopeName,
 		Config:      *configPath,
 		DataDir:     *dataDir,
+		Warmup:      warmup,
 		Thresholds: map[string]any{
-			"success_rate_min":         *minSuccessRate,
-			"stall_window_seconds_max": *maxStallSeconds,
-			"max_height_lag":           *maxHeightLag,
-			"rpc_latency_p95_ms_max":   *maxP95LatencyMS,
+			"success_rate_min":             *minSuccessRate,
+			"stall_window_seconds_max":     *maxStallSeconds,
+			"max_height_lag":               *maxHeightLag,
+			"rpc_latency_p95_ms_max":       *maxP95LatencyMS,
+			"multi_warmup_timeout_seconds": int64(multiWarmupTimeout.Seconds()),
+			"multi_warmup_stable_samples":  *multiWarmupStableSamples,
 		},
 		Tiers:          summaries,
 		FailedReasons:  failedReasons,

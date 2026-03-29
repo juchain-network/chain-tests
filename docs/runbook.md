@@ -200,14 +200,31 @@ make stop
   - `TOPOLOGY=all make test-fork`
 - PoSA deep scenarios:
   - `make test-scenario SCENARIO=posa`
+- All scenarios in one pass:
+  - `make test-scenario SCENARIO=all`
+- Scenario-only coverage:
+  - `make test-scenario SCENARIO=checkpoint`
+  - `make test-scenario SCENARIO=rotation-punish`
+  - `make test-scenario SCENARIO=add-validator-live`
+  - `make test-scenario SCENARIO=add-validator-punish`
+  - `make test-scenario SCENARIO=negative`
+  - `make test-scenario SCENARIO=upgrade`
 - Full orchestrated regression:
   - `make test-regression SCOPE=full`
 
+Notes:
+- `make test-regression SCOPE=core` uses the default local environment and may intentionally skip topology/epoch/upgrade-specific `TestZ_*` cases.
+- Use the scenario commands above to cover long-epoch, single-validator checkpoint, and upgrade-only paths.
+
 ## 7. Performance and soak
 - TPS profile:
-  - `make test-perf MODE=tiers`
+  - `make test-perf MODE=tiers PERF_SCOPE=single`
+  - use `PERF_SCOPE=single` for primary-node throughput checks
+  - use `PERF_SCOPE=multi` when you also want multi-node height-lag gating
+  - in `PERF_SCOPE=multi`, perf now waits for node convergence before tier measurement; tune with `PERF_MULTI_WARMUP_TIMEOUT` and `PERF_MULTI_WARMUP_STABLE_SAMPLES` if needed
+  - by default `make test-perf` stops the runtime on exit; set `PERF_AUTO_STOP=0` if you want to keep the environment running
 - 24h soak:
-  - `make test-perf MODE=soak`
+  - `make test-perf MODE=soak PERF_SCOPE=single`
 
 Expected artifacts:
 - `summary.md`
@@ -217,7 +234,56 @@ Expected artifacts:
 - `verdict.json.top_slow_windows`
 - `verdict.json.resource_peaks`
 
-## 8. CI profiles
+## 8. Congress runtime Go coverage
+Native real-network runs can collect Go coverage for `../chain/consensus/congress/...`.
+
+Supported scope:
+- `runtime.backend=native`
+- geth only
+- single-node or multi-node
+
+Not supported:
+- docker runtime
+- reth or mixed geth/reth runtime
+- Solidity source coverage from real-chain execution
+
+Example commands:
+```bash
+CHAIN_COVERAGE=1 make test-group GROUP=config
+CHAIN_COVERAGE=1 CHAIN_COVERAGE_OUT_DIR=reports/coverage_rewards make test-group GROUP=rewards
+CHAIN_COVERAGE=1 make ci PROFILE=pr
+```
+
+Multi-command session workflow:
+```bash
+make coverage-start CHAIN_COVERAGE_OUT_DIR=reports/coverage_combo
+make test-group GROUP=config
+make test-scenario SCENARIO=checkpoint
+make coverage-merge
+```
+
+Session notes:
+- `make coverage-start` creates `reports/.coverage_state/session.env`
+- while the session file exists, `make test-group`, `make test-scenario`, `make test-smoke`, `make test-fork`, `make test-regression`, and `make ci` will append raw coverage into the same session
+- `make clean` does not remove the session state or the cached coverage geth binary
+- `make coverage-merge` merges all accumulated raw data and closes the session
+- `make coverage-stop` closes the session without merging
+- use `make coverage-status` to inspect the active session
+
+Artifacts:
+- `summary.txt`
+- `func.txt`
+- `package_percent.txt`
+- `coverage.out`
+- `merged/`
+- `raw/` (unless `CHAIN_COVERAGE_KEEP_RAW=0`)
+
+Notes:
+- the test command exit code still follows the real test result
+- if tests fail but node processes produced `covdata`, the coverage report is still merged and saved
+- the coverage build uses a dedicated binary under `reports/.coverage_state/bin/`; it does not replace the normal `<chain_root>/build/bin/geth`
+
+## 9. CI profiles
 - PR gate:
   - `make ci PROFILE=pr`
 - Nightly full:
@@ -227,30 +293,30 @@ Expected artifacts:
 - Release gate:
   - `make ci PROFILE=release`
 
-## 9. Troubleshooting
-### 9.1 Bytecode mismatch
+## 10. Troubleshooting
+### 10.1 Bytecode mismatch
 - Run in the contract repo: `forge build`
 - Rebuild geth in the chain repo
 - Re-run from clean state:
   - `make clean && make init`
 
-### 9.2 Fork schedule errors
+### 10.2 Fork schedule errors
 - Regenerate genesis via `make init`
 - Avoid manual edits to `data/genesis.json`
 
-### 9.3 Runtime session missing
+### 10.3 Runtime session missing
 - Symptom: `make stop`, `make status`, or `make logs` reports that the runtime session is missing
 - Fix:
   - `make init`
   - then `make run`
 
-### 9.4 Node lag or stall
+### 10.4 Node lag or stall
 - Check `reports/*/report.md` slow cases and group duration tables
 - Verify runtime logs and peer status
 - Restart the network session:
   - `make stop && make run`
 
-## 10. Rollback
+## 11. Rollback
 1. Pin the previous geth binary and contract artifact versions
 2. Reset local runtime data:
    - `make clean`

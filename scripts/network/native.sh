@@ -77,6 +77,154 @@ pm2_delete_known() {
   done
 }
 
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1==key {print $2; exit}' "$ENV_FILE" 2>/dev/null | tr -d '[:space:]'
+}
+
+coverage_enabled_runtime() {
+  local raw="${CHAIN_COVERAGE:-$(env_value "CHAIN_COVERAGE_ENABLED")}"
+  case "$(echo "${raw:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coverage_flush_timeout() {
+  local raw="${CHAIN_COVERAGE_FLUSH_TIMEOUT:-20}"
+  if [[ "$raw" =~ ^[0-9]+$ ]] && (( raw > 0 )); then
+    echo "$raw"
+  else
+    echo 20
+  fi
+}
+
+coverage_require_all_nodes() {
+  local raw="${CHAIN_COVERAGE_REQUIRE_ALL_NODES:-0}"
+  case "$(echo "${raw:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+collect_coverage_dirs() {
+  local idx impl dir
+  for ((idx=0; idx<NODE_COUNT; idx++)); do
+    impl="$(env_value "NODE${idx}_IMPL")"
+    dir="$(env_value "NODE${idx}_GOCOVERDIR")"
+    if [[ "$impl" == "geth" && -n "$dir" ]]; then
+      printf '%s\n' "$dir"
+    fi
+  done
+}
+
+coverage_file_count() {
+  local dir="$1"
+  find "$dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+wait_for_coverage_flush() {
+  coverage_enabled_runtime || return 0
+
+  local timeout require_all
+  timeout="$(coverage_flush_timeout)"
+  require_all=0
+  if coverage_require_all_nodes; then
+    require_all=1
+  fi
+
+  local -a dirs=()
+  local dir count ready ready_count total
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    dirs+=("$dir")
+  done < <(collect_coverage_dirs)
+
+  total="${#dirs[@]}"
+  if (( total == 0 )); then
+    log "coverage flush skipped: no geth coverage dirs configured"
+    return 0
+  fi
+
+  log "waiting for coverage flush (dirs=$total timeout=${timeout}s require_all=${require_all})"
+  local deadline=$((SECONDS + timeout))
+  while (( SECONDS <= deadline )); do
+    ready_count=0
+    for dir in "${dirs[@]}"; do
+      count="$(coverage_file_count "$dir")"
+      if [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+        ready_count=$((ready_count + 1))
+      fi
+    done
+
+    if (( require_all == 1 )); then
+      ready=$(( ready_count == total ? 1 : 0 ))
+    else
+      ready=$(( ready_count > 0 ? 1 : 0 ))
+    fi
+    if (( ready == 1 )); then
+      break
+    fi
+    sleep 1
+  done
+
+  for dir in "${dirs[@]}"; do
+    count="$(coverage_file_count "$dir")"
+    log "coverage dir: $dir files=${count:-0}"
+  done
+
+  if (( require_all == 1 )) && (( ready_count < total )); then
+    log "coverage flush incomplete: ready=$ready_count/$total"
+  elif (( require_all == 0 )) && (( ready_count == 0 )); then
+    log "coverage flush produced no files before timeout"
+  fi
+}
+
+pm2_stop_known_graceful() {
+  local proc
+  for proc in "${PM2_PROCS[@]}"; do
+    if "$MANAGER" describe "$proc" >/dev/null 2>&1; then
+      "$MANAGER" stop "$proc" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+pm2_wait_all_stopped() {
+  local timeout="${PROCS_STOP_TIMEOUT:-$(coverage_flush_timeout)}"
+  local deadline=$((SECONDS + timeout))
+  local pending=()
+  local proc pid
+
+  while (( SECONDS <= deadline )); do
+    pending=()
+    for proc in "${PM2_PROCS[@]}"; do
+      pid="$("$MANAGER" pid "$proc" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -ne 0 ]]; then
+        pending+=("$proc")
+      fi
+    done
+    if [[ ${#pending[@]} -eq 0 ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  log "pm2 processes still online after ${timeout}s: ${pending[*]}"
+  return 1
+}
+
+stop_with_optional_coverage_flush() {
+  if coverage_enabled_runtime && ! all_nodes_reth; then
+    log "coverage-enabled stop: graceful pm2 stop before delete"
+    pm2_stop_known_graceful
+    pm2_wait_all_stopped || true
+    wait_for_coverage_flush
+    pm2_delete_known
+    return 0
+  fi
+  pm2_delete_known
+}
+
 all_nodes_reth() {
   local idx impl
   for ((idx=0; idx<NODE_COUNT; idx++)); do
@@ -184,10 +332,10 @@ case "$ACTION" in
     pm2_wait_all_online
     ;;
   down)
-    pm2_delete_known
+    stop_with_optional_coverage_flush
     ;;
   reset)
-    pm2_delete_known
+    stop_with_optional_coverage_flush
     [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
     pm2_wait_all_online

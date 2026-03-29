@@ -12,9 +12,10 @@ fi
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${COVERAGE_OUT_DIR:-$ROOT_DIR/reports/max_coverage_${RUN_ID}}"
-STEP_TIMEOUT="${COVERAGE_STEP_TIMEOUT:-2h}"
+STEP_TIMEOUT="${COVERAGE_STEP_TIMEOUT:-1h}"
 HARD_RESET="${COVERAGE_HARD_RESET:-1}"
 EXIT_POLICY="${COVERAGE_EXIT_POLICY:-always_zero}"
+INCLUDE_WRAPPERS="${COVERAGE_INCLUDE_WRAPPERS:-1}"
 INCLUDE_PERF_TIERS="${COVERAGE_INCLUDE_PERF_TIERS:-0}"
 
 mkdir -p "$OUT_DIR/logs"
@@ -254,6 +255,7 @@ echo "[coverage] config: $CONFIG_FILE"
 echo "[coverage] out dir: $OUT_DIR"
 echo "[coverage] step timeout: $STEP_TIMEOUT"
 echo "[coverage] hard reset: $HARD_RESET"
+echo "[coverage] include wrappers: $INCLUDE_WRAPPERS"
 echo "[coverage] include perf tiers: $INCLUDE_PERF_TIERS"
 echo "[coverage] exit policy: $EXIT_POLICY"
 
@@ -326,6 +328,28 @@ run_step "scenario_add_validator_live" "scenario" "$OUT_DIR/scenarios/add_valida
 run_step "scenario_add_validator_punish" "scenario" "$OUT_DIR/scenarios/add_validator_punish" \
   env TEST_ENV_CONFIG="$CONFIG_FILE" \
   make -C "$ROOT_DIR" test-scenario SCENARIO=add-validator-punish
+
+if bool_true "$INCLUDE_WRAPPERS"; then
+  run_step "wrapper_ci_pr" "wrapper" "$OUT_DIR/wrappers/ci_pr" \
+    env TEST_ENV_CONFIG="$CONFIG_FILE" \
+    make -C "$ROOT_DIR" ci PROFILE=pr
+
+  run_step "wrapper_ci_nightly" "wrapper" "$OUT_DIR/wrappers/ci_nightly" \
+    env TEST_ENV_CONFIG="$CONFIG_FILE" CI_NIGHTLY_RUN_RETH_KEYSTORE=false \
+    make -C "$ROOT_DIR" ci PROFILE=nightly
+
+  run_step "wrapper_ci_release" "wrapper" "$OUT_DIR/wrappers/ci_release" \
+    env TEST_ENV_CONFIG="$CONFIG_FILE" \
+    make -C "$ROOT_DIR" ci PROFILE=release
+
+  run_step "wrapper_regression_core" "wrapper" "$OUT_DIR/wrappers/regression_core" \
+    env TEST_ENV_CONFIG="$CONFIG_FILE" \
+    make -C "$ROOT_DIR" test-regression SCOPE=core
+
+  run_step "wrapper_regression_full" "wrapper" "$OUT_DIR/wrappers/regression_full" \
+    env TEST_ENV_CONFIG="$CONFIG_FILE" \
+    make -C "$ROOT_DIR" test-regression SCOPE=full
+fi
 
 if bool_true "$INCLUDE_PERF_TIERS"; then
   run_step "perf_tiers" "perf" "$OUT_DIR/perf/tiers" \

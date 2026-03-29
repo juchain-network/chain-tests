@@ -257,7 +257,8 @@ make test-regression SCOPE=full
 
 Notes:
 
-- `test-regression` defaults to `SCOPE=core` and runs all non-smoke tests case-by-case
+- `test-regression` defaults to `SCOPE=core` and runs all discovered tests case-by-case under the default local environment
+- `SCOPE=core` is not a scenario harness: topology/epoch/upgrade-specific `TestZ_*` cases may skip there by design
 - `SCOPE=full` orchestrates smoke + business groups + fork matrix + PoSA + interop aggregation
 - `make test` runs a single-pass `go test -run .` and expects network already ready
 
@@ -293,10 +294,34 @@ FORK_REPORT_DIR=reports/fork_custom TOPOLOGY=single make test-fork
 
 ```bash
 make test-scenario SCENARIO=posa
+make test-scenario SCENARIO=all
 make test-scenario SCENARIO=interop CHECK=sync
 make test-scenario SCENARIO=interop CHECK=state-root
 make test-scenario SCENARIO=interop CHECK=all
+make test-scenario SCENARIO=checkpoint
+make test-scenario SCENARIO=rotation-punish
+make test-scenario SCENARIO=add-validator-live
+make test-scenario SCENARIO=add-validator-punish
+make test-scenario SCENARIO=negative
+make test-scenario SCENARIO=upgrade
 ```
+
+Scenario-only coverage notes:
+
+- `checkpoint` covers the single-validator separated-signer split checks:
+  - `TestZ_CheckpointRuntimeRewardsStillUseOldSigner`
+  - `TestZ_CheckpointTransitionSignerSplit`
+- `rotation-punish` covers:
+  - `TestZ_SignerRotationMissingNewSignerTriggersPunishAndJail`
+- `add-validator-live` covers:
+  - `TestZ_AddValidatorWithSeparateSignerBecomesActiveAndSealsBlocks`
+- `add-validator-punish` covers:
+  - `TestZ_AddValidatorMissingSignerTriggersPunishAndJail`
+- `upgrade` covers:
+  - `TestZ_UpgradeOverrideBootstrapMapping`
+- `negative` covers the guarded upgrade negatives:
+  - `TestZ_UnderfundedUpgradeDefersMigration`
+  - `TestZ_OverrideDriftRestartKeepsStoredMapping`
 
 ### 5.6 Performance / soak
 

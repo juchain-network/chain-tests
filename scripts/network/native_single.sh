@@ -125,6 +125,93 @@ resolve_node_impl() {
   esac
 }
 
+coverage_enabled() {
+  case "$(echo "${CHAIN_COVERAGE:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coverage_session_file() {
+  echo "$ROOT_DIR/reports/.coverage_state/session.env"
+}
+
+coverage_enabled_effective() {
+  if coverage_enabled; then
+    return 0
+  fi
+  [[ -f "$(coverage_session_file)" ]]
+}
+
+coverage_out_dir_effective() {
+  if [[ -n "${CHAIN_COVERAGE_OUT_DIR:-}" ]]; then
+    to_abs_path "$CHAIN_COVERAGE_OUT_DIR"
+    return 0
+  fi
+  local session_file
+  session_file="$(coverage_session_file)"
+  if [[ -f "$session_file" ]]; then
+    awk -F= '$1=="SESSION_CHAIN_COVERAGE_OUT_DIR" {print $2; exit}' "$session_file" 2>/dev/null
+  fi
+}
+
+coverage_node_dir_effective() {
+  local out_dir
+  out_dir="$(coverage_out_dir_effective)"
+  [[ -n "$out_dir" ]] || return 1
+  echo "$out_dir/raw/node0"
+}
+
+coverage_flush_timeout() {
+  local raw="${CHAIN_COVERAGE_FLUSH_TIMEOUT:-20}"
+  if [[ "$raw" =~ ^[0-9]+$ ]] && (( raw > 0 )); then
+    echo "$raw"
+  else
+    echo 20
+  fi
+}
+
+graceful_stop_wait() {
+  local pid="$1"
+  local timeout="$2"
+  local deadline=$((SECONDS + timeout))
+  while (( SECONDS <= deadline )); do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_single_coverage_flush() {
+  coverage_enabled_effective || return 0
+  [[ "$NODE_IMPL" == "geth" ]] || return 0
+
+  local dir timeout count
+  dir="$(coverage_node_dir_effective || true)"
+  [[ -n "$dir" ]] || {
+    log "coverage flush skipped: no single-node coverage dir configured"
+    return 0
+  }
+  mkdir -p "$dir"
+
+  timeout="$(coverage_flush_timeout)"
+  log "waiting for single-node coverage flush: $dir (timeout=${timeout}s)"
+  local deadline=$((SECONDS + timeout))
+  while (( SECONDS <= deadline )); do
+    count="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+      log "coverage dir: $dir files=$count"
+      return 0
+    fi
+    sleep 1
+  done
+  count="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+  log "coverage dir: $dir files=${count:-0}"
+  log "coverage flush produced no files before timeout"
+}
+
 resolve_validator_auth_mode() {
   case "$VALIDATOR_AUTH_MODE" in
     auto|private_key|keystore) echo "$VALIDATOR_AUTH_MODE" ;;
@@ -165,16 +252,29 @@ if [[ -z "$signer_addr" && -f "$VALIDATOR_ADDR_FILE" ]]; then
   signer_addr="$(tr -d '[:space:]' < "$VALIDATOR_ADDR_FILE")"
 fi
 
-if ! GETH_BINARY="$(resolve_binary "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+NODE_IMPL="$(resolve_node_impl)"
+AUTH_MODE="$(resolve_validator_auth_mode)"
+UPGRADE_OVERRIDE_POSA_VALIDATORS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
+UPGRADE_OVERRIDE_POSA_SIGNERS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
+
+if coverage_enabled && [[ "$NODE_IMPL" != "geth" ]]; then
+  die "CHAIN_COVERAGE=1 only supports native geth"
+fi
+
+coverage_geth_binary=""
+if [[ "$NODE_IMPL" == "geth" ]] && coverage_enabled; then
+  if [[ -n "${CHAIN_COVERAGE_GETH_BINARY:-}" ]]; then
+    coverage_geth_binary="$(to_abs_path "$CHAIN_COVERAGE_GETH_BINARY")"
+  else
+    coverage_geth_binary="$("$ROOT_DIR/scripts/coverage/prepare_chain_coverage.sh" --config "$CONFIG_FILE" --print-binary)"
+  fi
+fi
+if ! GETH_BINARY="$(resolve_binary "$coverage_geth_binary" "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
   GETH_BINARY=""
 fi
 if ! RETH_BINARY="$(resolve_binary "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
   RETH_BINARY=""
 fi
-NODE_IMPL="$(resolve_node_impl)"
-AUTH_MODE="$(resolve_validator_auth_mode)"
-UPGRADE_OVERRIDE_POSA_VALIDATORS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
-UPGRADE_OVERRIDE_POSA_SIGNERS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
 
 if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]] && ! [[ "$UPGRADE_OVERRIDE_POSA_TIME" =~ ^[0-9]+$ ]]; then
   die "fork.override.posa_time must be an unsigned integer timestamp, got: $UPGRADE_OVERRIDE_POSA_TIME"
@@ -284,6 +384,11 @@ resolve_reth_auth_args() {
 }
 
 start_geth() {
+  local cover_dir=""
+  if coverage_enabled; then
+    cover_dir="$("$ROOT_DIR/scripts/coverage/prepare_chain_coverage.sh" --config "$CONFIG_FILE" --print-node-dir node0)"
+    mkdir -p "$cover_dir"
+  fi
   local args=(
     "--networkid" "$NETWORK_ID"
     "--datadir" "$NODE_DATADIR"
@@ -331,12 +436,22 @@ start_geth() {
 
   log "starting native single geth signer=$signer_addr overrideValidators=${UPGRADE_OVERRIDE_POSA_VALIDATORS:-<none>} overrideSigners=${UPGRADE_OVERRIDE_POSA_SIGNERS:-<none>}"
 
-  BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
-  BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \
-  BLACKLIST_MODE="$BLACKLIST_MODE" \
-  BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
-  BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
-  nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  if [[ -n "$cover_dir" ]]; then
+    GOCOVERDIR="$cover_dir" \
+    BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
+    BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \
+    BLACKLIST_MODE="$BLACKLIST_MODE" \
+    BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
+    BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
+    nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  else
+    BLACKLIST_ENABLED="$BLACKLIST_ENABLED" \
+    BLACKLIST_CONTRACT_ADDR="$BLACKLIST_CONTRACT_ADDR" \
+    BLACKLIST_MODE="$BLACKLIST_MODE" \
+    BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
+    BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
+    nohup "$GETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  fi
   echo "$!" > "$PID_FILE"
 }
 
@@ -407,10 +522,25 @@ stop_node() {
   if is_running; then
     local pid
     pid="$(cat "$PID_FILE")"
-    kill "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    if kill -0 "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
+    if coverage_enabled_effective && [[ "$NODE_IMPL" == "geth" ]]; then
+      local timeout
+      timeout="$(coverage_flush_timeout)"
+      log "coverage-enabled single-node stop: graceful SIGINT before force kill"
+      kill -INT "$pid" >/dev/null 2>&1 || true
+      if ! graceful_stop_wait "$pid" "$timeout"; then
+        kill -TERM "$pid" >/dev/null 2>&1 || true
+        graceful_stop_wait "$pid" 5 || true
+      fi
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill -9 "$pid" >/dev/null 2>&1 || true
+      fi
+      wait_for_single_coverage_flush
+    else
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 1
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill -9 "$pid" >/dev/null 2>&1 || true
+      fi
     fi
   fi
   rm -f "$PID_FILE"

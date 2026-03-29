@@ -47,6 +47,10 @@ This document outlines the end-to-end integration test paths for JuChain system 
   - proposal -> `createOrEditValidator(..., signer)` -> `registerValidator`
   - next epoch activation adds the candidate into the active set, but the signer node is intentionally not started, so the other validators continue sealing until the candidate is punished and jailed
 
+**Regression Core Caveat**:
+- `make test-regression SCOPE=core` runs the default local environment and is expected to skip scenario-bound `TestZ_*` cases when their required topology, epoch, or upgrade flags are not present.
+- Cover those specialized cases through the scenario entrypoints above rather than treating the `core` skips as coverage gaps.
+
 ---
 
 ## 0. System Config & Setup - **PRIORITY 1**

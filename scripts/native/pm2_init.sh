@@ -136,6 +136,10 @@ is_true() {
   esac
 }
 
+coverage_enabled() {
+  is_true "${CHAIN_COVERAGE:-0}"
+}
+
 json_addresses_to_csv() {
   local raw_json="${1:-[]}"
   python3 - "$raw_json" <<'PY'
@@ -179,15 +183,6 @@ if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -z "$UPGRADE_OVERRIDE_POSA_SIGNE
   die "fork.override.posa_validators and fork.override.posa_signers must be provided together"
 fi
 
-GETH_BINARY=""
-RETH_BINARY=""
-if ! GETH_BINARY="$(resolve_binary "geth" "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
-  GETH_BINARY=""
-fi
-if ! RETH_BINARY="$(resolve_binary "reth" "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
-  RETH_BINARY=""
-fi
-
 declare -a NODE_IMPLS=()
 need_geth=false
 need_reth=false
@@ -209,8 +204,33 @@ if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" || -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS"
   done
 fi
 
+if coverage_enabled && $need_reth; then
+  die "CHAIN_COVERAGE=1 only supports native geth; reth or mixed runtime detected"
+fi
+
+GETH_BINARY=""
+RETH_BINARY=""
+if $need_geth; then
+  coverage_geth_binary=""
+  if coverage_enabled; then
+    if [[ -n "${CHAIN_COVERAGE_GETH_BINARY:-}" ]]; then
+      coverage_geth_binary="$(to_abs_path "$CHAIN_COVERAGE_GETH_BINARY")"
+    else
+      coverage_geth_binary="$("$SCRIPT_DIR/../coverage/prepare_chain_coverage.sh" --config "$CONFIG_FILE" --print-binary)"
+    fi
+  fi
+  if ! GETH_BINARY="$(resolve_binary "geth" "$coverage_geth_binary" "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+    GETH_BINARY=""
+  fi
+fi
+if $need_reth; then
+  if ! RETH_BINARY="$(resolve_binary "reth" "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
+    RETH_BINARY=""
+  fi
+fi
+
 if $need_geth && [[ -z "$GETH_BINARY" ]]; then
-  die "geth binary not found. tried: $(to_abs_path "$GETH_BINARY_CFG") $CHAIN_ROOT/build/bin/geth"
+  die "geth binary not found. tried: ${coverage_geth_binary:-<none>} $(to_abs_path "$GETH_BINARY_CFG") $CHAIN_ROOT/build/bin/geth"
 fi
 if $need_reth && [[ -z "$RETH_BINARY" ]]; then
   die "reth binary not found. tried: $(to_abs_path "$RETH_BINARY_CFG") $RETH_ROOT/target/release/congress-node $RETH_ROOT/target/debug/congress-node"
@@ -304,6 +324,19 @@ for ((i=0; i<NODE_COUNT; i++)); do
   fi
 done
 
+CHAIN_COVERAGE_ENABLED=0
+CHAIN_COVERAGE_SCOPE_VALUE=""
+COVERAGE_RAW_ROOT=""
+if coverage_enabled; then
+  CHAIN_COVERAGE_ENABLED=1
+  CHAIN_COVERAGE_SCOPE_VALUE="${CHAIN_COVERAGE_SCOPE:-congress}"
+  COVERAGE_RAW_ROOT="$("$SCRIPT_DIR/../coverage/prepare_chain_coverage.sh" --config "$CONFIG_FILE" --print-raw-root)"
+  mkdir -p "$COVERAGE_RAW_ROOT"
+  for ((i=0; i<NODE_COUNT; i++)); do
+    mkdir -p "$COVERAGE_RAW_ROOT/node$i"
+  done
+fi
+
 cat > "$ENV_FILE" <<EOF_ENV
 GETH_BINARY=$GETH_BINARY
 RETH_BINARY=$RETH_BINARY
@@ -328,6 +361,8 @@ VALIDATOR_AUTH_MODE=$VALIDATOR_AUTH_MODE
 VALIDATOR_COUNT=$VALIDATOR_COUNT
 NODE_COUNT=$NODE_COUNT
 KEYSTORE_PASSWORD_ENV_NAME=$KEYSTORE_PASSWORD_ENV_NAME
+CHAIN_COVERAGE_ENABLED=$CHAIN_COVERAGE_ENABLED
+CHAIN_COVERAGE_SCOPE=$CHAIN_COVERAGE_SCOPE_VALUE
 
 NODE0_IMPL=${NODE_IMPLS[0]:-}
 NODE1_IMPL=${NODE_IMPLS[1]:-}
@@ -343,6 +378,10 @@ NODE0_NODEKEY=$DATA_DIR/node0/nodekey
 NODE1_NODEKEY=$DATA_DIR/node1/nodekey
 NODE2_NODEKEY=$DATA_DIR/node2/nodekey
 NODE3_NODEKEY=$DATA_DIR/node3/nodekey
+NODE0_GOCOVERDIR=${COVERAGE_RAW_ROOT:+$COVERAGE_RAW_ROOT/node0}
+NODE1_GOCOVERDIR=${COVERAGE_RAW_ROOT:+$COVERAGE_RAW_ROOT/node1}
+NODE2_GOCOVERDIR=${COVERAGE_RAW_ROOT:+$COVERAGE_RAW_ROOT/node2}
+NODE3_GOCOVERDIR=${COVERAGE_RAW_ROOT:+$COVERAGE_RAW_ROOT/node3}
 
 VALIDATOR1_HTTP_PORT=$V1_HTTP
 VALIDATOR1_WS_PORT=$V1_WS

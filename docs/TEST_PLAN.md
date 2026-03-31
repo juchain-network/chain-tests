@@ -584,7 +584,7 @@ This section covers validation logic for all configuration parameters.
         2. Ensure the generated runtime artifacts expose the same override values.
         3. Wait for PoSA activation and query `getValidatorBySigner()` / `getValidatorSigner()`.
     *   **Expected**:
-        *   CLI override values propagate into native/docker runtime startup.
+        *   CLI override values propagate into native runtime startup.
         *   After migration, signer-to-validator mapping follows the override set, not the genesis fallback mapping.
         *   The overridden validator shows initialized self-stake after migration.
 

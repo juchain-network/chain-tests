@@ -22,7 +22,7 @@ function loadEnvFile(file) {
 loadEnvFile(envFile);
 
 const ns = process.env.PM2_NAMESPACE || 'ju-chain';
-const gethBinary = process.env.GETH_BINARY || path.resolve(__dirname, '../docker/juchain');
+const gethBinary = process.env.GETH_BINARY || 'geth';
 const rethBinary = process.env.RETH_BINARY || path.resolve(__dirname, '../../rchain/target/release/congress-node');
 const logDir = process.env.NATIVE_LOG_DIR || path.resolve(__dirname, '../data/native-logs');
 const networkId = process.env.NETWORK_ID || '666666';

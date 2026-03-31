@@ -8,7 +8,7 @@ Its primary goals are to validate:
 - end-to-end system contract behavior on real local multi-node networks
 - integration behavior between consensus and system contracts
 - regression stability of critical consensus paths, including validator-set updates, punishment, rewards, and governance parameter changes
-- both `docker` and `native` multi-node runtime backends, selectable by configuration
+- native multi-node runtime orchestration through `pm2`
 
 This repository is the primary integration test workspace. It should focus on test orchestration, test cases, reports, and reusable test assets. It should not become the main development repository for system contracts.
 
@@ -62,7 +62,6 @@ chain-tests/
 ├── AGENTS.md
 ├── Makefile
 ├── ci.go
-├── docker/
 ├── scripts/
 ├── internal/
 │   ├── context/
@@ -77,24 +76,15 @@ chain-tests/
 
 ## 4. Test Execution Baseline
 
-### 4.0 Runtime Backend Selection
+### 4.0 Runtime Model
 
-Use a dual-backend runtime model:
+Use a native runtime model:
 
 - `native`:
-  - recommended default for local development
-  - uses `pm2` to manage multiple local `geth` processes
+  - required backend for local development and CI
+  - uses `pm2` to manage multiple local node processes
   - uses repository-owned files such as `scripts/native/pm2_init.sh` and `native/ecosystem.config.js`
-  - advantages: faster startup/shutdown, no image build step, easier log inspection
-- `docker`:
-  - preferred for CI and environment consistency
-  - continues to use `docker compose`
-  - advantages: stronger dependency isolation and better cross-machine consistency
-
-Select the runtime backend through `config/test_env.yaml`:
-
-- `runtime.backend: native` -> use native process orchestration
-- `runtime.backend: docker` -> use Docker orchestration
+  - advantages: faster startup/shutdown and easier log inspection
 
 Dependency paths should be managed through `config/test_env.yaml` under `paths.*`, using repository-relative paths where possible, for example:
 
@@ -222,27 +212,20 @@ Failure logs must include the test name, transaction hash, current block height,
   - dynamic governance parameter changes affecting consensus behavior
   - upgrade and initialization guard paths
 3. Build repeatable, traceable local CI report output
-4. Maintain dual runtime backends:
-  - `native (pm2)` for fast local feedback
-  - `docker` for stable CI regression
-  - both must reuse the same test cases and assertion logic
+4. Maintain a single native runtime backend with shared test cases across geth/reth implementations
 
 ---
 
-## 9. Recommended Rollout Order For Dual Backend Support
+## 9. Recommended Runtime Structure
 
 1. Define a unified config file: `config/test_env.yaml`
 2. Provide unified orchestration entrypoints under `scripts/network/*.sh`:
-  - `docker.sh` to wrap compose `up/down/logs/ready`
   - `native.sh` to wrap pm2 `init/start/stop/logs/ready`
-  - `dispatch.sh` to select the backend based on config
-3. Keep `Makefile` as a thin wrapper over `dispatch.sh`, without hardcoding backend-specific commands
-4. Default CI to `runtime.backend=docker` and local development to `runtime.backend=native`
+  - `dispatch.sh` to route lifecycle commands into the native backend
+3. Keep `Makefile` as a thin wrapper over `dispatch.sh`, without backend-specific branches
 
 Current migration-stage notes:
 
 - the `native` backend already supports node start/stop and readiness checks through pm2 orchestration
 - integration test data generation still primarily depends on `gen_network_config.sh`, and native-chain config is not yet fully unified with that flow
-- until account and genesis configuration are fully unified:
-  - prefer `native` for local debugging
-  - prefer `docker` for automated regression
+- until account and genesis configuration are fully unified, prefer the existing native bootstrap flow

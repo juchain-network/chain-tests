@@ -121,7 +121,7 @@ run_reth_keystore_smoke() {
   ' "$tmp_cfg" > "${tmp_cfg}.next"
   mv "${tmp_cfg}.next" "$tmp_cfg"
 
-  TEST_ENV_CONFIG="$CONFIG_FILE" RUNTIME_BACKEND=docker "$ROOT_DIR/scripts/network/dispatch.sh" down || true
+  TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" down || true
   TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" reset
   TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" test-smoke TOPOLOGY=multi MATRIX=0
   TEST_ENV_CONFIG="$tmp_cfg" make -C "$ROOT_DIR" stop || true

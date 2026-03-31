@@ -19,7 +19,6 @@ Usage:
 
 Environment:
   TEST_ENV_CONFIG   Path to config YAML (default: config/test_env.yaml, then .example)
-  RUNTIME_BACKEND   Override backend (native|docker)
   RUNTIME_SESSION_FILE Path to runtime session snapshot (default: data/runtime_session.yaml)
   WAIT_TIMEOUT      Seconds for ready checks (default: 120)
   NODE              Service/process name for logs

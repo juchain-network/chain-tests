@@ -71,7 +71,7 @@ FORK_SCHEDULER_SCRIPT="$SCRIPT_DIR/fork/set_fork_schedule.py"
 POA_ALLOC_TEMPLATE="$(to_abs_path "./templates/alloc_poa_system_contracts.json")"
 RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
 DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
-SESSION_BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")}"
+SESSION_BACKEND="native"
 VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
 VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
 VALIDATOR_KEYSTORE_PASSWORD_ENV="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
@@ -87,12 +87,8 @@ fi
 
 GETH_NATIVE_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
 RETH_NATIVE_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_native" "$(cfg_get "$CONFIG_FILE" "native.reth_binary" "")")"
-GETH_DOCKER_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_docker" "$(cfg_get "$CONFIG_FILE" "paths.chain_docker_binary" "")")"
-RETH_DOCKER_BIN_CFG="$(cfg_get "$CONFIG_FILE" "binaries.reth_docker" "")"
 
 REPORTS_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.reports_dir" "./reports")")"
-DOCKER_COMPOSE_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "docker.compose_file" "./docker/docker-compose.yml")")"
-DOCKER_RUNTIME_COMPOSE_FILE="$DATA_DIR/docker-compose.runtime.yml"
 
 NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.impl" "")"
 NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1.impl" "")"
@@ -218,13 +214,9 @@ if ! [[ "$NETWORK_EPOCH" =~ ^[0-9]+$ ]] || [ "$NETWORK_EPOCH" -le 0 ]; then
 fi
 
 DEFAULT_RUNTIME_IMPL="$(normalize_impl "$DEFAULT_RUNTIME_IMPL")"
-case "$SESSION_BACKEND" in
-    native|docker)
-        ;;
-    *)
-        die "runtime backend must be native|docker, got: $SESSION_BACKEND"
-        ;;
-esac
+if [ "$SESSION_BACKEND" != "native" ]; then
+    die "runtime backend must be native, got: $SESSION_BACKEND"
+fi
 case "$TOPOLOGY" in
     ""|single|multi)
         ;;
@@ -232,9 +224,6 @@ case "$TOPOLOGY" in
         die "TOPOLOGY must be one of single|multi, got: $TOPOLOGY"
         ;;
 esac
-if [ "$TOPOLOGY" = "single" ] && [ "$SESSION_BACKEND" = "docker" ]; then
-    die "single topology currently supports native backend only; set runtime.backend=native or use TOPOLOGY=multi"
-fi
 case "$RUNTIME_IMPL_MODE" in
     single|mixed)
         ;;
@@ -279,9 +268,6 @@ done
 # Clean up data directory (handle root-owned files from Docker)
 if [ -d "$DATA_DIR" ]; then
     rm -rf "$DATA_DIR" 2>/dev/null || true
-    if [ -d "$DATA_DIR" ]; then
-        docker run --rm -v "$ROOT_DIR":/work alpine sh -c "rm -rf /work/data" || true
-    fi
 fi
 mkdir -p "$DATA_DIR"
 mkdir -p "${GOCACHE:-$ROOT_DIR/.gocache}" "${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
@@ -1057,104 +1043,6 @@ EOF
     fi
 done
 
-awk \
-  -v v1_http="$V1_HTTP" -v v1_ws="$V1_WS" -v v1_p2p="$V1_P2P" \
-  -v v2_http="$V2_HTTP" -v v2_ws="$V2_WS" -v v2_p2p="$V2_P2P" \
-  -v v3_http="$V3_HTTP" -v v3_ws="$V3_WS" -v v3_p2p="$V3_P2P" \
-  -v s1_http="$S1_HTTP" -v s1_ws="$S1_WS" -v s1_p2p="$S1_P2P" '
-  function print_ports(node) {
-    print "    ports:"
-    if (node == "node0") {
-      print "      - \"" v1_http ":8545\""
-      print "      - \"" v1_ws ":8546\" # WS"
-      print "      - \"" v1_p2p ":30303\" # P2P"
-    } else if (node == "node1") {
-      print "      - \"" v2_http ":8545\""
-      print "      - \"" v2_ws ":8546\" # WS"
-      print "      - \"" v2_p2p ":30303\" # P2P"
-    } else if (node == "node2") {
-      print "      - \"" v3_http ":8545\""
-      print "      - \"" v3_ws ":8546\" # WS"
-      print "      - \"" v3_p2p ":30303\" # P2P"
-    } else if (node == "node3") {
-      print "      - \"" s1_http ":8545\""
-      print "      - \"" s1_ws ":8546\" # WS"
-      print "      - \"" s1_p2p ":30303\" # P2P"
-    }
-  }
-
-  /^  node[0-3]:$/ {
-    current_node = substr($1, 1, length($1) - 1)
-    skip_ports = 0
-    inserted = 0
-  }
-
-  current_node != "" && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  node[0-3]:$/ {
-    current_node = ""
-    skip_ports = 0
-    inserted = 0
-  }
-
-  current_node != "" && skip_ports {
-    if ($0 ~ /^      -/) {
-      next
-    }
-    skip_ports = 0
-  }
-
-  current_node != "" && $0 ~ /^    ports:/ {
-    skip_ports = 1
-    next
-  }
-
-  current_node != "" && !inserted && $0 ~ /^    volumes:/ {
-    print_ports(current_node)
-    inserted = 1
-  }
-
-  { print }
-' "$ROOT_DIR/docker/docker-compose.yml" > "$DATA_DIR/docker-compose.runtime.yml"
-
-# Ensure runtime compose mounts the base image assets from test-integration/docker.
-if [ "$(uname -s)" = "Darwin" ]; then
-  sed -i '' \
-    -e 's|\./juchain|../docker/juchain|g' \
-    -e 's|\./start.sh|../docker/start.sh|g' \
-    "$DATA_DIR/docker-compose.runtime.yml"
-else
-  sed -i \
-    -e 's|\./juchain|../docker/juchain|g' \
-    -e 's|\./start.sh|../docker/start.sh|g' \
-    "$DATA_DIR/docker-compose.runtime.yml"
-fi
-
-awk \
-  -v enabled="$BLACKLIST_ENABLED" \
-  -v addr="$BLACKLIST_CONTRACT_ADDR" \
-  -v mode="$BLACKLIST_MODE" \
-  -v alert="$BLACKLIST_ALERT_FAIL_OPEN" \
-  -v override_posa_time="${UPGRADE_OVERRIDE_POSA_TIME:-}" \
-  -v override_posa_validators="$UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV" \
-  -v override_posa_signers="$UPGRADE_OVERRIDE_POSA_SIGNERS_CSV" '
-  /^  node[0-3]:$/ {
-    in_node = 1
-  }
-  in_node && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  node[0-3]:$/ {
-    in_node = 0
-  }
-  { print }
-  in_node && /^    environment:/ {
-    print "      - BLACKLIST_ENABLED=" enabled
-    print "      - BLACKLIST_CONTRACT_ADDR=" addr
-    print "      - BLACKLIST_MODE=" mode
-    print "      - BLACKLIST_ALERT_FAIL_OPEN=" alert
-    print "      - UPGRADE_OVERRIDE_POSA_TIME=" override_posa_time
-    print "      - UPGRADE_OVERRIDE_POSA_VALIDATORS=" override_posa_validators
-    print "      - UPGRADE_OVERRIDE_POSA_SIGNERS=" override_posa_signers
-  }
-' "$DATA_DIR/docker-compose.runtime.yml" > "$DATA_DIR/docker-compose.runtime.with_blacklist.yml"
-mv "$DATA_DIR/docker-compose.runtime.with_blacklist.yml" "$DATA_DIR/docker-compose.runtime.yml"
-
 SESSION_ID="$(date +%Y%m%d_%H%M%S)_$RANDOM"
 SESSION_CREATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 SESSION_TOPOLOGY="$TOPOLOGY_MODE"
@@ -1226,8 +1114,6 @@ paths:
 binaries:
   geth_native: "$(to_abs_path "$GETH_NATIVE_BIN_CFG")"
   reth_native: "$(to_abs_path "$RETH_NATIVE_BIN_CFG")"
-  geth_docker: "$(to_abs_path "$GETH_DOCKER_BIN_CFG")"
-  reth_docker: "$(to_abs_path "$RETH_DOCKER_BIN_CFG")"
 
 runtime_nodes:
 EOF
@@ -1255,12 +1141,6 @@ native:
   env_file: "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
   pm2_namespace: "$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")"
   external_rpc: "$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$PRIMARY_RPC")"
-
-docker:
-  compose_file: "$DOCKER_COMPOSE_FILE"
-  runtime_compose_file: "$DOCKER_RUNTIME_COMPOSE_FILE"
-  project_name: "$(cfg_get "$CONFIG_FILE" "docker.project_name" "juchain-it")"
-  external_rpc: "$(cfg_get "$CONFIG_FILE" "docker.external_rpc" "$PRIMARY_RPC")"
 
 artifacts:
   genesis_file: "$DATA_DIR/genesis.json"
@@ -1303,8 +1183,6 @@ jq -n \
   --arg reth_bytecode_file "$RETH_BYTECODE_FILE" \
   --arg geth_native "$(to_abs_path "$GETH_NATIVE_BIN_CFG")" \
   --arg reth_native "$(to_abs_path "$RETH_NATIVE_BIN_CFG")" \
-  --arg geth_docker "$(to_abs_path "$GETH_DOCKER_BIN_CFG")" \
-  --arg reth_docker "$(to_abs_path "$RETH_DOCKER_BIN_CFG")" \
   --arg validator_auth_mode "$VALIDATOR_AUTH_MODE" \
   --arg validator_password_env "$VALIDATOR_KEYSTORE_PASSWORD_ENV" \
   --arg validator_password_file "$VALIDATOR_KEYSTORE_PASSWORD_FILE_CFG" \
@@ -1314,10 +1192,6 @@ jq -n \
   --arg native_env_file "$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")" \
   --arg native_pm2_namespace "$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")" \
   --arg native_external_rpc "$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$PRIMARY_RPC")" \
-  --arg docker_compose_file "$DOCKER_COMPOSE_FILE" \
-  --arg docker_runtime_compose_file "$DOCKER_RUNTIME_COMPOSE_FILE" \
-  --arg docker_project_name "$(cfg_get "$CONFIG_FILE" "docker.project_name" "juchain-it")" \
-  --arg docker_external_rpc "$(cfg_get "$CONFIG_FILE" "docker.external_rpc" "$PRIMARY_RPC")" \
   --arg genesis_file "$DATA_DIR/genesis.json" \
   --arg test_config_file "$DATA_DIR/test_config.yaml" \
   --arg runtime_nodes_file "$DATA_DIR/runtime_nodes.yaml" \
@@ -1397,9 +1271,7 @@ jq -n \
     },
     binaries: {
       geth_native: $geth_native,
-      reth_native: $reth_native,
-      geth_docker: $geth_docker,
-      reth_docker: $reth_docker
+      reth_native: $reth_native
     },
     runtime_nodes: $runtime_nodes,
     validator_auth: {
@@ -1416,12 +1288,6 @@ jq -n \
       env_file: $native_env_file,
       pm2_namespace: $native_pm2_namespace,
       external_rpc: $native_external_rpc
-    },
-    docker: {
-      compose_file: $docker_compose_file,
-      runtime_compose_file: $docker_runtime_compose_file,
-      project_name: $docker_project_name,
-      external_rpc: $docker_external_rpc
     },
     artifacts: {
       genesis_file: $genesis_file,

@@ -71,23 +71,11 @@ coverage_chain_root() {
 }
 
 coverage_runtime_backend() {
-  local config_file="$1"
-  if [[ -n "${RUNTIME_BACKEND:-}" ]]; then
-    echo "$RUNTIME_BACKEND"
-    return 0
-  fi
-  cfg_get "$config_file" "runtime.backend" "native"
+  echo "native"
 }
 
 coverage_assert_supported_runtime() {
   local config_file="$1"
-  local backend
-  backend="$(coverage_runtime_backend "$config_file")"
-  if [[ "$backend" != "native" ]]; then
-    printf '[coverage] ERROR: CHAIN_COVERAGE=1 only supports runtime.backend=native (got %s)\n' "$backend" >&2
-    exit 2
-  fi
-
   local impl_mode default_impl node_count impl node_cfg
   impl_mode="$(cfg_get "$config_file" "runtime.impl_mode" "single")"
   default_impl="$(cfg_get "$config_file" "runtime.impl" "geth")"
@@ -95,7 +83,7 @@ coverage_assert_supported_runtime() {
   [[ "$node_count" =~ ^[0-9]+$ ]] || node_count=4
 
   for ((i=0; i<node_count; i++)); do
-    node_cfg="$(cfg_get "$config_file" "runtime_nodes.node${i}" "")"
+    node_cfg="$(cfg_get "$config_file" "runtime_nodes.node${i}.impl" "")"
     case "$impl_mode" in
       single)
         impl="$default_impl"
@@ -104,7 +92,8 @@ coverage_assert_supported_runtime() {
         if [[ -n "$node_cfg" ]]; then
           impl="$node_cfg"
         else
-          impl="$default_impl"
+          printf '[coverage] ERROR: runtime_nodes.node%d.impl is required when runtime.impl_mode=mixed\n' "$i" >&2
+          exit 2
         fi
         ;;
       *)

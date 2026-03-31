@@ -75,11 +75,9 @@ rpc_ready() {
 
 ensure_perf_runtime_ready() {
   local rpc_url
-  local backend
   local session_file
   local env_file
   rpc_url="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
-  backend="$(cfg_get "$CONFIG_FILE" "runtime.backend" "native")"
   session_file="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
   env_file="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 
@@ -88,7 +86,7 @@ ensure_perf_runtime_ready() {
     TEST_ENV_CONFIG="$CONFIG_FILE" TEST_NETWORK_EPOCH="${EPOCH:-}" bash "$ROOT_DIR/scripts/gen_network_config.sh" "$CONFIG_FILE"
   fi
 
-  if [[ "$backend" == "native" && ! -f "$env_file" ]]; then
+  if [[ ! -f "$env_file" ]]; then
     echo "Perf precheck: native runtime artifacts missing, initializing backend..."
     TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" init "$CONFIG_FILE"
   fi

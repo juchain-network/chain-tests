@@ -7,7 +7,7 @@ It validates:
 - interaction between consensus and system contracts
 - critical consensus paths (validator updates, punish, rewards, governance)
 - PoA -> PoSA upgrade fork liveness
-- both `native (pm2)` and `docker compose` runtimes
+- native `pm2` runtime
 - both runtime implementations: `geth` and `reth`
 
 ## 1. Dependency boundary
@@ -32,7 +32,6 @@ Recommended local tools:
 - Node.js
 - `python3`, `curl`, `jq` (`yq` optional)
 - for native runtime: `pm2`
-- for docker runtime: Docker + Docker Compose
 
 ## 3. Quick start
 
@@ -84,7 +83,7 @@ Edit `config/test_env.yaml`:
 
 ```yaml
 runtime:
-  backend: native # or docker
+  backend: native
   impl_mode: single # single | mixed
   impl: geth # geth | reth
 
@@ -160,12 +159,9 @@ Notes:
 make test-regression SCOPE=core
 ```
 
-## 4. Runtime backend switch
+## 4. Runtime model
 
-Backend is controlled by `config/test_env.yaml`:
-
-- `runtime.backend: native` -> pm2 multi-process local nodes (faster local feedback)
-- `runtime.backend: docker` -> docker compose multi-node runtime (better CI consistency)
+The project is native-only. Network lifecycle is managed through `pm2`.
 
 Public lifecycle commands:
 

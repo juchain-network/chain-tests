@@ -49,19 +49,17 @@ UPGRADE_OVERRIDE_POSA_VALIDATORS="$override_validator" \
 UPGRADE_OVERRIDE_POSA_SIGNERS="$runtime_signer" \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
 
-python3 - "$ROOT_DIR/data/test_config.yaml" "$ROOT_DIR/data/runtime_session.yaml" "$ROOT_DIR/data/docker-compose.runtime.yml" "$override_time" "$override_validator" "$runtime_signer" <<'PY'
+python3 - "$ROOT_DIR/data/test_config.yaml" "$ROOT_DIR/data/runtime_session.yaml" "$override_time" "$override_validator" "$runtime_signer" <<'PY'
 import sys
 
 import yaml
 
-cfg_path, session_path, compose_path, override_time, override_validator, runtime_signer = sys.argv[1:]
+cfg_path, session_path, override_time, override_validator, runtime_signer = sys.argv[1:]
 
 with open(cfg_path, "r", encoding="utf-8") as fh:
     cfg = yaml.safe_load(fh) or {}
 with open(session_path, "r", encoding="utf-8") as fh:
     session = yaml.safe_load(fh) or {}
-with open(compose_path, "r", encoding="utf-8") as fh:
-    compose_text = fh.read()
 
 for doc_name, doc in (("test_config", cfg), ("runtime_session", session)):
     fork = (doc.get("fork") or {})
@@ -76,13 +74,6 @@ for doc_name, doc in (("test_config", cfg), ("runtime_session", session)):
         raise SystemExit(f"{doc_name} effective posa_time mismatch")
     if int(fork.get("scheduled_time") or 0) != int(override_time):
         raise SystemExit(f"{doc_name} effective scheduled_time mismatch")
-
-if f"UPGRADE_OVERRIDE_POSA_VALIDATORS={override_validator}" not in compose_text:
-    raise SystemExit("docker compose missing override validator env")
-if f"UPGRADE_OVERRIDE_POSA_SIGNERS={runtime_signer}" not in compose_text:
-    raise SystemExit("docker compose missing override signer env")
-if f"UPGRADE_OVERRIDE_POSA_TIME={override_time}" not in compose_text:
-    raise SystemExit("docker compose missing override posa time env")
 PY
 
 echo "[scenario/upgrade] init/start native single node through main dispatcher"

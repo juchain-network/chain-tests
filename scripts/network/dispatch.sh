@@ -39,14 +39,15 @@ else
   SESSION_BACKEND=""
 fi
 
-if [[ "$ACTION" != "init" && -n "$SESSION_BACKEND" ]]; then
-  BACKEND="$SESSION_BACKEND"
-else
-  BACKEND="${RUNTIME_BACKEND:-$(cfg_get "$EFFECTIVE_CONFIG" "runtime.backend" "native")}"
+BACKEND="native"
+
+if [[ -n "$SESSION_BACKEND" && "$SESSION_BACKEND" != "native" ]]; then
+  die "runtime session backend is unsupported: $SESSION_BACKEND (native only)"
 fi
 
-if [[ "$ACTION" != "init" && -n "${RUNTIME_BACKEND:-}" && -n "$SESSION_BACKEND" && "$RUNTIME_BACKEND" != "$SESSION_BACKEND" ]]; then
-  log "ignore RUNTIME_BACKEND=$RUNTIME_BACKEND, using session backend=$SESSION_BACKEND"
+CONFIG_BACKEND="$(cfg_get "$EFFECTIVE_CONFIG" "runtime.backend" "native")"
+if [[ -n "$CONFIG_BACKEND" && "$CONFIG_BACKEND" != "native" ]]; then
+  die "config runtime.backend is unsupported: $CONFIG_BACKEND (native only)"
 fi
 
 if [[ "$ACTION" == "resolve-backend" ]]; then
@@ -54,15 +55,4 @@ if [[ "$ACTION" == "resolve-backend" ]]; then
   exit 0
 fi
 
-case "$BACKEND" in
-  docker)
-    exec "$SCRIPT_DIR/docker.sh" "$ACTION" "$CONFIG_FILE" "$SESSION_FILE"
-    ;;
-  native)
-    exec "$SCRIPT_DIR/native.sh" "$ACTION" "$CONFIG_FILE" "$SESSION_FILE"
-    ;;
-  *)
-    usage_common
-    die "unsupported backend: $BACKEND (expected: docker|native)"
-    ;;
-esac
+exec "$SCRIPT_DIR/native.sh" "$ACTION" "$CONFIG_FILE" "$SESSION_FILE"

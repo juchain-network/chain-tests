@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: all help init-config image init run ready reset stop clean logs status \
+.PHONY: all help init-config init run ready reset stop clean logs status \
         coverage-start coverage-merge coverage-stop coverage-status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready sync-contract-clients test \
@@ -15,7 +15,6 @@ CONTRACT_CLIENT_SYNC := scripts/sync_contract_clients.sh
 CI_TOOL := go run ./ci.go
 EPOCH_RESOLVER := $(SCRIPTS_DIR)/resolve_epoch.sh
 
-# Runtime/backend config (docker/native selection)
 TEST_ENV_CONFIG ?= config/test_env.yaml
 RUNTIME_SESSION_FILE ?=
 
@@ -117,9 +116,6 @@ BUDGET_DRIFT_MIN_MS ?= 15000
 
 CI_COMMON_FLAGS := $(if $(DEBUG),-debug,) $(if $(GOCACHE),-gocache $(GOCACHE),) $(if $(TEST_CONFIG),-config $(TEST_CONFIG),) $(if $(REPORT_DIR),-report-dir $(REPORT_DIR),) $(if $(filter 1 true yes,$(SKIP_SETUP)),-skip-setup,) $(if $(filter 1 true yes,$(SHARED_SETUP)),-shared-setup,) $(if $(SHARED_GROUPS),-shared-groups $(SHARED_GROUPS),) $(if $(SLOW_TOP),-slow-top $(SLOW_TOP),) $(if $(SLOW_THRESHOLD),-slow-threshold $(SLOW_THRESHOLD),) $(if $(filter 1 true yes,$(SLOW_FAIL)),-slow-fail,) $(if $(GROUP_THRESHOLDS),-group-thresholds $(GROUP_THRESHOLDS),) $(if $(filter 1 true yes,$(GROUP_THRESHOLD_FAIL)),-group-threshold-fail,) $(if $(MAX_SKIPS),-max-skips $(MAX_SKIPS),)
 
-backend_cmd = RUNTIME_BACKEND="$${RUNTIME_BACKEND:-$$(awk '/^[[:space:]]*backend:[[:space:]]*/{print $$2; exit}' "$(TEST_ENV_CONFIG)" 2>/dev/null | sed 's/\"//g')}"; \
-	if [ -z "$$RUNTIME_BACKEND" ]; then RUNTIME_BACKEND=native; fi
-
 all: help
 
 help:
@@ -127,9 +123,8 @@ help:
 	@echo ""
 	@echo "Network Commands:"
 	@echo "  init-config     - Create config/test_env.yaml from example if missing"
-	@echo "  image           - Build juchain binary for docker runtime"
 	@echo "  init            - Generate genesis, keys, and runtime config"
-	@echo "  run             - Start network (auto backend: docker/native)"
+	@echo "  run             - Start network (native only)"
 	@echo "  precheck        - Compile-only precheck for tests/tooling (cached by source fingerprint)"
 	@echo "  runtime-precheck - Validate contract/congress/geth consistency before startup"
 	@echo "  sync-contract-clients - Regenerate contracts/*.go from external contract artifacts"
@@ -214,8 +209,6 @@ help:
 	@echo "  CHAIN_COVERAGE_KEEP_RAW=$(CHAIN_COVERAGE_KEEP_RAW) # 1=keep raw GOCOVERDIR files after merge"
 	@echo "  REPORT_DIR=$(REPORT_DIR) REGRESSION_REPORT_DIR=$(REGRESSION_REPORT_DIR)"
 	@echo "  See README.md for the full variable reference."
-	@echo "  RUNTIME_BACKEND=(native|docker)  # optional override"
-
 init-config:
 	@if [ ! -f "$(TEST_ENV_CONFIG)" ]; then \
 		if [ -f "config/test_env.yaml.example" ]; then \
@@ -253,10 +246,6 @@ coverage-stop:
 coverage-status:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/coverage/session_ctl.sh status
 
-image:
-	@echo "🚀 Building juchain binary for docker runtime..."
-	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash $(SCRIPTS_DIR)/build_docker.sh
-
 init:
 	@echo "⚙️  Generating network config/genesis..."
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
@@ -265,7 +254,6 @@ init:
 		INIT_MODE="$(INIT_MODE)" \
 		INIT_TARGET="$(INIT_TARGET)" \
 		INIT_DELAY_SECONDS="$(INIT_DELAY_SECONDS)" \
-		RUNTIME_BACKEND="$(RUNTIME_BACKEND)" \
 		bash $(SCRIPTS_DIR)/gen_network_config.sh; \
 	session_cfg="$${RUNTIME_SESSION_FILE:-data/runtime_session.yaml}"; \
 	TEST_ENV_CONFIG="$$session_cfg" RUNTIME_SESSION_FILE="$$session_cfg" "$(NETWORK_DISPATCH)" init
@@ -275,9 +263,8 @@ precheck:
 	@GOCACHE="$(if $(GOCACHE),$(GOCACHE),/tmp/go-build)" bash $(SCRIPTS_DIR)/precheck.sh
 
 runtime-precheck:
-	@$(backend_cmd); \
 	echo "🔍 Running runtime consistency precheck..."; \
-	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_BACKEND="$$RUNTIME_BACKEND" bash $(SCRIPTS_DIR)/runtime_precheck.sh
+	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash $(SCRIPTS_DIR)/runtime_precheck.sh
 
 sync-contract-clients:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
@@ -293,17 +280,10 @@ run:
 	if [ -z "$(SKIP_PRECHECK)" ]; then \
 		$(MAKE) precheck; \
 	fi; \
-	resolved_backend="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" resolve-backend)"; \
 	session_cfg="$${RUNTIME_SESSION_FILE:-data/runtime_session.yaml}"; \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" RUNTIME_SESSION_REQUIRED=1 bash $(SCRIPTS_DIR)/runtime_precheck.sh; \
-	echo "🚀 Starting network backend=$$resolved_backend"; \
-	if [ "$$resolved_backend" = "docker" ]; then \
-		TEST_ENV_CONFIG="$$session_cfg" bash $(SCRIPTS_DIR)/build_docker.sh; \
-	fi; \
+	echo "🚀 Starting network backend=native"; \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" up; \
-	if [ "$$resolved_backend" = "docker" ]; then \
-		bash $(SCRIPTS_DIR)/ensure_miners.sh || true; \
-	fi; \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" ready
 
 ready:
@@ -311,8 +291,7 @@ ready:
 
 stop:
 	@set -e; \
-	resolved_backend="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" resolve-backend)"; \
-	echo "🛑 Stopping network backend=$$resolved_backend"; \
+	echo "🛑 Stopping network backend=native"; \
 	TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" "$(NETWORK_DISPATCH)" down
 
 reset: clean init run ready
@@ -322,9 +301,6 @@ clean:
 	@echo "🧹 Cleaning local runtime artifacts..."
 	@if [ -d "$(DATA_DIR)" ]; then \
 		rm -rf "$(DATA_DIR)" 2>/dev/null || true; \
-		if [ -d "$(DATA_DIR)" ] && command -v docker >/dev/null 2>&1; then \
-			docker run --rm -v "$(PWD)":/work alpine sh -c "rm -rf /work/$(DATA_DIR)" || true; \
-		fi; \
 	fi
 	@rm -f tests.test
 	@echo "ℹ️  Clean complete."

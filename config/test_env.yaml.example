@@ -1,6 +1,5 @@
 # Runtime backend selector for chain-tests
 runtime:
-  # Options: docker | native
   backend: native
   # Runtime implementation mode:
   # - single: all nodes use runtime.impl
@@ -25,8 +24,6 @@ binaries:
   # Optional explicit binary overrides. Empty means auto-detect from paths.* roots.
   geth_native: ""
   reth_native: ""
-  geth_docker: ""
-  reth_docker: ""
 
 # Native-only per-node runtime mapping for runtime.impl_mode=mixed.
 # In mixed mode, every node must set its own impl. `binary` is optional:
@@ -138,13 +135,6 @@ network:
   chain_id: 666666
   data_dir: "./data"
   reports_dir: "./reports"
-
-# Docker backend settings
-docker:
-  compose_file: "./docker/docker-compose.yml"
-  runtime_compose_file: "./data/docker-compose.runtime.yml"
-  project_name: "juchain-it"
-  external_rpc: "http://localhost:18545"
 
 # Native backend settings (recommended for local dev speed)
 native:

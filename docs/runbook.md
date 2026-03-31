@@ -13,7 +13,6 @@ It does not try to document every fork, migration, or scenario-specific override
 - Compiled contract artifacts under `<chain_contract_root>/out`
 - `go`, `node`, `python3`, `jq`
 - `pm2` for native runtime
-- `docker` / `docker compose` for docker runtime
 
 ## 3. Environment configuration
 1. Copy the config template:
@@ -21,9 +20,7 @@ It does not try to document every fork, migration, or scenario-specific override
 2. Set path roots in `config/test_env.yaml`:
    - `paths.chain_root`
    - `paths.chain_contract_root`
-3. Pick the runtime backend:
-   - `runtime.backend: native` for the default local workflow
-   - `runtime.backend: docker` for CI-style multi-node runs
+3. Keep `runtime.backend: native`
 
 Current default facts in `config/test_env.yaml`:
 - `runtime.backend: native`
@@ -34,8 +31,8 @@ Current default facts in `config/test_env.yaml`:
 - `network.bootstrap.fee_mode: validator`
 
 Topology notes:
-- `TOPOLOGY=single` currently supports `native` only
-- `TOPOLOGY=multi` can run on `native` or `docker`
+- `TOPOLOGY=single` runs on native
+- `TOPOLOGY=multi` runs on native
 - If `TOPOLOGY` is omitted, the generator resolves topology from `network.node_count` and `network.validator_count`
 
 ## 4. Default bootstrap identities
@@ -96,10 +93,10 @@ Other init modes such as `smoke` and `upgrade` exist, but are outside this base 
 
 | Command | Purpose |
 | --- | --- |
-| `make init` | Generate keys, `genesis.json`, `data/test_config.yaml`, `data/runtime_session.yaml`, and runtime backend config |
+| `make init` | Generate keys, `genesis.json`, `data/test_config.yaml`, `data/runtime_session.yaml`, and native runtime config |
 | `make run` | Start the prepared network and wait for RPC readiness |
 | `make ready` | Re-run readiness wait against the current runtime session |
-| `make status` | Show native pm2 status or docker compose status |
+| `make status` | Show native pm2 status |
 | `make logs` | Stream runtime logs; for multi-node runs you can pass `NODE=...` |
 | `make stop` | Stop the current runtime session |
 | `make clean` | Stop the runtime if needed and remove local runtime artifacts under `data/` |
@@ -108,7 +105,7 @@ Other init modes such as `smoke` and `upgrade` exist, but are outside this base 
 Important lifecycle notes:
 - `make run` already performs a readiness wait; `make ready` is mainly useful when attaching to an existing session
 - `make stop`, `make status`, and `make logs` depend on `data/runtime_session.yaml`; if you see a "runtime session not found" error, run `make init` first
-- When switching topology, genesis mode, or backend, prefer `make clean` before re-initializing
+- When switching topology or genesis mode, prefer `make clean` before re-initializing
 
 ### 5.2 One-command startup examples
 
@@ -130,11 +127,6 @@ make reset TOPOLOGY=multi INIT_MODE=poa
 #### Multi-node PoSA
 ```bash
 make reset TOPOLOGY=multi INIT_MODE=posa
-```
-
-If you want multi-node docker instead of the default native backend, set the backend before initialization, for example:
-```bash
-make reset TOPOLOGY=multi INIT_MODE=posa RUNTIME_BACKEND=docker
 ```
 
 ### 5.3 Step-by-step lifecycle examples
@@ -185,9 +177,6 @@ make stop
 - Native multi-node pm2 logs:
   - `NODE=ju-chain-validator1 make logs`
   - `NODE=ju-chain-syncnode make logs`
-- Docker multi-node logs:
-  - `NODE=node0 make logs`
-  - `NODE=node3 make logs`
 
 ## 6. Regression commands
 - Smoke:
@@ -238,12 +227,10 @@ Expected artifacts:
 Native real-network runs can collect Go coverage for `../chain/consensus/congress/...`.
 
 Supported scope:
-- `runtime.backend=native`
 - geth only
 - single-node or multi-node
 
 Not supported:
-- docker runtime
 - reth or mixed geth/reth runtime
 - Solidity source coverage from real-chain execution
 

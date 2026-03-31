@@ -12,8 +12,6 @@ paths:
 binaries:
   geth_native: ""
   reth_native: ""
-  geth_docker: ""
-  reth_docker: ""
 
 runtime_nodes:
   node0:
@@ -63,12 +61,6 @@ network:
     posa_time: ""
     posa_validators: []
     posa_signers: []
-
-docker:
-  compose_file: "./docker/docker-compose.yml"
-  runtime_compose_file: "./data/docker-compose.runtime.yml"
-  project_name: "juchain-it"
-  external_rpc: "http://localhost:18545"
 
 native:
   manager: pm2

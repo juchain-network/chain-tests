@@ -41,7 +41,6 @@ jobs:
           if [[ -n "${RETH_ROOT}" ]]; then
             sed -i "s#^  reth_root: .*#  reth_root: \"${RETH_ROOT}\"#" config/test_env.yaml
           fi
-          sed -i 's/^  backend: .*/  backend: docker/' config/test_env.yaml
 
       - name: Nightly Full
         shell: bash

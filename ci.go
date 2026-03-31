@@ -1213,16 +1213,7 @@ func loadTestEnvLite(rootDir string) (*testEnvLite, error) {
 }
 
 func detectRuntimeBackend(rootDir string) string {
-	if v := strings.TrimSpace(os.Getenv("RUNTIME_BACKEND")); v != "" {
-		return v
-	}
-	cfg, err := loadTestEnvLite(rootDir)
-	if err != nil {
-		return "native"
-	}
-	if v := strings.TrimSpace(cfg.Runtime.Backend); v != "" {
-		return v
-	}
+	_ = rootDir
 	return "native"
 }
 

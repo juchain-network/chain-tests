@@ -15,7 +15,7 @@ It validates:
 This repository only consumes **compiled artifacts** from external repos:
 
 - `chain`: geth binary (default: `<chain_root>/build/bin/geth`)
-- `rchain`: reth binary (default: `<reth_root>/target/release/congress-node`)
+- `reth`: reth binary (default: `<reth_root>/target/release/congress-node`)
 - `chain-contract`: compiled contract artifacts (default: `<chain_contract_root>/out`)
 
 Common path configuration:
@@ -95,10 +95,36 @@ paths:
   chain_root: ../chain-1.16/chain-1.16
   reth_root: ../rchain
   chain_contract_root: ../chain-contract
+
+runtime_nodes:
+  node0:
+    impl: geth
+    binary: ""
+  node1:
+    impl: geth
+    binary: ""
+  node2:
+    impl: geth
+    binary: ""
+  node3:
+    impl: reth
+    binary: /opt/juchain/bin/congress-node
 ```
 
 Path fields support absolute paths and relative paths. Relative paths are resolved
 from the repository root (`chain-tests/`), not from `config/`.
+
+Native binary selection order:
+
+1. `runtime_nodes.nodeX.binary`
+2. `binaries.geth_native` / `binaries.reth_native`
+3. derived default path from `paths.chain_root` / `paths.reth_root`
+
+Notes:
+
+- `runtime.impl_mode=single`: all nodes use `runtime.impl`; `runtime_nodes.*.binary` may still override a specific node's native binary.
+- `runtime.impl_mode=mixed`: every `runtime_nodes.nodeX.impl` must be set explicitly.
+- This native per-node binary override is intended for mixed geth/reth or multi-version geth groupings.
 
 ### 3.3 Start network
 
@@ -348,7 +374,9 @@ Important fields:
 - `network.genesis_mode`: `poa | upgrade | posa | smoke`
 - `runtime.impl_mode`: `single | mixed`
 - `runtime.impl`: `geth | reth`
-- `runtime_nodes.nodeX`: per-node impl selection in mixed mode
+- `runtime_nodes.nodeX.impl`: per-node implementation in mixed mode
+- `runtime_nodes.nodeX.binary`: optional per-node native binary override
+- `binaries.geth_native` / `binaries.reth_native`: native binary defaults when node-level override is empty
 - `validator_auth.mode`: `auto | private_key | keystore` (reth validator auth)
 - `network.fork_target`:
   - smoke static profiles:

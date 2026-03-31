@@ -64,7 +64,8 @@ KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.pa
 KEYSTORE_PASSWORD_ENV_NAME="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
 RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
 DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
-NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
+NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.impl" "")"
+NODE0_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.binary" "")"
 
 RPC_HOST="0.0.0.0"
 RPC_PORT="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
@@ -113,14 +114,39 @@ resolve_node_impl() {
       normalize_impl "$DEFAULT_RUNTIME_IMPL"
       ;;
     mixed)
-      if [[ -n "$NODE0_IMPL_CFG" ]]; then
-        normalize_impl "$NODE0_IMPL_CFG"
-      else
-        normalize_impl "$DEFAULT_RUNTIME_IMPL"
-      fi
+      [[ -n "$NODE0_IMPL_CFG" ]] || die "runtime_nodes.node0.impl is required when runtime.impl_mode=mixed"
+      normalize_impl "$NODE0_IMPL_CFG"
       ;;
     *)
       die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+      ;;
+  esac
+}
+
+resolve_node_binary() {
+  local impl="$1"
+  if [[ -n "$NODE0_BINARY_CFG" ]]; then
+    to_abs_path "$NODE0_BINARY_CFG"
+    return 0
+  fi
+
+  case "$impl" in
+    geth)
+      if [[ -n "$GETH_BINARY_CFG" ]]; then
+        to_abs_path "$GETH_BINARY_CFG"
+      else
+        echo "$CHAIN_ROOT/build/bin/geth"
+      fi
+      ;;
+    reth)
+      if [[ -n "$RETH_BINARY_CFG" ]]; then
+        to_abs_path "$RETH_BINARY_CFG"
+      else
+        echo "$RETH_ROOT/target/release/congress-node"
+      fi
+      ;;
+    *)
+      die "unsupported runtime implementation for binary resolution: $impl"
       ;;
   esac
 }
@@ -253,6 +279,7 @@ if [[ -z "$signer_addr" && -f "$VALIDATOR_ADDR_FILE" ]]; then
 fi
 
 NODE_IMPL="$(resolve_node_impl)"
+NODE_BINARY_CFG_RESOLVED="$(resolve_node_binary "$NODE_IMPL")"
 AUTH_MODE="$(resolve_validator_auth_mode)"
 UPGRADE_OVERRIDE_POSA_VALIDATORS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON")"
 UPGRADE_OVERRIDE_POSA_SIGNERS="$(json_addresses_to_csv "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON")"
@@ -269,10 +296,10 @@ if [[ "$NODE_IMPL" == "geth" ]] && coverage_enabled; then
     coverage_geth_binary="$("$ROOT_DIR/scripts/coverage/prepare_chain_coverage.sh" --config "$CONFIG_FILE" --print-binary)"
   fi
 fi
-if ! GETH_BINARY="$(resolve_binary "$coverage_geth_binary" "$(to_abs_path "$GETH_BINARY_CFG")" "$CHAIN_ROOT/build/bin/geth")"; then
+if ! GETH_BINARY="$(resolve_binary "$coverage_geth_binary" "$NODE_BINARY_CFG_RESOLVED" "$CHAIN_ROOT/build/bin/geth")"; then
   GETH_BINARY=""
 fi
-if ! RETH_BINARY="$(resolve_binary "$(to_abs_path "$RETH_BINARY_CFG")" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
+if ! RETH_BINARY="$(resolve_binary "$NODE_BINARY_CFG_RESOLVED" "$RETH_ROOT/target/release/congress-node" "$RETH_ROOT/target/debug/congress-node")"; then
   RETH_BINARY=""
 fi
 

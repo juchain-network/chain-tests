@@ -42,6 +42,38 @@ normalize_impl() {
   esac
 }
 
+resolve_node_binary() {
+  local impl="$1"
+  local node_binary_cfg="$2"
+  local geth_bin_cfg="$3"
+  local reth_bin_cfg="$4"
+
+  if [[ -n "$node_binary_cfg" ]]; then
+    to_abs_path "$node_binary_cfg"
+    return 0
+  fi
+
+  case "$impl" in
+    geth)
+      if [[ -n "$geth_bin_cfg" ]]; then
+        to_abs_path "$geth_bin_cfg"
+      else
+        echo "$CHAIN_ROOT/build/bin/geth"
+      fi
+      ;;
+    reth)
+      if [[ -n "$reth_bin_cfg" ]]; then
+        to_abs_path "$reth_bin_cfg"
+      else
+        echo "$RETH_ROOT/target/release/congress-node"
+      fi
+      ;;
+    *)
+      diep "unsupported runtime impl for binary resolution: $impl"
+      ;;
+  esac
+}
+
 bool_true() {
   case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|on) return 0 ;;
@@ -98,23 +130,27 @@ fi
 
 need_geth=false
 need_reth=false
+declare -a NODE_IMPLS=()
+declare -a NODE_BINARIES=()
+GETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.geth_native" "$(cfg_get "$SOURCE_FILE" "native.geth_binary" "")")"
+RETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.reth_native" "$(cfg_get "$SOURCE_FILE" "native.reth_binary" "")")"
 for ((i=0; i<NODE_COUNT; i++)); do
-  node_cfg="$(cfg_get "$SOURCE_FILE" "runtime_nodes.node${i}" "")"
+  node_cfg="$(cfg_get "$SOURCE_FILE" "runtime_nodes.node${i}.impl" "")"
+  node_binary_cfg="$(cfg_get "$SOURCE_FILE" "runtime_nodes.node${i}.binary" "")"
   case "$RUNTIME_IMPL_MODE" in
     single)
       impl="$DEFAULT_RUNTIME_IMPL"
       ;;
     mixed)
-      if [[ -n "$node_cfg" ]]; then
-        impl="$(normalize_impl "$node_cfg")"
-      else
-        impl="$DEFAULT_RUNTIME_IMPL"
-      fi
+      [[ -n "$node_cfg" ]] || diep "runtime_nodes.node${i}.impl is required when runtime.impl_mode=mixed"
+      impl="$(normalize_impl "$node_cfg")"
       ;;
     *)
       diep "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
       ;;
   esac
+  NODE_IMPLS+=("$impl")
+  NODE_BINARIES+=("$(resolve_node_binary "$impl" "$node_binary_cfg" "$GETH_BIN_CFG" "$RETH_BIN_CFG")")
 
   if [[ "$impl" == "geth" ]]; then
     need_geth=true
@@ -165,9 +201,6 @@ else
 fi
 
 if [[ "$BACKEND" == "native" ]]; then
-  GETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.geth_native" "$(cfg_get "$SOURCE_FILE" "native.geth_binary" "")")"
-  RETH_BIN_CFG="$(cfg_get "$SOURCE_FILE" "binaries.reth_native" "$(cfg_get "$SOURCE_FILE" "native.reth_binary" "")")"
-
   GETH_BIN=""
   RETH_BIN=""
   if $need_geth; then
@@ -190,6 +223,12 @@ if [[ "$BACKEND" == "native" ]]; then
     fi
   fi
 
+  for ((i=0; i<NODE_COUNT; i++)); do
+    node_binary="${NODE_BINARIES[$i]}"
+    [[ -n "$node_binary" ]] || diep "resolved empty binary for node$i"
+    [[ -x "$node_binary" ]] || diep "node$i binary is not executable: $node_binary"
+  done
+
   if [[ "$GENESIS_MODE" == "posa" ]]; then
     newest_artifact_ref=""
     newest_artifact_ts=0
@@ -203,31 +242,25 @@ if [[ "$BACKEND" == "native" ]]; then
       fi
     done
 
-    if $need_geth; then
-      newest_ref="$BYTECODE_GO"
-      newest_ts="$(file_mtime "$BYTECODE_GO")"
+    for ((i=0; i<NODE_COUNT; i++)); do
+      node_impl="${NODE_IMPLS[$i]}"
+      node_binary="${NODE_BINARIES[$i]}"
+      if [[ "$node_impl" == "geth" ]]; then
+        newest_ref="$BYTECODE_GO"
+        newest_ts="$(file_mtime "$BYTECODE_GO")"
+      else
+        newest_ref="$RETH_BYTECODE_FILE"
+        newest_ts="$(file_mtime "$RETH_BYTECODE_FILE")"
+      fi
       if (( newest_artifact_ts > newest_ts )); then
         newest_ts="$newest_artifact_ts"
         newest_ref="$newest_artifact_ref"
       fi
-      geth_ts="$(file_mtime "$GETH_BIN")"
-      if (( geth_ts < newest_ts )); then
-        diep "native geth binary is older than $newest_ref. rebuild geth binary."
+      node_ts="$(file_mtime "$node_binary")"
+      if (( node_ts < newest_ts )); then
+        diep "node$i binary is older than $newest_ref. rebuild the configured binary: $node_binary"
       fi
-    fi
-
-    if $need_reth; then
-      newest_ref="$RETH_BYTECODE_FILE"
-      newest_ts="$(file_mtime "$RETH_BYTECODE_FILE")"
-      if (( newest_artifact_ts > newest_ts )); then
-        newest_ts="$newest_artifact_ts"
-        newest_ref="$newest_artifact_ref"
-      fi
-      reth_ts="$(file_mtime "$RETH_BIN")"
-      if (( reth_ts < newest_ts )); then
-        diep "native reth binary is older than $newest_ref. rebuild reth binary."
-      fi
-    fi
+    done
   fi
 
   if $need_geth; then

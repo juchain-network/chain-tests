@@ -28,12 +28,24 @@ binaries:
   geth_docker: ""
   reth_docker: ""
 
-# Optional per-node implementation mapping for runtime.impl_mode=mixed.
+# Native-only per-node runtime mapping for runtime.impl_mode=mixed.
+# In mixed mode, every node must set its own impl. `binary` is optional:
+# - if set, it overrides the node's native binary
+# - if empty, chain-tests falls back to binaries.<impl>_native
+# - if still empty, chain-tests derives the default path from paths.*
 runtime_nodes:
-  node0: geth
-  node1: geth
-  node2: geth
-  node3: reth
+  node0:
+    impl: geth
+    binary: ""
+  node1:
+    impl: geth
+    binary: ""
+  node2:
+    impl: geth
+    binary: ""
+  node3:
+    impl: reth
+    binary: ""
 
 # Validator credential policy used by reth nodes.
 validator_auth:

@@ -94,10 +94,14 @@ REPORTS_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.reports_dir" "./re
 DOCKER_COMPOSE_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "docker.compose_file" "./docker/docker-compose.yml")")"
 DOCKER_RUNTIME_COMPOSE_FILE="$DATA_DIR/docker-compose.runtime.yml"
 
-NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0" "")"
-NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1" "")"
-NODE2_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2" "")"
-NODE3_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3" "")"
+NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.impl" "")"
+NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1.impl" "")"
+NODE2_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2.impl" "")"
+NODE3_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3.impl" "")"
+NODE0_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.binary" "")"
+NODE1_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1.binary" "")"
+NODE2_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2.binary" "")"
+NODE3_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3.binary" "")"
 BLACKLIST_ENABLED_RAW="$(cfg_get "$CONFIG_FILE" "blacklist.enabled" "false")"
 BLACKLIST_MODE="$(cfg_get "$CONFIG_FILE" "blacklist.mode" "mock")"
 BLACKLIST_CONTRACT_ADDR="$(cfg_get "$CONFIG_FILE" "blacklist.contract_address" "0x1db0EDE439708A923431DC68fd3F646c0A4D4e6E")"
@@ -132,13 +136,43 @@ resolve_node_impl() {
             resolved="$DEFAULT_RUNTIME_IMPL"
             ;;
         mixed)
-            resolved="${node_cfg:-$DEFAULT_RUNTIME_IMPL}"
+            [ -n "$node_cfg" ] || die "runtime_nodes.node${idx}.impl is required when runtime.impl_mode=mixed"
+            resolved="$node_cfg"
             ;;
         *)
             die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
             ;;
     esac
     normalize_impl "$resolved"
+}
+
+resolve_node_binary() {
+    local impl="$1"
+    local node_binary_cfg="$2"
+    if [ -n "$node_binary_cfg" ]; then
+        to_abs_path "$node_binary_cfg"
+        return 0
+    fi
+
+    case "$impl" in
+        geth)
+            if [ -n "$GETH_NATIVE_BIN_CFG" ]; then
+                to_abs_path "$GETH_NATIVE_BIN_CFG"
+            else
+                echo "$CHAIN_ROOT/build/bin/geth"
+            fi
+            ;;
+        reth)
+            if [ -n "$RETH_NATIVE_BIN_CFG" ]; then
+                to_abs_path "$RETH_NATIVE_BIN_CFG"
+            else
+                echo "$RETH_ROOT/target/release/congress-node"
+            fi
+            ;;
+        *)
+            die "unsupported runtime implementation for binary resolution: $impl"
+            ;;
+    esac
 }
 
 V1_HTTP="$(cfg_get "$CONFIG_FILE" "native.ports.validator1_http" "18545")"
@@ -456,6 +490,7 @@ FEE_ADDRS=()
 ENODES=()
 NODE_PUBS=()
 RUNTIME_NODE_IMPLS=()
+RUNTIME_NODE_BINARIES=()
 VAL_KEYSTORE_FILES=()
 VAL_KEYSTORE_ADDRS=()
 
@@ -567,13 +602,20 @@ FUNDER_ADDR=$(echo "$FUNDER_ADDR" | tr -d '[:space:]')
 echo "Funder: $FUNDER_ADDR"
 
 NODE_IMPL_CONFIGS=("$NODE0_IMPL_CFG" "$NODE1_IMPL_CFG" "$NODE2_IMPL_CFG" "$NODE3_IMPL_CFG")
+NODE_BINARY_CONFIGS=("$NODE0_BINARY_CFG" "$NODE1_BINARY_CFG" "$NODE2_BINARY_CFG" "$NODE3_BINARY_CFG")
 for i in $(seq 0 $((NUM_NODES-1))); do
     node_cfg=""
+    node_binary_cfg=""
     if [ "$i" -lt "${#NODE_IMPL_CONFIGS[@]}" ]; then
         node_cfg="${NODE_IMPL_CONFIGS[$i]}"
     fi
+    if [ "$i" -lt "${#NODE_BINARY_CONFIGS[@]}" ]; then
+        node_binary_cfg="${NODE_BINARY_CONFIGS[$i]}"
+    fi
     node_impl="$(resolve_node_impl "$i" "$node_cfg")"
+    node_binary="$(resolve_node_binary "$node_impl" "$node_binary_cfg")"
     RUNTIME_NODE_IMPLS+=("$node_impl")
+    RUNTIME_NODE_BINARIES+=("$node_binary")
 done
 
 if { [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ] || [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV" ] || [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS_CSV" ]; }; then
@@ -656,6 +698,7 @@ EOF
 
 for i in $(seq 0 $((NUM_NODES-1))); do
     impl="${RUNTIME_NODE_IMPLS[$i]}"
+    binary="${RUNTIME_NODE_BINARIES[$i]}"
     role="sync"
     if [ "$i" -lt "$NUM_VALIDATORS" ]; then
         role="validator"
@@ -664,6 +707,7 @@ for i in $(seq 0 $((NUM_NODES-1))); do
   node$i:
     role: "$role"
     impl: "$impl"
+    binary: "$binary"
     datadir: "$DATA_DIR/node$i"
     nodekey: "$DATA_DIR/node$i/nodekey"
 EOF
@@ -1000,6 +1044,7 @@ for i in $(seq 0 $((NUM_NODES-1))); do
   - name: "node$i"
     role: "$role"
     impl: "${RUNTIME_NODE_IMPLS[$i]}"
+    binary: "${RUNTIME_NODE_BINARIES[$i]}"
 EOF
     if [ "$i" -lt "$NUM_VALIDATORS" ]; then
         cat >> "$DATA_DIR/test_config.yaml" <<EOF
@@ -1189,7 +1234,9 @@ EOF
 
 for i in $(seq 0 $((NUM_NODES-1))); do
 cat >> "$RUNTIME_SESSION_FILE" <<EOF
-  node$i: "${RUNTIME_NODE_IMPLS[$i]}"
+  node$i:
+    impl: "${RUNTIME_NODE_IMPLS[$i]}"
+    binary: "${RUNTIME_NODE_BINARIES[$i]}"
 EOF
 done
 
@@ -1224,7 +1271,11 @@ EOF
 
 RUNTIME_NODES_JSON='{}'
 for i in $(seq 0 $((NUM_NODES-1))); do
-    RUNTIME_NODES_JSON="$(printf '%s' "$RUNTIME_NODES_JSON" | jq -c --arg key "node$i" --arg val "${RUNTIME_NODE_IMPLS[$i]}" '. + {($key): $val}')"
+    RUNTIME_NODES_JSON="$(printf '%s' "$RUNTIME_NODES_JSON" | jq -c \
+      --arg key "node$i" \
+      --arg impl "${RUNTIME_NODE_IMPLS[$i]}" \
+      --arg binary "${RUNTIME_NODE_BINARIES[$i]}" \
+      '. + {($key): {impl: $impl, binary: $binary}}')"
 done
 
 jq -n \

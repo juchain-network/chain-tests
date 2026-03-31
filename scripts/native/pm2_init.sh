@@ -23,6 +23,14 @@ HISTORY_STATE="$(cfg_get "$CONFIG_FILE" "native.history_state" "$(cfg_get "$CONF
 
 RUNTIME_IMPL_MODE="$(cfg_get "$CONFIG_FILE" "runtime.impl_mode" "single")"
 DEFAULT_RUNTIME_IMPL="$(cfg_get "$CONFIG_FILE" "runtime.impl" "geth")"
+NODE0_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.impl" "")"
+NODE1_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1.impl" "")"
+NODE2_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2.impl" "")"
+NODE3_IMPL_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3.impl" "")"
+NODE0_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node0.binary" "")"
+NODE1_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node1.binary" "")"
+NODE2_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node2.binary" "")"
+NODE3_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node3.binary" "")"
 VALIDATOR_AUTH_MODE="$(cfg_get "$CONFIG_FILE" "validator_auth.mode" "auto")"
 KEYSTORE_PASSWORD_FILE_CFG="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_file" "")"
 KEYSTORE_PASSWORD_ENV_NAME="$(cfg_get "$CONFIG_FILE" "validator_auth.keystore.password_env" "")"
@@ -111,20 +119,46 @@ resolve_binary() {
 
 resolve_node_impl() {
   local idx="$1"
-  local node_cfg="$(cfg_get "$CONFIG_FILE" "runtime_nodes.node${idx}" "")"
+  local node_cfg="$2"
   case "$RUNTIME_IMPL_MODE" in
     single)
       normalize_impl "$DEFAULT_RUNTIME_IMPL"
       ;;
     mixed)
-      if [[ -n "$node_cfg" ]]; then
-        normalize_impl "$node_cfg"
-      else
-        normalize_impl "$DEFAULT_RUNTIME_IMPL"
-      fi
+      [[ -n "$node_cfg" ]] || die "runtime_nodes.node${idx}.impl is required when runtime.impl_mode=mixed"
+      normalize_impl "$node_cfg"
       ;;
     *)
       die "runtime.impl_mode must be single|mixed, got: $RUNTIME_IMPL_MODE"
+      ;;
+  esac
+}
+
+resolve_node_binary() {
+  local impl="$1"
+  local node_binary_cfg="$2"
+  if [[ -n "$node_binary_cfg" ]]; then
+    to_abs_path "$node_binary_cfg"
+    return 0
+  fi
+
+  case "$impl" in
+    geth)
+      if [[ -n "$GETH_BINARY_CFG" ]]; then
+        to_abs_path "$GETH_BINARY_CFG"
+      else
+        echo "$CHAIN_ROOT/build/bin/geth"
+      fi
+      ;;
+    reth)
+      if [[ -n "$RETH_BINARY_CFG" ]]; then
+        to_abs_path "$RETH_BINARY_CFG"
+      else
+        echo "$RETH_ROOT/target/release/congress-node"
+      fi
+      ;;
+    *)
+      die "unsupported runtime implementation for binary resolution: $impl"
       ;;
   esac
 }
@@ -184,11 +218,24 @@ if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -z "$UPGRADE_OVERRIDE_POSA_SIGNE
 fi
 
 declare -a NODE_IMPLS=()
+declare -a NODE_BINARIES=()
 need_geth=false
 need_reth=false
+NODE_IMPL_CONFIGS=("$NODE0_IMPL_CFG" "$NODE1_IMPL_CFG" "$NODE2_IMPL_CFG" "$NODE3_IMPL_CFG")
+NODE_BINARY_CONFIGS=("$NODE0_BINARY_CFG" "$NODE1_BINARY_CFG" "$NODE2_BINARY_CFG" "$NODE3_BINARY_CFG")
 for ((i=0; i<NODE_COUNT; i++)); do
-  impl="$(resolve_node_impl "$i")"
+  impl_cfg=""
+  binary_cfg=""
+  if (( i < ${#NODE_IMPL_CONFIGS[@]} )); then
+    impl_cfg="${NODE_IMPL_CONFIGS[$i]}"
+  fi
+  if (( i < ${#NODE_BINARY_CONFIGS[@]} )); then
+    binary_cfg="${NODE_BINARY_CONFIGS[$i]}"
+  fi
+  impl="$(resolve_node_impl "$i" "$impl_cfg")"
+  binary="$(resolve_node_binary "$impl" "$binary_cfg")"
   NODE_IMPLS+=("$impl")
+  NODE_BINARIES+=("$binary")
   if [[ "$impl" == "geth" ]]; then
     need_geth=true
   else
@@ -236,32 +283,41 @@ if $need_reth && [[ -z "$RETH_BINARY" ]]; then
   die "reth binary not found. tried: $(to_abs_path "$RETH_BINARY_CFG") $RETH_ROOT/target/release/congress-node $RETH_ROOT/target/debug/congress-node"
 fi
 
+for ((i=0; i<NODE_COUNT; i++)); do
+  node_binary="${NODE_BINARIES[$i]}"
+  [[ -n "$node_binary" ]] || die "resolved empty binary for node$i"
+  [[ -x "$node_binary" ]] || die "node$i binary is not executable: $node_binary"
+done
+
 [[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
 
 mkdir -p "$(dirname "$ENV_FILE")" "$LOG_DIR"
 
 init_geth_node() {
-  local datadir="$1"
+  local binary="$1"
+  local datadir="$2"
   local init_args=("--datadir" "$datadir")
   if [[ -n "$STATE_SCHEME" ]]; then
     init_args+=("--state.scheme=$STATE_SCHEME")
   fi
   if [[ ! -d "$datadir/geth/chaindata" ]]; then
-    "$GETH_BINARY" "${init_args[@]}" init "$GENESIS_FILE" >/dev/null
+    "$binary" "${init_args[@]}" init "$GENESIS_FILE" >/dev/null
   fi
 }
 
 init_reth_node() {
-  local datadir="$1"
+  local binary="$1"
+  local datadir="$2"
   if [[ ! -d "$datadir/db" ]]; then
     CONGRESS_GENESIS="$GENESIS_FILE" \
-    "$RETH_BINARY" init --chain "$GENESIS_FILE" --datadir "$datadir" \
+    "$binary" init --chain "$GENESIS_FILE" --datadir "$datadir" \
       --log.file.directory "$LOG_DIR" >/dev/null
   fi
 }
 
 import_geth_validator_if_needed() {
   local idx="$1"
+  local binary="$2"
   local datadir="$DATA_DIR/node$idx"
   local keyfile="$datadir/signer.key"
   if [[ ! -f "$keyfile" ]]; then
@@ -279,8 +335,8 @@ import_geth_validator_if_needed() {
   if [[ ! -f "$password" ]]; then
     printf '%s\n' "123456" > "$password"
   fi
-  if ! "$GETH_BINARY" account list --datadir "$datadir" 2>/dev/null | grep -qi "${addr#0x}"; then
-    "$GETH_BINARY" account import --datadir "$datadir" --password "$password" "$keyfile" >/dev/null
+  if ! "$binary" account list --datadir "$datadir" 2>/dev/null | grep -qi "${addr#0x}"; then
+    "$binary" account import --datadir "$datadir" --password "$password" "$keyfile" >/dev/null
   fi
 }
 
@@ -298,8 +354,8 @@ for ((i=0; i<NODE_COUNT; i++)); do
   NODE_PUBS+=("$(tr -d '[:space:]' < "$datadir/nodepub")")
 
   case "${NODE_IMPLS[$i]}" in
-    geth) init_geth_node "$datadir" ;;
-    reth) init_reth_node "$datadir" ;;
+    geth) init_geth_node "${NODE_BINARIES[$i]}" "$datadir" ;;
+    reth) init_reth_node "${NODE_BINARIES[$i]}" "$datadir" ;;
   esac
 
 done
@@ -310,7 +366,7 @@ for ((i=0; i<VALIDATOR_COUNT; i++)); do
   [[ -f "$datadir/validator.addr" ]] || die "missing validator addr: $datadir/validator.addr"
   [[ -d "$datadir/keystore" ]] || die "missing validator keystore dir: $datadir/keystore"
   if [[ "${NODE_IMPLS[$i]}" == "geth" ]]; then
-    import_geth_validator_if_needed "$i"
+    import_geth_validator_if_needed "$i" "${NODE_BINARIES[$i]}"
   fi
 done
 
@@ -368,6 +424,10 @@ NODE0_IMPL=${NODE_IMPLS[0]:-}
 NODE1_IMPL=${NODE_IMPLS[1]:-}
 NODE2_IMPL=${NODE_IMPLS[2]:-}
 NODE3_IMPL=${NODE_IMPLS[3]:-}
+NODE0_BINARY=${NODE_BINARIES[0]:-}
+NODE1_BINARY=${NODE_BINARIES[1]:-}
+NODE2_BINARY=${NODE_BINARIES[2]:-}
+NODE3_BINARY=${NODE_BINARIES[3]:-}
 
 NODE0_DATADIR=$DATA_DIR/node0
 NODE1_DATADIR=$DATA_DIR/node1

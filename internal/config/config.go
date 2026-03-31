@@ -114,6 +114,7 @@ type RuntimeNode struct {
 	Name             string `yaml:"name"`
 	Role             string `yaml:"role"`
 	Impl             string `yaml:"impl"`
+	Binary           string `yaml:"binary"`
 	ValidatorKey     string `yaml:"validator_key"`
 	ValidatorAddress string `yaml:"validator_address"`
 	SignerKey        string `yaml:"signer_key"`

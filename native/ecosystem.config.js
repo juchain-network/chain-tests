@@ -90,6 +90,12 @@ function resolveNodeImpl(index) {
   return raw;
 }
 
+function resolveNodeBinary(index) {
+  const explicit = process.env[`NODE${index}_BINARY`];
+  if (explicit) return explicit;
+  return binaryForImpl(resolveNodeImpl(index));
+}
+
 function migrationOverrideArgs() {
   if ((upgradeOverridePosaValidators && !upgradeOverridePosaSigners) || (!upgradeOverridePosaValidators && upgradeOverridePosaSigners)) {
     throw new Error('UPGRADE_OVERRIDE_POSA_VALIDATORS and UPGRADE_OVERRIDE_POSA_SIGNERS must be provided together');
@@ -265,7 +271,7 @@ function argsForNode(node) {
 }
 
 function scriptForNode(node) {
-  return binaryForImpl(resolveNodeImpl(node.index));
+  return resolveNodeBinary(node.index);
 }
 
 function coverageEnvForNode(node) {

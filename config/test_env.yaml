@@ -16,10 +16,18 @@ binaries:
   reth_docker: ""
 
 runtime_nodes:
-  node0: geth
-  node1: geth
-  node2: geth
-  node3: geth
+  node0:
+    impl: geth
+    binary: ""
+  node1:
+    impl: geth
+    binary: ""
+  node2:
+    impl: geth
+    binary: ""
+  node3:
+    impl: geth
+    binary: ""
 
 validator_auth:
   mode: auto

@@ -236,13 +236,19 @@ func restartSingleNodeRuntime(c *testctx.CIContext, timeout time.Duration) error
 		return fmt.Errorf("native single script not found: %w", err)
 	}
 
+	configPath := c.Config.SourcePath
+	sessionPath := filepath.Join(repoRoot, "data", "runtime_session.yaml")
+	if stat, err := os.Stat(sessionPath); err == nil && !stat.IsDir() {
+		configPath = sessionPath
+	}
+
 	timeoutSecs := int(timeout / time.Second)
 	if timeoutSecs <= 0 {
 		timeoutSecs = 90
 	}
 
 	run := func(action string) error {
-		cmd := exec.Command("/bin/bash", script, action, c.Config.SourcePath)
+		cmd := exec.Command("/bin/bash", script, action, configPath)
 		cmd.Dir = repoRoot
 		cmd.Env = append(os.Environ(), fmt.Sprintf("WAIT_TIMEOUT=%d", timeoutSecs))
 		out, err := cmd.CombinedOutput()
@@ -433,28 +439,52 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 		return fmt.Errorf("validator rpc %s not ready after pm2 restart", rpcURL)
 	}
 	defer client.Close()
-
-	nodeImpl := "geth"
-	if idx < len(c.Config.RuntimeNodes) && strings.TrimSpace(c.Config.RuntimeNodes[idx].Impl) != "" {
-		nodeImpl = strings.ToLower(strings.TrimSpace(c.Config.RuntimeNodes[idx].Impl))
-	}
-	if nodeImpl == "geth" {
-		if err := ImportUnlockAndSetEtherbase(client, key, "123456"); err != nil {
-			return fmt.Errorf("switch validator runtime signer failed: %w", err)
-		}
-		if err := MinerStart(client); err != nil {
-			return fmt.Errorf("restart validator miner with new signer failed: %w", err)
-		}
-
-		var coinbase common.Address
-		if err := client.Client().Call(&coinbase, "eth_coinbase"); err != nil {
-			return fmt.Errorf("verify validator coinbase after signer switch failed: %w", err)
-		}
-		if coinbase != addr {
-			return fmt.Errorf("validator coinbase mismatch after signer switch: got=%s want=%s", coinbase.Hex(), addr.Hex())
-		}
-	}
 	return nil
+}
+
+func StopValidatorNode(c *testctx.CIContext, validator common.Address, timeout time.Duration) error {
+	if c == nil || c.Config == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	if strings.TrimSpace(c.Config.SourcePath) == "" {
+		return fmt.Errorf("config source path is empty")
+	}
+
+	idx, _, _, err := runtimeNodeForValidator(c, validator)
+	if err != nil {
+		return err
+	}
+
+	repoRoot := filepath.Dir(filepath.Dir(c.Config.SourcePath))
+	processName := fmt.Sprintf("%s-validator%d", defaultPM2Namespace(c), idx+1)
+	cmd := exec.Command("pm2", "stop", processName)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PM2_NAMESPACE=%s", defaultPM2Namespace(c)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pm2 stop failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
+	}
+
+	rpcURL := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
+	if rpcURL == "" {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		client, dialErr := ethclient.Dial(rpcURL)
+		if dialErr != nil {
+			return nil
+		}
+		_, blockErr := client.BlockNumber(context.Background())
+		client.Close()
+		if blockErr != nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("validator rpc %s still responding after pm2 stop", rpcURL)
 }
 
 func envValueFromFile(path, key string) string {

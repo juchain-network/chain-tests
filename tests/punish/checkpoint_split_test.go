@@ -12,7 +12,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 
 	"juchain.org/chain/tools/ci/contracts"
 	testctx "juchain.org/chain/tools/ci/internal/context"
@@ -224,22 +223,12 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		)
 	}
 
-	rpcURL := ctx.ValidatorRPCByValidator(rotation.Validator)
-	if rpcURL == "" {
-		t.Fatalf("missing validator rpc for %s", rotation.Validator.Hex())
-	}
-	targetClient, err := ethclient.Dial(rpcURL)
-	if err != nil {
-		t.Fatalf("dial validator rpc %s failed: %v", rpcURL, err)
-	}
-	defer targetClient.Close()
-
 	stopHeight := rotation.EffectiveBlock - 3
 	if _, err := ctx.WaitUntilHeight(stopHeight, 120*time.Second); err != nil {
 		t.Fatalf("wait for stop height %d failed: %v", stopHeight, err)
 	}
-	if err := testkit.MinerStop(targetClient); err != nil {
-		t.Fatalf("stop target validator miner failed: %v", err)
+	if err := testkit.StopValidatorNode(ctx, rotation.Validator, 30*time.Second); err != nil {
+		t.Fatalf("stop target validator node failed: %v", err)
 	}
 
 	preBlock := rotation.EffectiveBlock - 1

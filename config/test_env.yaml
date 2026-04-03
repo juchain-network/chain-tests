@@ -4,28 +4,28 @@ runtime:
   impl: geth
 
 paths:
-  chain_root: "../chain"
+  chain_root: "/Users/litian/code/work/github/chain-1.16/chain-1.16"
   reth_root: "../../personal/rchain"
   chain_contract_root: "../chain-contract"
   reth_bytecode_file: "../../../my/rchain/crates/congress-core/src/bytecode.rs"
 
 binaries:
-  geth_native: ""
+  geth_native: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
   reth_native: ""
 
 runtime_nodes:
   node0:
     impl: geth
-    binary: ""
+    binary: "/Users/litian/code/work/github/chain/build/bin/geth"
   node1:
     impl: geth
-    binary: ""
+    binary: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
   node2:
     impl: geth
-    binary: ""
+    binary: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
   node3:
     impl: geth
-    binary: ""
+    binary: "/Users/litian/code/work/github/chain/build/bin/geth"
 
 validator_auth:
   mode: auto

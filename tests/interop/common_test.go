@@ -149,16 +149,25 @@ func latestHeight(t *testing.T, c *ethclient.Client) uint64 {
 
 func blockByNumberRaw(t *testing.T, client *rpc.Client, blockTag string) map[string]any {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var out map[string]any
-	if err := client.CallContext(ctx, &out, "eth_getBlockByNumber", blockTag, false); err != nil {
-		t.Fatalf("eth_getBlockByNumber(%s) failed: %v", blockTag, err)
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var out map[string]any
+		err := client.CallContext(ctx, &out, "eth_getBlockByNumber", blockTag, false)
+		cancel()
+		if err == nil && out != nil {
+			return out
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				t.Fatalf("eth_getBlockByNumber(%s) did not become readable within 10s: %v", blockTag, lastErr)
+			}
+			t.Fatalf("eth_getBlockByNumber(%s) returned nil for 10s after target height was reached", blockTag)
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
-	if out == nil {
-		t.Fatalf("eth_getBlockByNumber(%s) returned nil", blockTag)
-	}
-	return out
 }
 
 func fetchStateRoot(t *testing.T, client *rpc.Client, blockTag string) (hash string, stateRoot string) {

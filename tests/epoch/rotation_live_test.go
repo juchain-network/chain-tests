@@ -118,8 +118,8 @@ func TestZ_SignerRotationNewSignerContinuesSealingAfterCheckpoint(t *testing.T) 
 	if err := testkit.RestartValidatorNodeWithSigner(ctx, rotation.Validator, rotation.NewSignerKey, 90*time.Second); err != nil {
 		t.Fatalf("restart validator with rotated signer failed: %v", err)
 	}
-	if err := ctx.WaitForBlockProgress(1, 90*time.Second); err != nil {
-		t.Fatalf("chain did not progress after restarting rotated signer: %v", err)
+	if err := testkit.WaitForValidatorCanonicalSync(ctx, rotation.Validator, 2, 90*time.Second); err != nil {
+		t.Fatalf("rotated validator did not rejoin canonical chain after restart: %v", err)
 	}
 
 	observationEnd := rotation.EffectiveBlock + 12

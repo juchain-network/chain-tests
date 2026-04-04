@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 
 	testctx "juchain.org/chain/tools/ci/internal/context"
 )
@@ -48,6 +50,112 @@ func CollectCoinbaseSet(c *testctx.CIContext, startHeight, endHeight uint64) (ma
 		observed[header.Coinbase] = true
 	}
 	return observed, nil
+}
+
+func WaitForValidatorCanonicalSync(c *testctx.CIContext, validator common.Address, stableBlocks uint64, timeout time.Duration) error {
+	if c == nil || c.Config == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	targetRPC := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
+	if targetRPC == "" {
+		return fmt.Errorf("missing validator rpc for %s", validator.Hex())
+	}
+	targetClient, err := ethclient.Dial(targetRPC)
+	if err != nil {
+		return fmt.Errorf("dial validator rpc %s failed: %w", targetRPC, err)
+	}
+	defer targetClient.Close()
+
+	referenceRPCs := make([]string, 0, len(c.Config.ValidatorRPCs)+1)
+	for _, rpcURL := range c.Config.ValidatorRPCs {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" || strings.EqualFold(rpcURL, targetRPC) {
+			continue
+		}
+		referenceRPCs = append(referenceRPCs, rpcURL)
+	}
+	if syncRPC := strings.TrimSpace(c.Config.SyncRPC); syncRPC != "" && !strings.EqualFold(syncRPC, targetRPC) {
+		referenceRPCs = append(referenceRPCs, syncRPC)
+	}
+	if len(referenceRPCs) == 0 {
+		return fmt.Errorf("no reference rpc available to verify sync for %s", validator.Hex())
+	}
+
+	referenceClients := make([]*ethclient.Client, 0, len(referenceRPCs))
+	for _, rpcURL := range referenceRPCs {
+		client, err := ethclient.Dial(rpcURL)
+		if err != nil {
+			continue
+		}
+		referenceClients = append(referenceClients, client)
+	}
+	if len(referenceClients) == 0 {
+		return fmt.Errorf("failed to dial any reference rpc for %s", validator.Hex())
+	}
+	defer func() {
+		for _, client := range referenceClients {
+			client.Close()
+		}
+	}()
+
+	if stableBlocks < 1 {
+		stableBlocks = 1
+	}
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	poll := c.BlockPollInterval()
+	if poll <= 0 {
+		poll = 100 * time.Millisecond
+	}
+
+	var matchedStart uint64
+	var haveMatchedStart bool
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		targetHeader, err := targetClient.HeaderByNumber(context.Background(), nil)
+		if err == nil && targetHeader != nil {
+			matched := false
+			var highestRef uint64
+			for _, client := range referenceClients {
+				refHeader, refErr := client.HeaderByNumber(context.Background(), nil)
+				if refErr != nil || refHeader == nil {
+					continue
+				}
+				if refHeader.Number.Uint64() > highestRef {
+					highestRef = refHeader.Number.Uint64()
+				}
+				if refHeader.Number.Uint64() == targetHeader.Number.Uint64() && refHeader.Hash() == targetHeader.Hash() {
+					matched = true
+				}
+			}
+			if matched {
+				if !haveMatchedStart {
+					matchedStart = targetHeader.Number.Uint64()
+					haveMatchedStart = true
+				}
+				if targetHeader.Number.Uint64() >= matchedStart+stableBlocks {
+					return nil
+				}
+			} else if highestRef > targetHeader.Number.Uint64() {
+				haveMatchedStart = false
+			}
+		}
+		time.Sleep(poll)
+	}
+
+	targetHeader, err := targetClient.HeaderByNumber(context.Background(), nil)
+	if err != nil || targetHeader == nil {
+		return fmt.Errorf("validator %s did not reach canonical sync within %s", validator.Hex(), timeout)
+	}
+	return fmt.Errorf(
+		"validator %s did not stay on canonical head for %d blocks within %s; latest_height=%d latest_hash=%s",
+		validator.Hex(),
+		stableBlocks,
+		timeout,
+		targetHeader.Number.Uint64(),
+		targetHeader.Hash().Hex(),
+	)
 }
 
 func CoinbaseSetKeys(items map[common.Address]bool) []common.Address {

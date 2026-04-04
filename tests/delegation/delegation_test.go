@@ -41,6 +41,60 @@ func retryAfterBlockInterval() time.Duration {
 	return d
 }
 
+func resignValidatorWithRetry(t *testing.T, key *ecdsa.PrivateKey, addr common.Address, msg string) {
+	t.Helper()
+
+	isTransientResignErr := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		lower := strings.ToLower(err.Error())
+		return strings.Contains(lower, "epoch block forbidden") ||
+			strings.Contains(lower, "too many removals") ||
+			strings.Contains(lower, "wait until next epoch") ||
+			strings.Contains(lower, "revert") ||
+			strings.Contains(lower, "reverted")
+	}
+
+	err := testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 6,
+		Interval:    retryAfterBlockInterval(),
+		OnRetry: func(int) {
+			waitNextBlock()
+		},
+	}, func() (bool, error) {
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		if errInfo == nil && info.IsJailed {
+			return true, nil
+		}
+
+		opts, errOpts := ctx.GetTransactor(key)
+		if errOpts != nil {
+			return false, nil
+		}
+		txR, errResign := ctx.Staking.ResignValidator(opts)
+		if errResign != nil {
+			if isTransientResignErr(errResign) {
+				return false, nil
+			}
+			return false, errResign
+		}
+		if errMine := ctx.WaitMined(txR.Hash()); errMine != nil {
+			if isTransientResignErr(errMine) {
+				return false, nil
+			}
+			return false, errMine
+		}
+
+		infoAfter, errInfoAfter := ctx.Staking.GetValidatorInfo(nil, addr)
+		if errInfoAfter != nil {
+			return false, nil
+		}
+		return infoAfter.IsJailed, nil
+	})
+	utils.AssertNoError(t, err, msg)
+}
+
 func waitDelegationAmount(
 	t *testing.T,
 	delegator common.Address,
@@ -291,10 +345,7 @@ func TestE_Delegation(t *testing.T) {
 		utils.AssertNoError(t, err, "setup user failed")
 		robustDelegate(t, userKey, addr, utils.ToWei(10))
 
-		vOpts, _ := ctx.GetTransactor(key)
-		txR, err := ctx.Staking.ResignValidator(vOpts)
-		utils.AssertNoError(t, err, "resign failed")
-		utils.AssertNoError(t, ctx.WaitMined(txR.Hash()), "resign tx failed")
+		resignValidatorWithRetry(t, key, addr, "resign validator failed")
 
 		opts, _ := ctx.GetTransactor(userKey)
 		opts.Value = utils.ToWei(5)
@@ -488,44 +539,7 @@ func TestE_Delegation(t *testing.T) {
 		infoBefore, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
 		utils.AssertNoError(t, errInfo, "failed to read validator info before resign")
 		if !infoBefore.IsJailed {
-			isTransientResignErr := func(msg string) bool {
-				lower := strings.ToLower(msg)
-				return strings.Contains(lower, "epoch block forbidden") ||
-					strings.Contains(lower, "too many removals") ||
-					strings.Contains(lower, "wait until next epoch") ||
-					strings.Contains(lower, "revert")
-			}
-			err = testkit.WaitUntil(testkit.WaitUntilOptions{
-				MaxAttempts: 6,
-				Interval:    retryAfterBlockInterval(),
-				OnRetry: func(int) {
-					waitNextBlock()
-				},
-			}, func() (bool, error) {
-				opts, errOpts := ctx.GetTransactor(key)
-				if errOpts != nil {
-					return false, nil
-				}
-				txR, errResign := ctx.Staking.ResignValidator(opts)
-				if errResign != nil {
-					if isTransientResignErr(errResign.Error()) {
-						return false, nil
-					}
-					return false, errResign
-				}
-				if errMine := ctx.WaitMined(txR.Hash()); errMine != nil {
-					if isTransientResignErr(errMine.Error()) {
-						return false, nil
-					}
-					return false, errMine
-				}
-				infoAfter, errInfoAfter := ctx.Staking.GetValidatorInfo(nil, addr)
-				if errInfoAfter != nil {
-					return false, nil
-				}
-				return infoAfter.IsJailed, nil
-			})
-			utils.AssertNoError(t, err, "resign tx failed")
+			resignValidatorWithRetry(t, key, addr, "resign tx failed")
 		}
 
 		unjailPeriod, _ := ctx.Proposal.ValidatorUnjailPeriod(nil)

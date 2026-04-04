@@ -107,8 +107,8 @@ func TestZ_AddValidatorWithSeparateSignerBecomesActiveAndSealsBlocks(t *testing.
 	if err := testkit.RestartValidatorNodeWithSigner(ctx, hostValidator, candidate.SignerKey, 90*time.Second); err != nil {
 		t.Fatalf("restart host validator with candidate signer after activation failed: %v", err)
 	}
-	if err := ctx.WaitForBlockProgress(1, 90*time.Second); err != nil {
-		t.Fatalf("chain did not stay live after switching host node signer post-activation: %v", err)
+	if err := testkit.WaitForValidatorCanonicalSync(ctx, hostValidator, 2, 90*time.Second); err != nil {
+		t.Fatalf("host runtime did not rejoin canonical chain with candidate signer: %v", err)
 	}
 
 	err = testkit.WaitUntil(testkit.WaitUntilOptions{
@@ -141,7 +141,11 @@ func TestZ_AddValidatorWithSeparateSignerBecomesActiveAndSealsBlocks(t *testing.
 	}
 
 	observationEnd := activationCheckpoint + 24
-	if _, err := testkit.WaitUntilHeightOrStall(ctx, "add-validator-live-observation", observationEnd, 15*time.Second, testkit.LongWindowTimeout(24)); err != nil {
+	// After activation there are 4 active validators, but this scenario only moves the
+	// host runtime over to the candidate signer. The original host signer then goes
+	// offline, so canonical progress can have noticeably longer gaps before out-of-turn
+	// sealing recovers liveness.
+	if _, err := testkit.WaitUntilHeightOrStall(ctx, "add-validator-live-observation", observationEnd, 45*time.Second, testkit.LongWindowTimeout(24)); err != nil {
 		t.Fatalf("%v", err)
 	}
 

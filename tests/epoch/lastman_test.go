@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,9 @@ import (
 func TestZ_LastManStanding(t *testing.T) {
 	if ctx == nil || len(ctx.GenesisValidators) < 3 {
 		t.Fatalf("Need at least 3 genesis validators")
+	}
+	if strings.ToLower(strings.TrimSpace(os.Getenv("EXPECT_LAST_MAN_DESTRUCTIVE"))) != "1" {
+		t.Skip("set EXPECT_LAST_MAN_DESTRUCTIVE=1 to run destructive last-man validator check")
 	}
 	ensureMinActiveValidators(t, 3, 2)
 	highest, _ := ctx.Validators.GetHighestValidators(nil)

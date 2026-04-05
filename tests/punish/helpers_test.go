@@ -48,12 +48,30 @@ func waitForSignerHistoricalOwner(t *testing.T, signer common.Address, validator
 	if maxEpochs < 1 {
 		maxEpochs = 1
 	}
-	for i := 0; i < maxEpochs; i++ {
+
+	epoch := uint64(0)
+	if ctx.Config != nil && ctx.Config.Network.Epoch > 0 {
+		epoch = ctx.Config.Network.Epoch
+	}
+	if epoch == 0 {
+		if epochBig, err := ctx.Proposal.Epoch(nil); err == nil && epochBig != nil && epochBig.Sign() > 0 {
+			epoch = epochBig.Uint64()
+		}
+	}
+	if epoch == 0 {
+		epoch = 30
+	}
+
+	maxBlocks := int(epoch*uint64(maxEpochs) + 2)
+	if maxBlocks < 4 {
+		maxBlocks = 4
+	}
+	for i := 0; i < maxBlocks; i++ {
 		owner, err := ctx.Validators.GetValidatorBySignerHistory(nil, signer)
 		if err == nil && owner == validator {
 			return true
 		}
-		waitForNextEpochBlock(t)
+		waitBlocks(t, 1)
 	}
 	return false
 }

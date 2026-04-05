@@ -302,22 +302,31 @@ func TestF4_MiscExit(t *testing.T) {
 
 	t.Run("P-06_DoubleResign", func(t *testing.T) {
 		var (
-			key *ecdsa.PrivateKey
-			err error
+			key     *ecdsa.PrivateKey
+			valAddr common.Address
+			err     error
 		)
 		if cachedReentryValidatorKey != nil && cachedReentryValidatorAddr != (common.Address{}) {
 			if info, errInfo := ctx.Staking.GetValidatorInfo(nil, cachedReentryValidatorAddr); errInfo == nil && info.IsRegistered && !info.IsJailed {
 				key = cachedReentryValidatorKey
+				valAddr = cachedReentryValidatorAddr
 				t.Logf("Reusing validator from F2 for P-06: %s", cachedReentryValidatorAddr.Hex())
 			}
 		}
 		if key == nil {
-			key, _, err = createAndRegisterValidator(t, "P-06 Double")
+			key, valAddr, err = createAndRegisterValidator(t, "P-06 Double")
 			utils.AssertNoError(t, err, "create val failed")
+			if !waitForValidatorActive(t, valAddr, 5) {
+				t.Fatalf("validator not active after registration; cannot validate double resign deterministically: %s", valAddr.Hex())
+			}
 		}
 
 		// 1. Resign
 		robustResignValidator(t, key)
+		if !waitForValidatorJailed(t, valAddr, 5) {
+			info, _ := ctx.Staking.GetValidatorInfo(nil, valAddr)
+			t.Fatalf("validator not jailed after first resign (validator=%s isJailed=%v)", valAddr.Hex(), info.IsJailed)
+		}
 
 		// 2. Resign Again
 		opts, err := ctx.GetTransactor(key)

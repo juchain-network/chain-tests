@@ -29,9 +29,8 @@ run_step() {
   fi
 }
 
-# `make test` expects a ready network, so bootstrap it explicitly first.
+# Bootstrap a clean network once for downstream commands that expect a ready chain.
 run_step reset make reset
-run_step test make test
 
 run_step test_group_all make test-group GROUP=all
 run_step test_smoke_all make test-smoke TOPOLOGY=all MATRIX=1

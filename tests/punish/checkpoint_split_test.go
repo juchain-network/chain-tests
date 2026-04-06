@@ -61,6 +61,11 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		_ = testkit.RestartValidatorNodeWithSigner(ctx, rotation.Validator, rotation.NewSignerKey, 90*time.Second)
 	}
 
+	primaryValidator := common.Address{}
+	if len(ctx.Config.Validators) > 0 {
+		primaryValidator = common.HexToAddress(ctx.Config.Validators[0].Address)
+	}
+
 	var targetValidator common.Address
 	var targetSigner common.Address
 	var predictedCheckpoint uint64
@@ -96,6 +101,17 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		}
 		if targetValidator == (common.Address{}) {
 			t.Fatalf("checkpoint signer %s did not resolve to validator", targetSigner.Hex())
+		}
+		if primaryValidator != (common.Address{}) && targetValidator == primaryValidator {
+			t.Logf(
+				"checkpoint slot %d maps to primary validator %s; waiting for next checkpoint window to avoid dropping primary RPC",
+				predictedCheckpoint,
+				targetValidator.Hex(),
+			)
+			if _, err := ctx.WaitUntilHeight(predictedCheckpoint+1, 90*time.Second); err != nil {
+				t.Fatalf("wait for next checkpoint window after primary-validator target failed: %v", err)
+			}
+			continue
 		}
 		break
 	}

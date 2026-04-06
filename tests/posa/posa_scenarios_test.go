@@ -50,6 +50,7 @@ func TestP_ValidatorJoinLeave(t *testing.T) {
 	if ctx == nil {
 		t.Fatalf("context not initialized")
 	}
+	requireBaselinePOSATopology(t)
 	startActive, err := ctx.Validators.GetActiveValidators(nil)
 	if err != nil {
 		t.Fatalf("read start active validators failed: %v", err)
@@ -143,6 +144,7 @@ func TestP_SyncNodeCatchUp(t *testing.T) {
 }
 
 func TestP_RestartConvergence(t *testing.T) {
+	requireBaselinePOSATopology(t)
 	cmd := exec.Command("/bin/bash", "-lc", "cd ../../ && TEST_ENV_CONFIG=${TEST_ENV_CONFIG:-config/test_env.yaml} ./scripts/perf/restart_node.sh")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

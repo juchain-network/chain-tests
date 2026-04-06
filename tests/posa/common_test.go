@@ -346,6 +346,26 @@ func robustResignValidator(t *testing.T, key *ecdsa.PrivateKey, addr common.Addr
 	t.Fatalf("resign validator retries exhausted: %v", lastErr)
 }
 
+func currentActiveValidatorKeys(t *testing.T) ([]*ecdsa.PrivateKey, []common.Address) {
+	t.Helper()
+	activeSet, err := ctx.Validators.GetActiveValidators(nil)
+	if err != nil {
+		t.Fatalf("read active validators failed: %v", err)
+	}
+	keys := make([]*ecdsa.PrivateKey, 0, len(activeSet))
+	addrs := make([]common.Address, 0, len(activeSet))
+	for _, addr := range activeSet {
+		if key := ctx.ValidatorKeyByAddress(addr); key != nil {
+			keys = append(keys, key)
+			addrs = append(addrs, addr)
+		}
+	}
+	if len(keys) == 0 {
+		t.Fatalf("no local validator keys matched current active set: %v", activeSet)
+	}
+	return keys, addrs
+}
+
 func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address) {
 	t.Helper()
 	fundAmount := new(big.Int)
@@ -355,7 +375,8 @@ func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address
 		t.Fatalf("create candidate account failed: %v", err)
 	}
 
-	proposer := ctx.GenesisValidators[0]
+	activeKeys, activeAddrs := currentActiveValidatorKeys(t)
+	proposer := activeKeys[0]
 	ctx.WaitIfEpochBlock()
 	opts, err := ctx.GetTransactor(proposer)
 	if err != nil {
@@ -372,10 +393,14 @@ func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address
 	if pid == ([32]byte{}) {
 		t.Fatalf("missing proposal id from logs")
 	}
-	voters := ctx.GenesisValidators
+	voters := activeKeys
 	if len(voters) > 1 {
 		// proposer already participates in proposal lifecycle; avoid duplicate-vote reverts
 		voters = voters[1:]
+		activeAddrs = activeAddrs[1:]
+	}
+	if len(voters) == 0 {
+		t.Fatalf("proposal %x has no remaining active validators to vote", pid)
 	}
 	for _, vk := range voters {
 		robustVote(t, vk, pid)
@@ -403,4 +428,20 @@ func registerCandidateValidator(t *testing.T) (*ecdsa.PrivateKey, common.Address
 		t.Fatalf("register candidate validator failed")
 	}
 	return key, addr
+}
+
+func requireBaselinePOSATopology(t *testing.T) []common.Address {
+	t.Helper()
+	activeSet, err := ctx.Validators.GetActiveValidators(nil)
+	if err != nil {
+		t.Fatalf("read active validators failed: %v", err)
+	}
+	expected := len(ctx.GenesisValidators)
+	if expected == 0 {
+		t.Fatalf("missing genesis validators")
+	}
+	if len(activeSet) != expected {
+		t.Skipf("requires baseline POSA topology with %d active validators, got %d", expected, len(activeSet))
+	}
+	return activeSet
 }

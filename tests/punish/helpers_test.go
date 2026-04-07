@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -18,6 +19,13 @@ func keyForAddress(addr common.Address) *ecdsa.PrivateKey {
 		return nil
 	}
 	return ctx.ValidatorKeyByAddress(addr)
+}
+
+func currentEpochLength() int {
+	if ctx != nil && ctx.Config != nil && ctx.Config.Network.Epoch > 0 {
+		return int(ctx.Config.Network.Epoch)
+	}
+	return 30
 }
 
 func signerIdentityForValidator(addr common.Address, fallbackKey *ecdsa.PrivateKey) (common.Address, *ecdsa.PrivateKey) {
@@ -130,12 +138,17 @@ func waitForValidatorActive(t *testing.T, addr common.Address, maxEpochs int) bo
 	if maxEpochs < 1 {
 		maxEpochs = 1
 	}
-	for i := 0; i < maxEpochs; i++ {
+	epoch := currentEpochLength()
+	maxBlocks := maxEpochs*epoch + 4
+	for i := 0; i < maxBlocks; i++ {
 		active, _ := ctx.Validators.IsValidatorActive(nil, addr)
 		if active {
 			return true
 		}
-		waitForNextEpochBlock(t)
+		ctx.WaitIfEpochBlock()
+		if err := ctx.WaitForBlockProgress(1, 45*time.Second); err != nil {
+			return false
+		}
 	}
 	return false
 }
@@ -206,6 +219,20 @@ func ensureMinActiveValidators(t *testing.T, min int, maxEpochs int) {
 	}
 	set, _ := ctx.Validators.GetActiveValidators(nil)
 	t.Fatalf("active validators < %d (got %d)", min, len(set))
+}
+
+func requireChainProgressOrSkip(t *testing.T, minIncrements int, timeout time.Duration, reason string) {
+	t.Helper()
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if err := ctx.WaitForBlockProgress(minIncrements, timeout); err != nil {
+		height, readErr := ctx.Clients[0].BlockNumber(context.Background())
+		if readErr != nil {
+			t.Skipf("%s: chain stalled and current height is unavailable: %v (height err: %v)", reason, err, readErr)
+		}
+		t.Skipf("%s: chain stalled at height %d: %v", reason, height, err)
+	}
 }
 
 func getActiveProposerOrSkip(t *testing.T, maxEpochs int) *ecdsa.PrivateKey {

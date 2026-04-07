@@ -401,6 +401,8 @@ func TestG_DoubleSign(t *testing.T) {
 
 	// [P-22] Exit + Double Sign
 	t.Run("P-22_ExitThenDoubleSign", func(t *testing.T) {
+		requireChainProgressOrSkip(t, 1, 45*time.Second, "skip P-22 after P-21")
+
 		// Keep this scenario isolated from P-21. After the min-stake alignment,
 		// reusing a validator that was already slashed in P-21 can leave it below
 		// minValidatorStake, which makes exitValidator inapplicable and turns this

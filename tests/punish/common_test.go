@@ -374,6 +374,10 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 }
 
 func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, common.Address, error) {
+	if err := ctx.WaitForBlockProgress(1, 45*time.Second); err != nil {
+		return nil, common.Address{}, fmt.Errorf("chain stalled before create/register validator %q: %w", name, err)
+	}
+
 	key, addr, err := ctx.CreateAndFundAccount(utils.ToWei(500005))
 	if err != nil {
 		return nil, addr, err

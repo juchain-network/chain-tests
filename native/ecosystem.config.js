@@ -76,12 +76,6 @@ function readTrimmed(filePath) {
   }
 }
 
-function normalizedPrivateKey(filePath) {
-  const raw = readTrimmed(filePath).replace(/^0x/i, '');
-  if (!raw) return '';
-  return `0x${raw}`;
-}
-
 function resolveNodeImpl(index) {
   const raw = (process.env[`NODE${index}_IMPL`] || defaultImpl || 'geth').toLowerCase();
   if (raw !== 'geth' && raw !== 'reth') {
@@ -172,48 +166,28 @@ function gethCommonArgs(opts) {
 function resolveRethValidatorAuthArgs(index) {
   if (!index) return [];
 
-  const keyFile = process.env[`VALIDATOR${index}_PRIVATE_KEY_FILE`];
   const keystorePath = process.env[`VALIDATOR${index}_KEYSTORE_PATH`];
-  const keystoreDir = process.env[`VALIDATOR${index}_KEYSTORE_DIR`];
-  const keystoreAddress = process.env[`VALIDATOR${index}_KEYSTORE_ADDRESS`];
   const passFile = process.env[`VALIDATOR${index}_PASSWORD`];
   const passEnvName = process.env.KEYSTORE_PASSWORD_ENV_NAME || '';
+  const hasKeystore = Boolean(keystorePath && fs.existsSync(keystorePath));
 
-  const privateKey = normalizedPrivateKey(keyFile);
-  const hasKeystore = Boolean((keystorePath && fs.existsSync(keystorePath)) || (keystoreDir && fs.existsSync(keystoreDir)));
-
-  const useKeystore =
-    validatorAuthMode === 'keystore' ||
-    (validatorAuthMode === 'auto' && hasKeystore);
-
-  if (useKeystore) {
-    const args = [];
-    if (keystorePath && fs.existsSync(keystorePath)) {
-      args.push('--keystore-path', keystorePath);
-    } else if (keystoreDir && fs.existsSync(keystoreDir)) {
-      args.push('--keystore-dir', keystoreDir);
-    }
-
-    if (passFile && fs.existsSync(passFile)) {
-      args.push('--keystore-pass-file', passFile);
-    } else if (passEnvName && process.env[passEnvName]) {
-      args.push('--keystore-pass', `env:${passEnvName}`);
-    }
-
-    if (keystoreAddress) {
-      args.push('--keystore-address', keystoreAddress);
-    }
-
-    if (args.length > 0) {
-      return args;
-    }
+  if (validatorAuthMode !== 'auto' && validatorAuthMode !== 'keystore') {
+    throw new Error(`validator auth mode ${validatorAuthMode} is not supported for reth; use auto or keystore`);
+  }
+  if (!hasKeystore) {
+    throw new Error(`missing validator keystore for validator${index}`);
   }
 
-  if (privateKey) {
-    return ['--validator-private-key', privateKey];
+  const args = ['--validator-keystore', keystorePath];
+  if (passFile && fs.existsSync(passFile)) {
+    args.push('--validator-password-file', passFile);
+    return args;
   }
-
-  return [];
+  if (passEnvName && process.env[passEnvName]) {
+    args.push('--password', `env:${passEnvName}`);
+    return args;
+  }
+  throw new Error(`missing validator password source for validator${index}`);
 }
 
 function rethCommonArgs(opts) {

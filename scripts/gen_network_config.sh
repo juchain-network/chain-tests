@@ -232,10 +232,10 @@ case "$RUNTIME_IMPL_MODE" in
         ;;
 esac
 case "$VALIDATOR_AUTH_MODE" in
-    auto|private_key|keystore)
+    auto|keystore)
         ;;
     *)
-        die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE"
+        die "validator_auth.mode must be auto|keystore, got: $VALIDATOR_AUTH_MODE"
         ;;
 esac
 

@@ -31,6 +31,12 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-120}"
 NODE_COUNT="$(cfg_get "$SOURCE_FILE" "network.node_count" "4")"
 VALIDATOR_COUNT="$(cfg_get "$SOURCE_FILE" "network.validator_count" "3")"
 TOPOLOGY="$(cfg_get "$SOURCE_FILE" "runtime.topology" "")"
+PORTS_SOURCE_FILE="$SOURCE_FILE"
+if [[ "$PORTS_SOURCE_FILE" != "$CONFIG_FILE" ]]; then
+  if [[ -z "$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator1_http" "")" ]]; then
+    PORTS_SOURCE_FILE="$CONFIG_FILE"
+  fi
+fi
 
 [[ -f "$INIT_SCRIPT" ]] || die "init script not found: $INIT_SCRIPT"
 [[ -f "$ECOSYSTEM_FILE" ]] || die "ecosystem file not found: $ECOSYSTEM_FILE"
@@ -54,6 +60,35 @@ if [[ "$TOPOLOGY" == "single" ]]; then
   [[ -f "$SINGLE_SCRIPT" ]] || die "native single script not found: $SINGLE_SCRIPT"
   exec "$SINGLE_SCRIPT" "$ACTION" "$SOURCE_FILE"
 fi
+
+rpc_urls_for_topology() {
+  local idx port
+  for ((idx=1; idx<=VALIDATOR_COUNT; idx++)); do
+    port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator${idx}_http" "")"
+    [[ -n "$port" ]] || continue
+    printf 'http://localhost:%s\n' "$port"
+  done
+
+  for ((idx=VALIDATOR_COUNT+1; idx<=NODE_COUNT; idx++)); do
+    local sync_idx=$((idx-VALIDATOR_COUNT))
+    if (( sync_idx == 1 )); then
+      port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync_http" "")"
+    else
+      port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync${sync_idx}_http" "")"
+    fi
+    [[ -n "$port" ]] || continue
+    printf 'http://localhost:%s\n' "$port"
+  done
+}
+
+wait_for_all_rpcs_ready() {
+  local timeout="${1:-$WAIT_TIMEOUT}"
+  local rpc_url
+  while IFS= read -r rpc_url; do
+    [[ -n "$rpc_url" ]] || continue
+    wait_for_rpc_ready "$rpc_url" "$timeout"
+  done < <(rpc_urls_for_topology)
+}
 
 PM2_PROCS=()
 for ((i=1; i<=VALIDATOR_COUNT; i++)); do
@@ -240,7 +275,7 @@ pm2_start_all() {
   if all_nodes_reth; then
     log "pm2 start using $ECOSYSTEM_FILE (all-reth parallel startup)"
     PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --update-env >/dev/null
-    wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
+    wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
     return 0
   fi
 
@@ -339,10 +374,10 @@ case "$ACTION" in
     [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
     pm2_wait_all_online
-    wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
+    wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
     ;;
   ready)
-    wait_for_rpc_ready "$RPC_URL" "$WAIT_TIMEOUT"
+    wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
     ;;
   logs)
     pm2_logs

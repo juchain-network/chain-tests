@@ -46,9 +46,8 @@ runtime_nodes:
 
 # Validator credential policy used by reth nodes.
 validator_auth:
-  # auto: keystore first, fallback to private key
-  # private_key: force --validator-private-key
-  # keystore: force --keystore-* args
+  # auto: use validator keystore if present
+  # keystore: force validator keystore mode
   mode: auto
   keystore:
     # If empty, default: data/nodeX/password.txt

@@ -7,8 +7,8 @@ FORK_FIELDS = ("cancunTime", "shanghaiTime", "posaTime", "fixHeaderTime")
 UPGRADE_DEPENDENCIES = {
     "shanghaiTime": ("shanghaiTime",),
     "cancunTime": ("shanghaiTime", "cancunTime"),
-    "fixHeaderTime": ("shanghaiTime", "fixHeaderTime"),
-    "posaTime": ("shanghaiTime", "posaTime"),
+    "fixHeaderTime": ("shanghaiTime", "cancunTime", "fixHeaderTime"),
+    "posaTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
 }
 STAGGER_STEP_SECONDS = 60
 SMOKE_STATIC_CASES = {

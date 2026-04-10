@@ -204,8 +204,8 @@ fi
 
 DEFAULT_RUNTIME_IMPL="$(normalize_impl "$DEFAULT_RUNTIME_IMPL")"
 case "$VALIDATOR_AUTH_MODE" in
-  auto|private_key|keystore) ;;
-  *) die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE" ;;
+  auto|keystore) ;;
+  *) die "validator_auth.mode must be auto|keystore, got: $VALIDATOR_AUTH_MODE" ;;
 esac
 if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]] && ! [[ "$UPGRADE_OVERRIDE_POSA_TIME" =~ ^[0-9]+$ ]]; then
   die "fork.override.posa_time must be an unsigned integer timestamp, got: $UPGRADE_OVERRIDE_POSA_TIME"
@@ -499,7 +499,6 @@ for ((i=0; i<VALIDATOR_COUNT; i++)); do
   cat >> "$ENV_FILE" <<EOF_ENV
 VALIDATOR${idx}_ADDRESS=$validator_addr
 VALIDATOR${idx}_PASSWORD=$pass_file
-VALIDATOR${idx}_PRIVATE_KEY_FILE=$signer_key_file
 VALIDATOR${idx}_KEYSTORE_DIR=$datadir/keystore
 VALIDATOR${idx}_KEYSTORE_PATH=$keystore_file
 VALIDATOR${idx}_KEYSTORE_ADDRESS=$keystore_addr

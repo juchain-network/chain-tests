@@ -62,9 +62,105 @@ func (s *trafficStats) lastErr() string {
 	return ""
 }
 
+func forkScheduleSummary() string {
+	return fmt.Sprintf(
+		"target=%s scheduled=%d schedule[shanghai=%d cancun=%d fixHeader=%d posa=%d]",
+		cfg.Fork.Target,
+		cfg.Fork.ScheduledTime,
+		cfg.Fork.Schedule.ShanghaiTime,
+		cfg.Fork.Schedule.CancunTime,
+		cfg.Fork.Schedule.FixHeaderTime,
+		cfg.Fork.Schedule.PosaTime,
+	)
+}
+
+type forkPhase struct {
+	name string
+	at   int64
+}
+
+func forkPhases() []forkPhase {
+	if cfg == nil {
+		return nil
+	}
+	schedule := cfg.Fork.Schedule
+	phases := []forkPhase{
+		{name: "shanghai", at: schedule.ShanghaiTime},
+		{name: "cancun", at: schedule.CancunTime},
+		{name: "fixHeader", at: schedule.FixHeaderTime},
+		{name: "posa", at: schedule.PosaTime},
+	}
+	out := make([]forkPhase, 0, len(phases))
+	for _, phase := range phases {
+		if phase.at > 0 {
+			out = append(out, phase)
+		}
+	}
+	return out
+}
+
+func validateForkSchedule() error {
+	if cfg == nil || !strings.EqualFold(cfg.Fork.Mode, "upgrade") {
+		return nil
+	}
+	phases := forkPhases()
+	if len(phases) == 0 {
+		return fmt.Errorf("missing upgrade fork schedule")
+	}
+	for i := 1; i < len(phases); i++ {
+		if phases[i-1].at > phases[i].at {
+			return fmt.Errorf("invalid fork ordering: %s(%d) > %s(%d)", phases[i-1].name, phases[i-1].at, phases[i].name, phases[i].at)
+		}
+	}
+	if strings.EqualFold(cfg.Fork.Target, "allStaggered") {
+		for i := 1; i < len(phases); i++ {
+			if phases[i-1].at >= phases[i].at {
+				return fmt.Errorf("allStaggered requires strict fork ordering: %s(%d) >= %s(%d)", phases[i-1].name, phases[i-1].at, phases[i].name, phases[i].at)
+			}
+		}
+	}
+	last := phases[len(phases)-1].at
+	if cfg.Fork.ScheduledTime != last {
+		return fmt.Errorf("scheduled_time mismatch: have=%d want=%d", cfg.Fork.ScheduledTime, last)
+	}
+	return nil
+}
+
+func forkPhaseAt(ts uint64) string {
+	phases := forkPhases()
+	if len(phases) == 0 {
+		return "no-fork"
+	}
+	for i, phase := range phases {
+		if int64(ts) < phase.at {
+			if i == 0 {
+				return fmt.Sprintf("before %s", phase.name)
+			}
+			return fmt.Sprintf("between %s and %s", phases[i-1].name, phase.name)
+		}
+	}
+	return fmt.Sprintf("after %s", phases[len(phases)-1].name)
+}
+
+func forkLeadPhaseLabel() string {
+	if cfg == nil || cfg.Fork.ScheduledTime <= 0 {
+		return "fork boundary"
+	}
+	targetTs := uint64(cfg.Fork.ScheduledTime)
+	if targetTs >= uint64(forkLeadWindow.Seconds()) {
+		targetTs -= uint64(forkLeadWindow.Seconds())
+	} else {
+		targetTs = 0
+	}
+	return forkPhaseAt(targetTs)
+}
+
 func TestF_ForkLiveness(t *testing.T) {
 	if cfg == nil || funderKey == nil {
 		t.Fatalf("fork test context not initialized")
+	}
+	if err := validateForkSchedule(); err != nil {
+		t.Fatalf("invalid fork schedule: %v (%s)", err, forkScheduleSummary())
 	}
 
 	nodes, err := openForkNodes(cfg)
@@ -82,6 +178,7 @@ func TestF_ForkLiveness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query chain id: %v", err)
 	}
+	t.Logf("fork schedule: %s", forkScheduleSummary())
 
 	startHeights, err := collectHeights(nodes)
 	if err != nil {
@@ -126,7 +223,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Now().After(preDeadline) {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("timeout waiting for fork boundary: target=%s scheduled=%d current=%d", cfg.Fork.Target, cfg.Fork.ScheduledTime, head.timestamp)
+				t.Fatalf("timeout waiting for fork boundary: %s current=%d", forkScheduleSummary(), head.timestamp)
 			}
 			time.Sleep(1 * time.Second)
 			head, err = latestHead(primary)
@@ -140,7 +237,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled before fork for %s", maxStallWindow)
+				t.Fatalf("chain stalled %s for %s: %s current_head[number=%d timestamp=%d]", forkLeadPhaseLabel(), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -168,7 +265,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Now().After(crossDeadline) {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("fork boundary not reached in time: target=%s scheduled=%d current=%d", cfg.Fork.Target, cfg.Fork.ScheduledTime, head.timestamp)
+				t.Fatalf("fork boundary not reached in time: %s current=%d", forkScheduleSummary(), head.timestamp)
 			}
 			time.Sleep(1 * time.Second)
 			head, err = latestHead(primary)
@@ -179,7 +276,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled while crossing fork boundary for %s", maxStallWindow)
+				t.Fatalf("chain stalled while crossing %s for %s: %s current_head[number=%d timestamp=%d]", forkPhaseAt(uint64(cfg.Fork.ScheduledTime)), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -199,7 +296,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled after fork for %s", maxStallWindow)
+				t.Fatalf("chain stalled %s for %s: %s current_head[number=%d timestamp=%d]", forkPhaseAt(head.timestamp), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {

@@ -88,7 +88,7 @@ runtime:
   impl: geth # geth | reth
 
 validator_auth:
-  mode: auto # auto | private_key | keystore
+  mode: auto # auto | keystore
 
 paths:
   chain_root: ../chain-1.16/chain-1.16
@@ -195,7 +195,7 @@ TOPOLOGY=all MATRIX=1 make test-smoke
 `test-smoke` single-node mode key variables:
 
 - `SMOKE_SINGLE_IMPL`: optional override `geth | reth` (empty -> use `config/test_env.yaml` runtime settings)
-- `SMOKE_SINGLE_AUTH_MODE`: optional override `auto | private_key | keystore` (empty -> use `config/test_env.yaml` validator_auth.mode)
+- `SMOKE_SINGLE_AUTH_MODE`: optional override `auto | keystore` (empty -> use `config/test_env.yaml` validator_auth.mode)
 - `SMOKE_SINGLE_GENESIS_MODE`: optional `poa | posa | smoke | upgrade`
 - `SMOKE_SINGLE_FORK_TARGET`: required when `SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade`
 - `SMOKE_SINGLE_OBSERVE_SECONDS`: optional liveness observe window override (empty -> use `tests.smoke.observe_seconds` from config)
@@ -373,7 +373,7 @@ Important fields:
 - `runtime_nodes.nodeX.impl`: per-node implementation in mixed mode
 - `runtime_nodes.nodeX.binary`: optional per-node native binary override
 - `binaries.geth_native` / `binaries.reth_native`: native binary defaults when node-level override is empty
-- `validator_auth.mode`: `auto | private_key | keystore` (reth validator auth)
+- `validator_auth.mode`: `auto | keystore` (reth validator auth, keystore-only)
 - `network.fork_target`:
   - smoke static profiles:
     - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa`
@@ -437,7 +437,7 @@ NODE=ju-chain-validator1 make logs
 
 3. reth keystore startup failure
 - Confirm `data/nodeX/keystore/*.json` and `data/nodeX/password.txt` exist after `make init`.
-- Or set `validator_auth.mode=private_key` to force `--validator-private-key`.
+- `reth` now uses keystore-only validator auth in `chain-tests`; configure `validator_auth.mode=auto|keystore`.
 
 3. Fork config errors (fork ordering / blobSchedule)
 - Regenerate genesis via project scripts (`make init`) instead of manual genesis edits.

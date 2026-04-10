@@ -240,8 +240,8 @@ wait_for_single_coverage_flush() {
 
 resolve_validator_auth_mode() {
   case "$VALIDATOR_AUTH_MODE" in
-    auto|private_key|keystore) echo "$VALIDATOR_AUTH_MODE" ;;
-    *) die "validator_auth.mode must be auto|private_key|keystore, got: $VALIDATOR_AUTH_MODE" ;;
+    auto|keystore) echo "$VALIDATOR_AUTH_MODE" ;;
+    *) die "validator_auth.mode must be auto|keystore, got: $VALIDATOR_AUTH_MODE" ;;
   esac
 }
 
@@ -351,10 +351,6 @@ init_reth() {
 
 resolve_reth_auth_args() {
   local mode="$1"
-  local key_hex
-  key_hex="$(tr -d '[:space:]' < "$VALIDATOR_KEY")"
-  key_hex="${key_hex#0x}"
-  local private_key="0x${key_hex}"
   local pass_file="$PASSWORD_FILE"
   local env_pass=""
 
@@ -371,43 +367,17 @@ resolve_reth_auth_args() {
   if [[ -d "$KEYSTORE_DIR" ]]; then
     keystore_file="$(find "$KEYSTORE_DIR" -type f | head -n 1 || true)"
   fi
-  local keystore_addr=""
-  if [[ -f "$KEYSTORE_ADDR_FILE" ]]; then
-    keystore_addr="$(tr -d '[:space:]' < "$KEYSTORE_ADDR_FILE")"
-  fi
+  [[ -n "$keystore_file" ]] || die "reth requires validator keystore file under $KEYSTORE_DIR"
 
-  if [[ "$mode" == "private_key" ]]; then
-    echo "--validator-private-key $private_key"
-    return 0
+  local out="--validator-keystore $keystore_file"
+  if [[ -f "$pass_file" ]]; then
+    out+=" --validator-password-file $pass_file"
+  elif [[ -n "$KEYSTORE_PASSWORD_ENV_NAME" ]]; then
+    out+=" --password env:$KEYSTORE_PASSWORD_ENV_NAME"
+  else
+    die "reth requires validator password file or password env for keystore auth"
   fi
-
-  local use_keystore=false
-  if [[ "$mode" == "keystore" ]]; then
-    use_keystore=true
-  elif [[ "$mode" == "auto" && -n "$keystore_file" ]]; then
-    use_keystore=true
-  fi
-
-  if $use_keystore; then
-    local out=""
-    if [[ -n "$keystore_file" ]]; then
-      out+="--keystore-path $keystore_file"
-    else
-      out+="--keystore-dir $KEYSTORE_DIR"
-    fi
-    if [[ -f "$pass_file" ]]; then
-      out+=" --keystore-pass-file $pass_file"
-    elif [[ -n "$KEYSTORE_PASSWORD_ENV_NAME" ]]; then
-      out+=" --keystore-pass env:$KEYSTORE_PASSWORD_ENV_NAME"
-    fi
-    if [[ -n "$keystore_addr" ]]; then
-      out+=" --keystore-address $keystore_addr"
-    fi
-    echo "$out"
-    return 0
-  fi
-
-  echo "--validator-private-key $private_key"
+  echo "$out"
 }
 
 start_geth() {

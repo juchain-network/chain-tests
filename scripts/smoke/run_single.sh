@@ -41,8 +41,8 @@ case "$SMOKE_IMPL" in
 esac
 
 case "$SMOKE_AUTH_MODE" in
-  auto|private_key|keystore) ;;
-  *) die "SMOKE_SINGLE_AUTH_MODE must be auto|private_key|keystore, got: $SMOKE_AUTH_MODE" ;;
+  auto|keystore) ;;
+  *) die "SMOKE_SINGLE_AUTH_MODE must be auto|keystore, got: $SMOKE_AUTH_MODE" ;;
 esac
 
 if [[ "$SMOKE_GENESIS_MODE" == "smoke" && -z "$SMOKE_SINGLE_FORK_TARGET" ]]; then

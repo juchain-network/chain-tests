@@ -43,6 +43,37 @@ status_display() {
   esac
 }
 
+archive_case_artifacts() {
+  local case_dir="$1"
+  local topology="$2"
+
+  local artifacts=(
+    "$PROJECT_ROOT/data/genesis.json"
+    "$PROJECT_ROOT/data/test_config.yaml"
+    "$PROJECT_ROOT/data/runtime_session.yaml"
+    "$PROJECT_ROOT/data/runtime_session.json"
+  )
+
+  local artifact
+  for artifact in "${artifacts[@]}"; do
+    if [[ -f "$artifact" ]]; then
+      cp "$artifact" "$case_dir/$(basename "$artifact")"
+    fi
+  done
+
+  if [[ "$topology" == "single" ]]; then
+    local single_logs=(
+      "$PROJECT_ROOT/data/native-single/node.log"
+      "$PROJECT_ROOT/data/native-single/666666/reth.log"
+    )
+    for artifact in "${single_logs[@]}"; do
+      if [[ -f "$artifact" ]]; then
+        cp "$artifact" "$case_dir/$(basename "$artifact")"
+      fi
+    done
+  fi
+}
+
 run_case() {
   local mode="$1"
   local target="$2"
@@ -119,6 +150,8 @@ run_case() {
     if [[ $rc -eq 0 ]] && [[ -x "$HEALTH_SCRIPT" ]]; then
       env "${init_env[@]}" "$HEALTH_SCRIPT" || rc=$?
     fi
+
+    archive_case_artifacts "$case_dir" "$TOPOLOGY"
 
     if [[ "$TOPOLOGY" == "single" ]]; then
       env "${init_env[@]}" "$PROJECT_ROOT/scripts/network/native_single.sh" down "$CONFIG_FILE" || true

@@ -186,7 +186,7 @@ help:
 	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT) FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
 	@echo "  SMOKE_CASES=$(SMOKE_CASES) SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
 	@echo "  SMOKE_SINGLE_IMPL=$(SMOKE_SINGLE_IMPL) # optional override: geth|reth; empty -> use config runtime.*"
-	@echo "  SMOKE_SINGLE_AUTH_MODE=$(SMOKE_SINGLE_AUTH_MODE) # optional override: auto|private_key|keystore; empty -> use config validator_auth.mode"
+	@echo "  SMOKE_SINGLE_AUTH_MODE=$(SMOKE_SINGLE_AUTH_MODE) # optional override: auto|keystore; empty -> use config validator_auth.mode"
 	@echo "  SMOKE_SINGLE_GENESIS_MODE=$(SMOKE_SINGLE_GENESIS_MODE) # optional: poa|posa|smoke|upgrade"
 	@echo "  SMOKE_SINGLE_FORK_TARGET=$(SMOKE_SINGLE_FORK_TARGET) # required when SMOKE_SINGLE_GENESIS_MODE=smoke|upgrade"
 	@echo "  SMOKE_SINGLE_OBSERVE_SECONDS=$(SMOKE_SINGLE_OBSERVE_SECONDS) # optional override; empty -> use config tests.smoke.observe_seconds"

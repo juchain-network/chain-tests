@@ -1,31 +1,44 @@
 runtime:
   backend: native
   impl_mode: single
-  impl: geth
+  impl: reth
 
 paths:
-  chain_root: "/Users/litian/code/work/github/chain-1.16/chain-1.16"
-  reth_root: "../../personal/rchain"
+  chain_root: "../chain-1.16/chain-1.16"
+  reth_root: "../rchain"
   chain_contract_root: "../chain-contract"
-  reth_bytecode_file: "../../../my/rchain/crates/congress-core/src/bytecode.rs"
+  reth_bytecode_file: "../rchain/crates/congress-core/src/bytecode.rs"
 
 binaries:
-  geth_native: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
-  reth_native: ""
+  geth_native: "../chain-1.16/chain-1.16/build/bin/geth"
+  reth_native: "../rchain/target/release/congress-node"
 
+# runtime_nodes:
+#   node0:
+#     impl: geth
+#     binary: "../chain/build/bin/geth"
+#   node1:
+#     impl: geth
+#     binary: "../chain-1.16/chain-1.16/build/bin/geth"
+#   node2:
+#     impl: geth
+#     binary: "../chain-1.16/chain-1.16/build/bin/geth"
+#   node3:
+#     impl: geth
+#     binary: "../chain/build/bin/geth"
 runtime_nodes:
   node0:
-    impl: geth
-    binary: "/Users/litian/code/work/github/chain/build/bin/geth"
+    impl: reth
+    binary: ""
   node1:
-    impl: geth
-    binary: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
+    impl: reth
+    binary: ""
   node2:
-    impl: geth
-    binary: "/Users/litian/code/work/github/chain-1.16/chain-1.16/build/bin/geth"
+    impl: reth
+    binary: ""
   node3:
-    impl: geth
-    binary: "/Users/litian/code/work/github/chain/build/bin/geth"
+    impl: reth
+    binary: ""
 
 validator_auth:
   mode: auto

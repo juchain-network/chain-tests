@@ -81,6 +81,26 @@ rpc_urls_for_topology() {
   done
 }
 
+rpc_ports_for_topology() {
+  local idx port
+  for ((idx=1; idx<=VALIDATOR_COUNT; idx++)); do
+    port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator${idx}_http" "")"
+    [[ -n "$port" ]] || continue
+    printf '%s\n' "$port"
+  done
+
+  for ((idx=VALIDATOR_COUNT+1; idx<=NODE_COUNT; idx++)); do
+    local sync_idx=$((idx-VALIDATOR_COUNT))
+    if (( sync_idx == 1 )); then
+      port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync_http" "")"
+    else
+      port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync${sync_idx}_http" "")"
+    fi
+    [[ -n "$port" ]] || continue
+    printf '%s\n' "$port"
+  done
+}
+
 wait_for_all_rpcs_ready() {
   local timeout="${1:-$WAIT_TIMEOUT}"
   local rpc_url
@@ -88,6 +108,33 @@ wait_for_all_rpcs_ready() {
     [[ -n "$rpc_url" ]] || continue
     wait_for_rpc_ready "$rpc_url" "$timeout"
   done < <(rpc_urls_for_topology)
+}
+
+wait_for_all_rpc_ports_released() {
+  local timeout="${1:-30}"
+  local deadline=$((SECONDS + timeout))
+  local pending=()
+  local port
+
+  command -v lsof >/dev/null 2>&1 || return 0
+
+  while (( SECONDS <= deadline )); do
+    pending=()
+    while IFS= read -r port; do
+      [[ -n "$port" ]] || continue
+      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        pending+=("$port")
+      fi
+    done < <(rpc_ports_for_topology)
+
+    if [[ ${#pending[@]} -eq 0 ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  log "RPC ports still listening after ${timeout}s: ${pending[*]}"
+  return 1
 }
 
 PM2_PROCS=()
@@ -249,15 +296,17 @@ pm2_wait_all_stopped() {
 }
 
 stop_with_optional_coverage_flush() {
+  log "graceful pm2 stop before delete"
+  pm2_stop_known_graceful
+  pm2_wait_all_stopped || true
+
   if coverage_enabled_runtime && ! all_nodes_reth; then
-    log "coverage-enabled stop: graceful pm2 stop before delete"
-    pm2_stop_known_graceful
-    pm2_wait_all_stopped || true
     wait_for_coverage_flush
-    pm2_delete_known
-    return 0
   fi
+
   pm2_delete_known
+  pm2_wait_all_stopped || true
+  wait_for_all_rpc_ports_released "${PORTS_STOP_TIMEOUT:-30}" || true
 }
 
 all_nodes_reth() {

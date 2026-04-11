@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"juchain.org/chain/tools/ci/internal/config"
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 const (
@@ -182,7 +183,7 @@ func TestF_ForkLiveness(t *testing.T) {
 
 	startHeights, err := collectHeights(nodes)
 	if err != nil {
-		t.Fatalf("collect start heights: %v", err)
+		failForkTest(t, nodes, "collect start heights: %v", err)
 	}
 	maxHeights := cloneHeights(startHeights)
 
@@ -201,7 +202,7 @@ func TestF_ForkLiveness(t *testing.T) {
 	if err != nil {
 		cancelSend()
 		wg.Wait()
-		t.Fatalf("read initial head: %v", err)
+		failForkTest(t, nodes, "read initial head: %v", err)
 	}
 	lastAdvance := time.Now()
 	lastHeadNumber := head.number
@@ -210,7 +211,7 @@ func TestF_ForkLiveness(t *testing.T) {
 		if head.timestamp >= uint64(cfg.Fork.ScheduledTime) {
 			cancelSend()
 			wg.Wait()
-			t.Fatalf("fork already passed before test start: headTime=%d scheduled=%d mode=%s target=%s", head.timestamp, cfg.Fork.ScheduledTime, cfg.Fork.Mode, cfg.Fork.Target)
+			failForkTest(t, nodes, "fork already passed before test start: headTime=%d scheduled=%d mode=%s target=%s", head.timestamp, cfg.Fork.ScheduledTime, cfg.Fork.Mode, cfg.Fork.Target)
 		}
 		preStart := head.number
 		preStartTime := head.timestamp
@@ -223,7 +224,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Now().After(preDeadline) {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("timeout waiting for fork boundary: %s current=%d", forkScheduleSummary(), head.timestamp)
+				failForkTest(t, nodes, "timeout waiting for fork boundary: %s current=%d", forkScheduleSummary(), head.timestamp)
 			}
 			time.Sleep(1 * time.Second)
 			head, err = latestHead(primary)
@@ -237,7 +238,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled %s for %s: %s current_head[number=%d timestamp=%d]", forkLeadPhaseLabel(), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
+				failForkTest(t, nodes, "chain stalled %s for %s: %s current_head[number=%d timestamp=%d hash=%s]", forkLeadPhaseLabel(), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp, head.hash)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -254,7 +255,7 @@ func TestF_ForkLiveness(t *testing.T) {
 		if requireStrictPreGrowth && preEnd <= preStart {
 			cancelSend()
 			wg.Wait()
-			t.Fatalf("no pre-fork block growth: start=%d end=%d target=%s", preStart, preEnd, cfg.Fork.Target)
+			failForkTest(t, nodes, "no pre-fork block growth: start=%d end=%d target=%s", preStart, preEnd, cfg.Fork.Target)
 		}
 		if !requireStrictPreGrowth {
 			t.Logf("skip strict pre-fork growth check: target=%s pre_window=%ds", cfg.Fork.Target, remainingPreFork)
@@ -265,7 +266,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Now().After(crossDeadline) {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("fork boundary not reached in time: %s current=%d", forkScheduleSummary(), head.timestamp)
+				failForkTest(t, nodes, "fork boundary not reached in time: %s current=%d", forkScheduleSummary(), head.timestamp)
 			}
 			time.Sleep(1 * time.Second)
 			head, err = latestHead(primary)
@@ -276,7 +277,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled while crossing %s for %s: %s current_head[number=%d timestamp=%d]", forkPhaseAt(uint64(cfg.Fork.ScheduledTime)), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
+				failForkTest(t, nodes, "chain stalled while crossing %s for %s: %s current_head[number=%d timestamp=%d hash=%s]", forkPhaseAt(uint64(cfg.Fork.ScheduledTime)), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp, head.hash)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -296,7 +297,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled %s for %s: %s current_head[number=%d timestamp=%d]", forkPhaseAt(head.timestamp), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp)
+				failForkTest(t, nodes, "chain stalled %s for %s: %s current_head[number=%d timestamp=%d hash=%s]", forkPhaseAt(head.timestamp), maxStallWindow, forkScheduleSummary(), head.number, head.timestamp, head.hash)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -308,7 +309,7 @@ func TestF_ForkLiveness(t *testing.T) {
 		if postEnd <= postStart {
 			cancelSend()
 			wg.Wait()
-			t.Fatalf("no post-fork block growth: start=%d end=%d target=%s", postStart, postEnd, cfg.Fork.Target)
+			failForkTest(t, nodes, "no post-fork block growth: start=%d end=%d target=%s", postStart, postEnd, cfg.Fork.Target)
 		}
 	} else {
 		deadline := time.Now().Add(noForkObserveWindow)
@@ -322,7 +323,7 @@ func TestF_ForkLiveness(t *testing.T) {
 			if time.Since(lastAdvance) > maxStallWindow {
 				cancelSend()
 				wg.Wait()
-				t.Fatalf("chain stalled for %s in non-upgrade mode", maxStallWindow)
+				failForkTest(t, nodes, "chain stalled for %s in non-upgrade mode", maxStallWindow)
 			}
 			current, err := collectHeights(nodes)
 			if err == nil {
@@ -337,15 +338,15 @@ func TestF_ForkLiveness(t *testing.T) {
 	sent := atomic.LoadInt64(&stats.sent)
 	failed := atomic.LoadInt64(&stats.failed)
 	if sent < minTxSent {
-		t.Fatalf("traffic too low: sent=%d failed=%d lastErr=%s", sent, failed, stats.lastErr())
+		failForkTest(t, nodes, "traffic too low: sent=%d failed=%d lastErr=%s", sent, failed, stats.lastErr())
 	}
 	if sent == 0 && failed > 0 {
-		t.Fatalf("traffic had no success: failed=%d lastErr=%s", failed, stats.lastErr())
+		failForkTest(t, nodes, "traffic had no success: failed=%d lastErr=%s", failed, stats.lastErr())
 	}
 
 	finalHeights, err := collectHeights(nodes)
 	if err != nil {
-		t.Fatalf("collect final heights: %v", err)
+		failForkTest(t, nodes, "collect final heights: %v", err)
 	}
 	mergeMax(maxHeights, finalHeights)
 
@@ -355,11 +356,11 @@ func TestF_ForkLiveness(t *testing.T) {
 		start := startHeights[n.name]
 		end := maxHeights[n.name]
 		if end < start {
-			t.Fatalf("height regressed on %s: start=%d end=%d", n.name, start, end)
+			failForkTest(t, nodes, "height regressed on %s: start=%d end=%d", n.name, start, end)
 		}
 		growth := end - start
 		if growth < minGrowthPerNode {
-			t.Fatalf("height growth too low on %s: start=%d end=%d growth=%d", n.name, start, end, growth)
+			failForkTest(t, nodes, "height growth too low on %s: start=%d end=%d growth=%d", n.name, start, end, growth)
 		}
 		if end > maxFinal {
 			maxFinal = end
@@ -371,7 +372,7 @@ func TestF_ForkLiveness(t *testing.T) {
 	}
 
 	if len(nodes) > 1 && maxFinal-minFinal > maxHeightLag {
-		t.Fatalf("node height lag too large: max=%d min=%d lag=%d", maxFinal, minFinal, maxFinal-minFinal)
+		failForkTest(t, nodes, "node height lag too large: max=%d min=%d lag=%d", maxFinal, minFinal, maxFinal-minFinal)
 	}
 
 	verifyHistoricalBlocks(t, nodes[0], startHeights[nodes[0].name], maxHeights[nodes[0].name])
@@ -517,6 +518,7 @@ func mergeMax(target, current map[string]uint64) {
 type headInfo struct {
 	number    uint64
 	timestamp uint64
+	hash      string
 }
 
 func latestHead(client *ethclient.Client) (headInfo, error) {
@@ -532,7 +534,212 @@ func latestHead(client *ethclient.Client) (headInfo, error) {
 	return headInfo{
 		number:    header.Number.Uint64(),
 		timestamp: header.Time,
+		hash:      header.Hash().Hex(),
 	}, nil
+}
+
+type nodeHeadSnapshot struct {
+	name      string
+	rpcURL    string
+	number    uint64
+	timestamp uint64
+	hash      string
+	err       string
+}
+
+func failForkTest(t *testing.T, nodes []forkNode, format string, args ...any) {
+	t.Helper()
+	logForkDiagnostics(t, nodes)
+	t.Fatalf(format, args...)
+}
+
+func logForkDiagnostics(t *testing.T, nodes []forkNode) {
+	t.Helper()
+	if len(nodes) == 0 {
+		t.Log("fork diag: no nodes available")
+		return
+	}
+
+	snapshots := collectNodeHeadSnapshots(nodes)
+	refIdx := referenceSnapshotIndex(snapshots)
+	if refIdx < 0 {
+		for _, snap := range snapshots {
+			t.Logf("fork diag node=%s rpc=%s err=%s", snap.name, snap.rpcURL, snap.err)
+		}
+		t.Log("fork diag: all nodes unreachable")
+		return
+	}
+
+	ref := snapshots[refIdx]
+	refLabel := "primary"
+	if refIdx != 0 {
+		refLabel = fmt.Sprintf("fallback:%s", ref.name)
+	}
+	t.Logf("fork diag reference=%s head[number=%d timestamp=%d hash=%s]", refLabel, ref.number, ref.timestamp, ref.hash)
+
+	for i, snap := range snapshots {
+		if snap.err != "" {
+			t.Logf("fork diag node=%s rpc=%s err=%s", snap.name, snap.rpcURL, snap.err)
+			continue
+		}
+
+		relation := "reference"
+		if i != refIdx {
+			switch {
+			case snap.number < ref.number:
+				relation = fmt.Sprintf("behind_by=%d", ref.number-snap.number)
+			case snap.number > ref.number:
+				relation = fmt.Sprintf("ahead_by=%d", snap.number-ref.number)
+			case snap.hash != ref.hash:
+				relation = "same_height_hash_mismatch"
+			default:
+				relation = "matched_hash"
+			}
+		}
+
+		t.Logf(
+			"fork diag node=%s rpc=%s head[number=%d timestamp=%d hash=%s] relation=%s",
+			snap.name,
+			snap.rpcURL,
+			snap.number,
+			snap.timestamp,
+			snap.hash,
+			relation,
+		)
+	}
+
+	recent := recentCanonicalCoinbases(nodes[refIdx].client, 16)
+	if len(recent) > 0 {
+		t.Logf("fork diag recent_coinbases=%v", recent)
+	}
+
+	if checkpoint := latestCheckpointHeaderSummary(nodes[refIdx].client, ref.number); checkpoint != "" {
+		t.Logf("fork diag %s", checkpoint)
+	}
+}
+
+func collectNodeHeadSnapshots(nodes []forkNode) []nodeHeadSnapshot {
+	out := make([]nodeHeadSnapshot, 0, len(nodes))
+	for _, n := range nodes {
+		snap := nodeHeadSnapshot{name: n.name, rpcURL: n.rpcURL}
+		if n.client == nil {
+			snap.err = "nil client"
+			out = append(out, snap)
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		header, err := n.client.HeaderByNumber(ctx, nil)
+		cancel()
+		if err != nil {
+			snap.err = err.Error()
+			out = append(out, snap)
+			continue
+		}
+		if header == nil {
+			snap.err = "nil latest header"
+			out = append(out, snap)
+			continue
+		}
+
+		snap.number = header.Number.Uint64()
+		snap.timestamp = header.Time
+		snap.hash = header.Hash().Hex()
+		out = append(out, snap)
+	}
+	return out
+}
+
+func referenceSnapshotIndex(snaps []nodeHeadSnapshot) int {
+	if len(snaps) == 0 {
+		return -1
+	}
+	if snaps[0].err == "" {
+		return 0
+	}
+	for i := range snaps {
+		if snaps[i].err == "" {
+			return i
+		}
+	}
+	return -1
+}
+
+func recentCanonicalCoinbases(client *ethclient.Client, limit int) []string {
+	if client == nil || limit <= 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	latest, err := client.BlockNumber(ctx)
+	cancel()
+	if err != nil {
+		return []string{fmt.Sprintf("blockNumber_err=%v", err)}
+	}
+
+	start := uint64(1)
+	if latest >= uint64(limit) {
+		start = latest - uint64(limit) + 1
+	}
+
+	items := make([]string, 0, latest-start+1)
+	for height := start; height <= latest; height++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		header, err := client.HeaderByNumber(ctx, new(big.Int).SetUint64(height))
+		cancel()
+		if err != nil {
+			items = append(items, fmt.Sprintf("%d:error=%v", height, err))
+			continue
+		}
+		if header == nil {
+			items = append(items, fmt.Sprintf("%d:nil_header", height))
+			continue
+		}
+		items = append(items, fmt.Sprintf("%d:%s", height, header.Coinbase.Hex()))
+	}
+	return items
+}
+
+func latestCheckpointHeaderSummary(client *ethclient.Client, headNumber uint64) string {
+	if client == nil || cfg == nil || cfg.Network.Epoch == 0 || headNumber == 0 {
+		return ""
+	}
+
+	checkpoint := (headNumber / cfg.Network.Epoch) * cfg.Network.Epoch
+	if checkpoint == 0 {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	header, err := client.HeaderByNumber(ctx, new(big.Int).SetUint64(checkpoint))
+	cancel()
+	if err != nil {
+		return fmt.Sprintf("checkpoint_header block=%d err=%v", checkpoint, err)
+	}
+	if header == nil {
+		return fmt.Sprintf("checkpoint_header block=%d err=nil_header", checkpoint)
+	}
+
+	signers, err := testkit.ParseHeaderExtraSigners(header.Extra)
+	if err != nil {
+		return fmt.Sprintf(
+			"checkpoint_header block=%d hash=%s coinbase=%s parse_extra_err=%v",
+			checkpoint,
+			header.Hash().Hex(),
+			header.Coinbase.Hex(),
+			err,
+		)
+	}
+
+	return fmt.Sprintf(
+		"checkpoint_header block=%d distance_from_head=%d timestamp=%d hash=%s coinbase=%s extra_signers=%v",
+		checkpoint,
+		headNumber-checkpoint,
+		header.Time,
+		header.Hash().Hex(),
+		header.Coinbase.Hex(),
+		signers,
+	)
 }
 
 func parseUint64Hex(raw string) (uint64, error) {

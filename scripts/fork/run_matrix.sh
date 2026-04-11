@@ -61,6 +61,23 @@ archive_case_artifacts() {
     fi
   done
 
+  archive_log_tree() {
+    local src_dir="$1"
+    local dst_name="$2"
+    [[ -d "$src_dir" ]] || return 0
+
+    local dst_dir="$case_dir/$dst_name"
+    mkdir -p "$dst_dir"
+
+    local file rel parent
+    while IFS= read -r file; do
+      rel="${file#$src_dir/}"
+      parent="$(dirname "$dst_dir/$rel")"
+      mkdir -p "$parent"
+      cp "$file" "$dst_dir/$rel"
+    done < <(find "$src_dir" -type f -name '*.log' | sort)
+  }
+
   if [[ "$topology" == "single" ]]; then
     local single_logs=(
       "$PROJECT_ROOT/data/native-single/node.log"
@@ -71,6 +88,9 @@ archive_case_artifacts() {
         cp "$artifact" "$case_dir/$(basename "$artifact")"
       fi
     done
+    archive_log_tree "$PROJECT_ROOT/data/native-single" "native-single"
+  else
+    archive_log_tree "$PROJECT_ROOT/data/native-logs" "native-logs"
   fi
 }
 

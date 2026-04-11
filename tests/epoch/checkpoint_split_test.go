@@ -56,6 +56,7 @@ func TestZ_CheckpointTransitionSignerSplit(t *testing.T) {
 		t.Fatalf("pre-checkpoint history unexpectedly exposes new signer: got=%s want=%s", preHistoryValidator.Hex(), common.Address{}.Hex())
 	}
 
+	testkit.MarkScenarioStage("checkpoint-wait")
 	if _, err := ctx.WaitUntilHeight(rotation.EffectiveBlock, 45*time.Second); err != nil {
 		t.Fatalf("wait for checkpoint block %d failed: %v", rotation.EffectiveBlock, err)
 	}
@@ -96,6 +97,7 @@ func TestZ_CheckpointTransitionSignerSplit(t *testing.T) {
 		t.Fatalf("checkpoint history signer mapping exposed transition signer too early: got=%s want=%s", historyValidator.Hex(), common.Address{}.Hex())
 	}
 
+	testkit.MarkScenarioStage("post-checkpoint-observation")
 	if err := testkit.ActivateRotatedSignerOnSingleNode(ctx, rotation, 90*time.Second); err != nil {
 		t.Fatalf("restart node with rotated signer failed: %v", err)
 	}

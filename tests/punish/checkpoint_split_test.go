@@ -258,6 +258,7 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		t.Fatalf("pre-checkpoint history signer mapping unexpectedly exposes new signer: got=%s want=%s", preHistoryValidator.Hex(), common.Address{}.Hex())
 	}
 
+	testkit.MarkScenarioStage("checkpoint-wait")
 	if _, err := ctx.WaitUntilHeight(rotation.EffectiveBlock, 120*time.Second); err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("wait for checkpoint block %d failed: %v", rotation.EffectiveBlock, err)
@@ -364,6 +365,7 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		)
 	}
 
+	testkit.MarkScenarioStage("post-checkpoint-observation")
 	if err := ctx.WaitForBlockProgress(2, 90*time.Second); err != nil {
 		t.Fatalf("chain did not stay live after checkpoint punish path: %v", err)
 	}

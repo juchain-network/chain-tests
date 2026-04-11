@@ -82,6 +82,7 @@ func TestZ_SignerRotationNewSignerContinuesSealingAfterCheckpoint(t *testing.T) 
 		t.Fatalf("rotation effective block mismatch: got=%d want=%d", rotation.EffectiveBlock, expectedCheckpoint)
 	}
 
+	testkit.MarkScenarioStage("checkpoint-wait")
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "rotation-live-checkpoint", rotation.EffectiveBlock, 15*time.Second, testkit.LongWindowTimeout(rotation.EffectiveBlock)); err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -127,6 +128,7 @@ func TestZ_SignerRotationNewSignerContinuesSealingAfterCheckpoint(t *testing.T) 
 		t.Fatalf("chain did not stay live after restarting rotated validator: %v", err)
 	}
 
+	testkit.MarkScenarioStage("post-checkpoint-observation")
 	observationEnd := rotation.EffectiveBlock + 12
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "rotation-live-observation", observationEnd, 15*time.Second, testkit.LongWindowTimeout(12)); err != nil {
 		t.Fatalf("%v", err)

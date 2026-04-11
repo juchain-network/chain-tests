@@ -49,6 +49,8 @@ const (
 	defaultBlockPollInterval = 100 * time.Millisecond
 	minPollInterval          = 20 * time.Millisecond
 	maxPollInterval          = 2 * time.Second
+	defaultInitTimeout       = 30 * time.Second
+	defaultInitProbeTimeout  = 3 * time.Second
 )
 
 type testParams struct {
@@ -154,6 +156,116 @@ func (c *CIContext) BlockPollInterval() time.Duration {
 	return normalizePollInterval(timing.RetryPollMS, defaultBlockPollInterval)
 }
 
+func ciContextInitTimeout(cfg *config.Config) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("CI_CONTEXT_INIT_TIMEOUT_SECONDS")); raw != "" {
+		if secs, err := time.ParseDuration(raw + "s"); err == nil && secs > 0 {
+			return secs
+		}
+	}
+	if cfg == nil {
+		return defaultInitTimeout
+	}
+	base := normalizePollInterval(cfg.Test.Timing.RetryPollMS, defaultRetryPollInterval)
+	timeout := base * 120
+	if timeout < defaultInitTimeout {
+		return defaultInitTimeout
+	}
+	if timeout > 2*time.Minute {
+		return 2 * time.Minute
+	}
+	return timeout
+}
+
+func ciContextInitBackoff(cfg *config.Config) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("CI_CONTEXT_INIT_BACKOFF_MS")); raw != "" {
+		if ms, err := time.ParseDuration(raw + "ms"); err == nil && ms > 0 {
+			return normalizePollInterval(int64(ms/time.Millisecond), defaultRetryPollInterval)
+		}
+	}
+	if cfg == nil {
+		return 250 * time.Millisecond
+	}
+	base := normalizePollInterval(cfg.Test.Timing.RetryPollMS, defaultRetryPollInterval)
+	if base < 250*time.Millisecond {
+		return 250 * time.Millisecond
+	}
+	return base
+}
+
+func closeClients(clients []*ethclient.Client) {
+	for _, client := range clients {
+		if client != nil {
+			client.Close()
+		}
+	}
+}
+
+func dialRPCClientWithRetry(url string, timeout, initialBackoff time.Duration, expectedChainID *big.Int) (*ethclient.Client, *big.Int, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, nil, fmt.Errorf("empty rpc url")
+	}
+	if timeout <= 0 {
+		timeout = defaultInitTimeout
+	}
+	if initialBackoff <= 0 {
+		initialBackoff = 250 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(timeout)
+	backoff := initialBackoff
+	var lastErr error
+	attempt := 0
+
+	for {
+		attempt++
+
+		dialCtx, cancelDial := context.WithTimeout(context.Background(), defaultInitProbeTimeout)
+		client, err := ethclient.DialContext(dialCtx, url)
+		cancelDial()
+		if err == nil {
+			probeCtx, cancelProbe := context.WithTimeout(context.Background(), defaultInitProbeTimeout)
+			chainID, probeErr := client.ChainID(probeCtx)
+			cancelProbe()
+			if probeErr == nil {
+				if expectedChainID != nil && chainID.Cmp(expectedChainID) != 0 {
+					lastErr = fmt.Errorf("chain id mismatch: have=%s want=%s", chainID.String(), expectedChainID.String())
+					client.Close()
+				} else {
+					if debugEnabled() && attempt > 1 {
+						log.Info("CI context RPC stabilized after retry", "url", url, "attempt", attempt, "chainId", chainID.String())
+					}
+					return client, chainID, nil
+				}
+			} else {
+				lastErr = fmt.Errorf("chainId probe failed: %w", probeErr)
+				client.Close()
+			}
+		} else {
+			lastErr = fmt.Errorf("dial failed: %w", err)
+		}
+
+		now := time.Now()
+		if !now.Before(deadline) {
+			break
+		}
+		sleepFor := backoff
+		if remaining := time.Until(deadline); sleepFor > remaining {
+			sleepFor = remaining
+		}
+		if sleepFor > 0 {
+			time.Sleep(sleepFor)
+		}
+		if backoff < maxPollInterval {
+			backoff *= 2
+			if backoff > maxPollInterval {
+				backoff = maxPollInterval
+			}
+		}
+	}
+
+	return nil, nil, fmt.Errorf("rpc bootstrap did not stabilize for %s within %s: %w", url, timeout.Round(time.Second), lastErr)
+}
+
 type CIContext struct {
 	Config  *config.Config
 	Clients []*ethclient.Client
@@ -185,41 +297,49 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 		return nil, fmt.Errorf("no rpcs provided")
 	}
 
+	initTimeout := ciContextInitTimeout(cfg)
+	initBackoff := ciContextInitBackoff(cfg)
 	var clients []*ethclient.Client
-	for _, url := range cfg.RPCs {
-		client, err := ethclient.Dial(url)
+	var chainID *big.Int
+	for idx, url := range cfg.RPCs {
+		client, observedChainID, err := dialRPCClientWithRetry(url, initTimeout, initBackoff, chainID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to connect to %s: %w", url, err)
+			closeClients(clients)
+			return nil, fmt.Errorf("failed to bootstrap rpc[%d]=%s: %w", idx, url, err)
+		}
+		if chainID == nil {
+			chainID = observedChainID
 		}
 		clients = append(clients, client)
 	}
 
 	primaryClient := clients[0]
-	chainID, err := primaryClient.ChainID(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to get chain id: %w", err)
-	}
 
 	val, err := contracts.NewValidators(ValidatorsAddr, primaryClient)
 	if err != nil {
+		closeClients(clients)
 		return nil, err
 	}
 	pun, err := contracts.NewPunish(PunishAddr, primaryClient)
 	if err != nil {
+		closeClients(clients)
 		return nil, err
 	}
 	prop, err := contracts.NewProposal(ProposalAddr, primaryClient)
 	if err != nil {
+		closeClients(clients)
 		return nil, err
 	}
 
 	stk, err := contracts.NewStaking(StakingAddr, primaryClient)
 	if err != nil {
+		closeClients(clients)
 		return nil, err
 	}
 
 	funderKey, err := crypto.HexToECDSA(cfg.Funder.PrivateKey)
 	if err != nil {
+		closeClients(clients)
 		return nil, fmt.Errorf("invalid funder private key: %w", err)
 	}
 
@@ -231,6 +351,7 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 	for i, v := range cfg.Validators {
 		key, err := crypto.HexToECDSA(v.PrivateKey)
 		if err != nil {
+			closeClients(clients)
 			return nil, fmt.Errorf("invalid validator private key at index %d: %w", i, err)
 		}
 		addr := crypto.PubkeyToAddress(key.PublicKey)
@@ -241,6 +362,7 @@ func NewCIContext(cfg *config.Config) (*CIContext, error) {
 		if strings.TrimSpace(v.SignerPrivateKey) != "" {
 			signerKey, err = crypto.HexToECDSA(v.SignerPrivateKey)
 			if err != nil {
+				closeClients(clients)
 				return nil, fmt.Errorf("invalid signer private key at index %d: %w", i, err)
 			}
 		}

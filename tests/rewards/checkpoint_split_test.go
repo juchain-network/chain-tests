@@ -38,6 +38,7 @@ func TestZ_CheckpointRuntimeRewardsStillUseOldSigner(t *testing.T) {
 		t.Fatalf("read validator reward info before checkpoint failed: %v", err)
 	}
 
+	testkit.MarkScenarioStage("checkpoint-wait")
 	if _, err := ctx.WaitUntilHeight(rotation.EffectiveBlock, 45*time.Second); err != nil {
 		t.Fatalf("wait for checkpoint block %d failed: %v", rotation.EffectiveBlock, err)
 	}
@@ -86,6 +87,7 @@ func TestZ_CheckpointRuntimeRewardsStillUseOldSigner(t *testing.T) {
 		)
 	}
 
+	testkit.MarkScenarioStage("post-checkpoint-observation")
 	if err := testkit.ActivateRotatedSignerOnSingleNode(ctx, rotation, 90*time.Second); err != nil {
 		t.Fatalf("restart node with rotated signer failed: %v", err)
 	}

@@ -16,6 +16,7 @@ CONFIG_FILE="${2:-}"
 
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 GENESIS_FILE="$DATA_DIR/genesis.json"
+RETH_CHAIN_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "artifacts.reth_chain_file" "$DATA_DIR/reth_chain.json")")"
 CHAIN_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.chain_root" "../chain")")"
 RETH_ROOT="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "paths.reth_root" "../rchain")")"
 GETH_BINARY_CFG="$(cfg_get "$CONFIG_FILE" "binaries.geth_native" "$(cfg_get "$CONFIG_FILE" "native.geth_binary" "")")"
@@ -309,11 +310,11 @@ fi
 if [[ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -z "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]] || [[ -z "$UPGRADE_OVERRIDE_POSA_VALIDATORS" && -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
   die "fork.override.posa_validators and fork.override.posa_signers must be provided together"
 fi
-if [[ "$NODE_IMPL" == "reth" ]] && [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" || -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" || -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
-  die "upgrade override currently supports geth runtime only"
-fi
 
 [[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
+if [[ "$NODE_IMPL" == "reth" && ! -f "$RETH_CHAIN_FILE" ]]; then
+  RETH_CHAIN_FILE="$GENESIS_FILE"
+fi
 [[ -d "$NODE_DATADIR" ]] || die "missing node data dir: $NODE_DATADIR (run make init first)"
 [[ -f "$NODE_KEY" ]] || die "missing node key: $NODE_KEY"
 [[ -f "$VALIDATOR_KEY" ]] || die "missing validator key: $VALIDATOR_KEY"
@@ -343,8 +344,8 @@ init_geth() {
 init_reth() {
   [[ -n "$RETH_BINARY" ]] || die "reth binary not found"
   if [[ ! -d "$NODE_DATADIR/db" ]]; then
-    CONGRESS_GENESIS="$GENESIS_FILE" \
-    "$RETH_BINARY" init --chain "$GENESIS_FILE" --datadir "$NODE_DATADIR" \
+    CONGRESS_GENESIS="$RETH_CHAIN_FILE" \
+    "$RETH_BINARY" init --chain "$RETH_CHAIN_FILE" --datadir "$NODE_DATADIR" \
       --log.file.directory "$SINGLE_DIR" >/dev/null
   fi
 }
@@ -455,7 +456,7 @@ start_geth() {
 start_reth() {
   local args=(
     node
-    --chain "$GENESIS_FILE"
+    --chain "$RETH_CHAIN_FILE"
     --datadir "$NODE_DATADIR"
     --http
     --http.addr "$RPC_HOST"
@@ -484,7 +485,7 @@ start_reth() {
   BLACKLIST_MODE="$BLACKLIST_MODE" \
   BLACKLIST_ALERT_FAIL_OPEN="$BLACKLIST_ALERT_FAIL_OPEN" \
   BLACKLIST_REFRESH_INTERVAL="$BLACKLIST_REFRESH_SECONDS" \
-  CONGRESS_GENESIS="$GENESIS_FILE" \
+  CONGRESS_GENESIS="$RETH_CHAIN_FILE" \
   nohup "$RETH_BINARY" "${args[@]}" >"$LOG_FILE" 2>&1 &
   echo "$!" > "$PID_FILE"
 }

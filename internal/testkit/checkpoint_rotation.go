@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -290,6 +291,123 @@ func runtimeSingleSignerFiles(c *testctx.CIContext) (string, string, error) {
 	return keyFile, addrFile, nil
 }
 
+func runtimeNodeImpl(c *testctx.CIContext, idx int) string {
+	if c == nil || c.Config == nil {
+		return ""
+	}
+	if idx >= 0 && idx < len(c.Config.RuntimeNodes) {
+		if impl := strings.ToLower(strings.TrimSpace(c.Config.RuntimeNodes[idx].Impl)); impl != "" {
+			return impl
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(c.Config.Runtime.Impl))
+}
+
+func runtimeNodeDir(c *testctx.CIContext, idx int) (string, error) {
+	if c == nil || c.Config == nil {
+		return "", fmt.Errorf("context not initialized")
+	}
+	if strings.TrimSpace(c.Config.SourcePath) == "" {
+		return "", fmt.Errorf("config source path is empty")
+	}
+	return filepath.Join(filepath.Dir(c.Config.SourcePath), fmt.Sprintf("node%d", idx)), nil
+}
+
+func runtimeNodePasswordFile(c *testctx.CIContext, idx int, nodeDir string) string {
+	if c != nil && c.Config != nil && idx >= 0 && idx < len(c.Config.RuntimeNodes) {
+		if passFile := strings.TrimSpace(c.Config.RuntimeNodes[idx].PasswordFile); passFile != "" {
+			if !filepath.IsAbs(passFile) {
+				return filepath.Clean(filepath.Join(filepath.Dir(c.Config.SourcePath), passFile))
+			}
+			return passFile
+		}
+	}
+	return filepath.Join(nodeDir, "password.txt")
+}
+
+func replaceNodeKeystore(nodeDir string, passFile string, key *ecdsa.PrivateKey) (string, common.Address, error) {
+	if key == nil {
+		return "", common.Address{}, fmt.Errorf("nil signer key")
+	}
+	if strings.TrimSpace(passFile) == "" {
+		passFile = filepath.Join(nodeDir, "password.txt")
+	}
+
+	passwordBytes, err := os.ReadFile(passFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			passwordBytes = []byte("123456\n")
+			if err := os.WriteFile(passFile, passwordBytes, 0o600); err != nil {
+				return "", common.Address{}, fmt.Errorf("write validator password file failed: %w", err)
+			}
+		} else {
+			return "", common.Address{}, fmt.Errorf("read validator password file failed: %w", err)
+		}
+	}
+	password := strings.TrimRight(string(passwordBytes), "\r\n")
+	if password == "" {
+		password = "123456"
+	}
+
+	keystoreDir := filepath.Join(nodeDir, "keystore")
+	if err := os.MkdirAll(keystoreDir, 0o755); err != nil {
+		return "", common.Address{}, fmt.Errorf("create keystore dir failed: %w", err)
+	}
+	entries, err := os.ReadDir(keystoreDir)
+	if err != nil {
+		return "", common.Address{}, fmt.Errorf("read keystore dir failed: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := os.Remove(filepath.Join(keystoreDir, entry.Name())); err != nil {
+			return "", common.Address{}, fmt.Errorf("remove old keystore file failed: %w", err)
+		}
+	}
+
+	ks := keystore.NewKeyStore(keystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
+	acc, err := ks.ImportECDSA(key, password)
+	if err != nil {
+		return "", common.Address{}, fmt.Errorf("import rotated signer into keystore failed: %w", err)
+	}
+
+	addrFile := filepath.Join(nodeDir, "keystore.addr")
+	if err := os.WriteFile(addrFile, []byte(acc.Address.Hex()+"\n"), 0o644); err != nil {
+		return "", common.Address{}, fmt.Errorf("write keystore address file failed: %w", err)
+	}
+	return filepath.Clean(acc.URL.Path), acc.Address, nil
+}
+
+func writeRotatedSignerArtifacts(c *testctx.CIContext, idx int, keyFile string, addrFile string, key *ecdsa.PrivateKey) (common.Address, string, string, error) {
+	if key == nil {
+		return common.Address{}, "", "", fmt.Errorf("nil signer key")
+	}
+	keyHex := hex.EncodeToString(crypto.FromECDSA(key))
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	if err := os.WriteFile(keyFile, []byte(keyHex), 0o600); err != nil {
+		return common.Address{}, "", "", fmt.Errorf("write runtime signer key failed: %w", err)
+	}
+	if err := os.WriteFile(addrFile, []byte(addr.Hex()+"\n"), 0o644); err != nil {
+		return common.Address{}, "", "", fmt.Errorf("write runtime signer addr failed: %w", err)
+	}
+
+	if runtimeNodeImpl(c, idx) != "reth" {
+		return addr, "", "", nil
+	}
+
+	nodeDir, err := runtimeNodeDir(c, idx)
+	if err != nil {
+		return common.Address{}, "", "", err
+	}
+	passFile := runtimeNodePasswordFile(c, idx, nodeDir)
+	keystorePath, _, err := replaceNodeKeystore(nodeDir, passFile, key)
+	if err != nil {
+		return common.Address{}, "", "", err
+	}
+	return addr, keystorePath, passFile, nil
+}
+
 func runtimeNodeForValidator(c *testctx.CIContext, validator common.Address) (int, string, string, error) {
 	if c == nil || c.Config == nil {
 		return 0, "", "", fmt.Errorf("context not initialized")
@@ -319,12 +437,8 @@ func ActivateRotatedSignerOnSingleNode(c *testctx.CIContext, rotation *SignerRot
 		return err
 	}
 
-	keyHex := hex.EncodeToString(crypto.FromECDSA(rotation.NewSignerKey))
-	if err := os.WriteFile(keyFile, []byte(keyHex), 0o600); err != nil {
-		return fmt.Errorf("write runtime signer key failed: %w", err)
-	}
-	if err := os.WriteFile(addrFile, []byte(rotation.NewSigner.Hex()+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write runtime signer addr failed: %w", err)
+	if _, _, _, err := writeRotatedSignerArtifacts(c, 0, keyFile, addrFile, rotation.NewSignerKey); err != nil {
+		return err
 	}
 	if err := restartSingleNodeRuntime(c, timeout); err != nil {
 		return err
@@ -347,21 +461,24 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 	if err != nil {
 		return err
 	}
-	keyHex := hex.EncodeToString(crypto.FromECDSA(key))
-	addr := crypto.PubkeyToAddress(key.PublicKey)
-	if err := os.WriteFile(keyFile, []byte(keyHex), 0o600); err != nil {
-		return fmt.Errorf("write runtime signer key failed: %w", err)
-	}
-	if err := os.WriteFile(addrFile, []byte(addr.Hex()+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write runtime signer addr failed: %w", err)
+	addr, keystorePath, passFile, err := writeRotatedSignerArtifacts(c, idx, keyFile, addrFile, key)
+	if err != nil {
+		return err
 	}
 
 	repoRoot := filepath.Dir(filepath.Dir(c.Config.SourcePath))
 	nativeEnvFile := filepath.Join(repoRoot, "data", "native", ".env")
-	if err := updateEnvFile(nativeEnvFile, map[string]string{
+	envUpdates := map[string]string{
 		fmt.Sprintf("VALIDATOR%d_ADDRESS", idx+1):          addr.Hex(),
 		fmt.Sprintf("VALIDATOR%d_KEYSTORE_ADDRESS", idx+1): addr.Hex(),
-	}); err != nil {
+	}
+	if keystorePath != "" {
+		envUpdates[fmt.Sprintf("VALIDATOR%d_KEYSTORE_PATH", idx+1)] = keystorePath
+	}
+	if passFile != "" {
+		envUpdates[fmt.Sprintf("VALIDATOR%d_PASSWORD", idx+1)] = passFile
+	}
+	if err := updateEnvFile(nativeEnvFile, envUpdates); err != nil {
 		return fmt.Errorf("update native env for validator restart failed: %w", err)
 	}
 
@@ -392,6 +509,12 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 		fmt.Sprintf("VALIDATOR%d_ADDRESS=%s", idx+1, addr.Hex()),
 		fmt.Sprintf("VALIDATOR%d_KEYSTORE_ADDRESS=%s", idx+1, addr.Hex()),
 	)
+	if keystorePath != "" {
+		envForPM2 = append(envForPM2, fmt.Sprintf("VALIDATOR%d_KEYSTORE_PATH=%s", idx+1, keystorePath))
+	}
+	if passFile != "" {
+		envForPM2 = append(envForPM2, fmt.Sprintf("VALIDATOR%d_PASSWORD=%s", idx+1, passFile))
+	}
 
 	// `pm2 restart <name>` keeps the previously materialized argv, which may still
 	// contain the old signer address. Delete + start (via ecosystem) forces argv

@@ -120,6 +120,9 @@ type RuntimeNode struct {
 	SignerKey        string `yaml:"signer_key"`
 	SignerAddress    string `yaml:"signer_address"`
 	FeeAddress       string `yaml:"fee_address"`
+	KeystoreFile     string `yaml:"keystore_file"`
+	KeystoreAddress  string `yaml:"keystore_address"`
+	PasswordFile     string `yaml:"password_file"`
 }
 
 func LoadConfig(path string) (*Config, error) {

@@ -604,14 +604,6 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     RUNTIME_NODE_BINARIES+=("$node_binary")
 done
 
-if { [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ] || [ -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS_CSV" ] || [ -n "$UPGRADE_OVERRIDE_POSA_SIGNERS_CSV" ]; }; then
-    for node_impl in "${RUNTIME_NODE_IMPLS[@]}"; do
-        if [ "$node_impl" = "reth" ]; then
-            die "upgrade override currently supports geth runtime only; reth node detected"
-        fi
-    done
-fi
-
 # We generate for 0..3 (4 nodes). 0-2 are validators, 3 is sync.
 for i in $(seq 0 $((NUM_NODES-1))); do
     # Create node directory
@@ -859,6 +851,27 @@ if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]; then
     esac
 fi
 
+RETH_CHAIN_FILE="$DATA_DIR/reth_chain.json"
+jq \
+  --arg override_posa_time "${UPGRADE_OVERRIDE_POSA_TIME:-}" \
+  --argjson override_posa_validators "$UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON" \
+  --argjson override_posa_signers "$UPGRADE_OVERRIDE_POSA_SIGNERS_JSON" \
+  '
+  if ($override_posa_time | length) > 0 then
+    .config.posaTime = ($override_posa_time | tonumber)
+  else
+    .
+  end
+  | if ($override_posa_validators | length) > 0 then
+      .config.congress.initialValidators = $override_posa_validators
+      | .config.congress.initialSigners = $override_posa_signers
+      | .config.initialValidators = $override_posa_validators
+      | .config.initialSigners = $override_posa_signers
+    else
+      .
+    end
+  ' "$DATA_DIR/genesis.json" > "$RETH_CHAIN_FILE"
+
 python3 - "$DATA_DIR/genesis.json" "$BOOTSTRAP_SIGNERS_JSON" "$BOOTSTRAP_VALIDATORS_JSON" <<'PY'
 import json
 import sys
@@ -1039,6 +1052,9 @@ EOF
     signer_key: "$DATA_DIR/node$i/signer.key"
     signer_address: "${SIGNER_ADDRS[$i]}"
     fee_address: "${FEE_ADDRS[$i]}"
+    keystore_file: "${VAL_KEYSTORE_FILES[$i]}"
+    keystore_address: "${VAL_KEYSTORE_ADDRS[$i]}"
+    password_file: "$DATA_DIR/node$i/password.txt"
 EOF
     fi
 done
@@ -1144,6 +1160,7 @@ native:
 
 artifacts:
   genesis_file: "$DATA_DIR/genesis.json"
+  reth_chain_file: "$RETH_CHAIN_FILE"
   test_config_file: "$DATA_DIR/test_config.yaml"
   runtime_nodes_file: "$DATA_DIR/runtime_nodes.yaml"
   runtime_session_json: "$SESSION_JSON_FILE"
@@ -1193,6 +1210,7 @@ jq -n \
   --arg native_pm2_namespace "$(cfg_get "$CONFIG_FILE" "native.pm2_namespace" "ju-chain")" \
   --arg native_external_rpc "$(cfg_get "$CONFIG_FILE" "native.external_rpc" "$PRIMARY_RPC")" \
   --arg genesis_file "$DATA_DIR/genesis.json" \
+  --arg reth_chain_file "$RETH_CHAIN_FILE" \
   --arg test_config_file "$DATA_DIR/test_config.yaml" \
   --arg runtime_nodes_file "$DATA_DIR/runtime_nodes.yaml" \
   --arg runtime_session_json "$SESSION_JSON_FILE" \
@@ -1291,6 +1309,7 @@ jq -n \
     },
     artifacts: {
       genesis_file: $genesis_file,
+      reth_chain_file: $reth_chain_file,
       test_config_file: $test_config_file,
       runtime_nodes_file: $runtime_nodes_file,
       runtime_session_json: $runtime_session_json

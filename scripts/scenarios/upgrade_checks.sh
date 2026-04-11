@@ -90,6 +90,50 @@ if ! grep -q "^UPGRADE_OVERRIDE_POSA_TIME=$override_time$" "$ENV_FILE"; then
   die "native env missing override posa time"
 fi
 
+runtime_impl="$(cfg_get "$SESSION_FILE" "runtime.impl" "")"
+if [[ "$runtime_impl" == "reth" ]]; then
+  reth_chain_file="$(cfg_get "$SESSION_FILE" "artifacts.reth_chain_file" "$ROOT_DIR/data/reth_chain.json")"
+  shanghai_time="$(cfg_get "$SESSION_FILE" "fork.schedule.shanghai_time" "0")"
+  cancun_time="$(cfg_get "$SESSION_FILE" "fork.schedule.cancun_time" "0")"
+  fix_header_time="$(cfg_get "$SESSION_FILE" "fork.schedule.fix_header_time" "0")"
+  posa_time="$(cfg_get "$SESSION_FILE" "fork.schedule.posa_time" "0")"
+  python3 - "$reth_chain_file" "$override_time" "$override_validator" "$runtime_signer" "$shanghai_time" "$cancun_time" "$fix_header_time" "$posa_time" <<'PY'
+import json
+import sys
+
+(
+    chain_file,
+    override_time,
+    override_validator,
+    runtime_signer,
+    shanghai_time,
+    cancun_time,
+    fix_header_time,
+    posa_time,
+) = sys.argv[1:]
+with open(chain_file, "r", encoding="utf-8") as fh:
+    genesis = json.load(fh)
+config = genesis.get("config") or {}
+congress = config.get("congress") or {}
+expected_schedule = {
+    "shanghaiTime": int(shanghai_time),
+    "cancunTime": int(cancun_time),
+    "fixHeaderTime": int(fix_header_time),
+    "posaTime": int(posa_time),
+}
+for field, expected in expected_schedule.items():
+    actual = int(config.get(field) or 0)
+    if actual != expected:
+        raise SystemExit(f"reth chain {field} mismatch: {actual} != {expected}")
+if int(config.get("posaTime") or 0) != int(override_time):
+    raise SystemExit(f"reth chain posaTime mismatch: {config.get('posaTime')} != {override_time}")
+if (congress.get("initialValidators") or []) != [override_validator]:
+    raise SystemExit("reth chain congress.initialValidators mismatch")
+if (congress.get("initialSigners") or []) != [runtime_signer]:
+    raise SystemExit("reth chain congress.initialSigners mismatch")
+PY
+fi
+
 bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
 bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
 bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"

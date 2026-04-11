@@ -8,6 +8,7 @@ source "$SCRIPT_DIR/../network/lib.sh"
 CONFIG_FILE="$(resolve_config_file "${1:-${TEST_ENV_CONFIG:-}}")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 GENESIS_FILE="$DATA_DIR/genesis.json"
+RETH_CHAIN_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "artifacts.reth_chain_file" "$DATA_DIR/reth_chain.json")")"
 ENV_FILE="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 LOG_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.log_dir" "./data/native-logs")")"
 
@@ -243,14 +244,6 @@ for ((i=0; i<NODE_COUNT; i++)); do
   fi
 done
 
-if [[ -n "$UPGRADE_OVERRIDE_POSA_TIME" || -n "$UPGRADE_OVERRIDE_POSA_VALIDATORS" || -n "$UPGRADE_OVERRIDE_POSA_SIGNERS" ]]; then
-  for impl in "${NODE_IMPLS[@]}"; do
-    if [[ "$impl" == "reth" ]]; then
-      die "upgrade override currently supports geth runtime only; reth node detected"
-    fi
-  done
-fi
-
 if coverage_enabled && $need_reth; then
   die "CHAIN_COVERAGE=1 only supports native geth; reth or mixed runtime detected"
 fi
@@ -290,6 +283,9 @@ for ((i=0; i<NODE_COUNT; i++)); do
 done
 
 [[ -f "$GENESIS_FILE" ]] || die "missing genesis file: $GENESIS_FILE (run make init first)"
+if $need_reth && [[ ! -f "$RETH_CHAIN_FILE" ]]; then
+  RETH_CHAIN_FILE="$GENESIS_FILE"
+fi
 
 mkdir -p "$(dirname "$ENV_FILE")" "$LOG_DIR"
 
@@ -309,8 +305,8 @@ init_reth_node() {
   local binary="$1"
   local datadir="$2"
   if [[ ! -d "$datadir/db" ]]; then
-    CONGRESS_GENESIS="$GENESIS_FILE" \
-    "$binary" init --chain "$GENESIS_FILE" --datadir "$datadir" \
+    CONGRESS_GENESIS="$RETH_CHAIN_FILE" \
+    "$binary" init --chain "$RETH_CHAIN_FILE" --datadir "$datadir" \
       --log.file.directory "$LOG_DIR" >/dev/null
   fi
 }
@@ -397,6 +393,7 @@ cat > "$ENV_FILE" <<EOF_ENV
 GETH_BINARY=$GETH_BINARY
 RETH_BINARY=$RETH_BINARY
 GENESIS_FILE=$GENESIS_FILE
+RETH_CHAIN_FILE=$RETH_CHAIN_FILE
 CONGRESS_GENESIS=$GENESIS_FILE
 NETWORK_ID=$NETWORK_ID
 BOOTNODES=$BOOTNODES

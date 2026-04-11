@@ -32,6 +32,7 @@ const historyState = process.env.HISTORY_STATE || '';
 const validatorAuthMode = (process.env.VALIDATOR_AUTH_MODE || 'auto').toLowerCase();
 const defaultImpl = (process.env.DEFAULT_RUNTIME_IMPL || 'geth').toLowerCase();
 const genesisFile = process.env.GENESIS_FILE;
+const rethChainFile = process.env.RETH_CHAIN_FILE || genesisFile;
 const rethTrustedOnly = (process.env.RETH_TRUSTED_ONLY || 'true').toLowerCase();
 const upgradeOverridePosaTime = (process.env.UPGRADE_OVERRIDE_POSA_TIME || '').trim();
 const upgradeOverridePosaValidators = (process.env.UPGRADE_OVERRIDE_POSA_VALIDATORS || '').trim();
@@ -191,15 +192,12 @@ function resolveRethValidatorAuthArgs(index) {
 }
 
 function rethCommonArgs(opts) {
-  if (!genesisFile) {
-    throw new Error('GENESIS_FILE is required for reth runtime');
-  }
-  if (upgradeOverridePosaTime || upgradeOverridePosaValidators || upgradeOverridePosaSigners) {
-    throw new Error('upgrade override currently supports geth runtime only');
+  if (!rethChainFile) {
+    throw new Error('RETH_CHAIN_FILE or GENESIS_FILE is required for reth runtime');
   }
   const args = [
     'node',
-    '--chain', genesisFile,
+    '--chain', rethChainFile,
     '--datadir', opts.datadir,
     '--http',
     '--http.addr', '0.0.0.0',

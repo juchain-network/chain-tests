@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$SCRIPT_DIR/../network/lib.sh"
+# shellcheck source=scripts/scenarios/lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
@@ -26,7 +28,7 @@ hardhat_addr() {
 
 cleanup() {
   if [[ -f "$SESSION_FILE" ]]; then
-    bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
+    scenario_network down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -134,9 +136,9 @@ if (congress.get("initialSigners") or []) != [runtime_signer]:
 PY
 fi
 
-bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"
+scenario_network init
+scenario_network up
+scenario_network ready
 
 echo "[scenario/upgrade] verify migration mapping after fork"
 (

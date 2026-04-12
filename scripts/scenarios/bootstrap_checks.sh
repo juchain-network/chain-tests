@@ -4,13 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$SCRIPT_DIR/../network/lib.sh"
+# shellcheck source=scripts/scenarios/lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
 
 cleanup() {
   if [[ -f "$SESSION_FILE" ]]; then
-    bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
+    scenario_network down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -129,9 +131,9 @@ TEST_ENV_CONFIG="$CONFIG_FILE" \
 TOPOLOGY=single \
 BOOTSTRAP_SIGNER_MODE=separate \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
-bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"
+scenario_network init
+scenario_network up
+scenario_network ready
 
 RPC_URL="$(cfg_get "$SESSION_FILE" "native.external_rpc" "http://localhost:18545")"
 RESP="$(curl -s --max-time 5 -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' "$RPC_URL" || true)"

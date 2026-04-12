@@ -110,6 +110,112 @@ wait_for_all_rpcs_ready() {
   done < <(rpc_urls_for_topology)
 }
 
+validator_rpc_urls() {
+  local idx port
+  for ((idx=1; idx<=VALIDATOR_COUNT; idx++)); do
+    port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator${idx}_http" "")"
+    [[ -n "$port" ]] || continue
+    printf 'validator%d http://localhost:%s\n' "$idx" "$port"
+  done
+}
+
+rpc_hex_result() {
+  local rpc_url="$1"
+  local method="$2"
+  local response
+  response="$(curl -s --max-time 3 \
+    -H 'Content-Type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":[]}" \
+    "$rpc_url" || true)"
+
+  if [[ "$response" =~ \"result\":\"(0x[0-9a-fA-F]+)\" ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+hex_to_dec() {
+  local raw="${1:-}"
+  raw="${raw#0x}"
+  if [[ -z "$raw" ]]; then
+    echo 0
+    return 0
+  fi
+  printf '%d\n' "$((16#$raw))"
+}
+
+wait_for_validator_topology_converged() {
+  local timeout="${1:-$WAIT_TIMEOUT}"
+  local required_rounds="${RETH_TOPOLOGY_STABLE_ROUNDS:-3}"
+  local min_peers="${RETH_MIN_VALIDATOR_PEERS:-1}"
+  local max_height_delta="${RETH_MAX_VALIDATOR_HEIGHT_DELTA:-2}"
+  local deadline=$((SECONDS + timeout))
+  local stable_rounds=0
+  local last_summary=""
+  local validator_entries=()
+
+  mapfile -t validator_entries < <(validator_rpc_urls)
+  if (( ${#validator_entries[@]} <= 1 )); then
+    return 0
+  fi
+
+  log "waiting for validator topology convergence rounds=${required_rounds} timeout=${timeout}s"
+  while (( SECONDS <= deadline )); do
+    local all_ok=1
+    local min_height=-1
+    local max_height=-1
+    local summary_parts=()
+    local entry name rpc_url chain_id block_hex peer_hex block_dec peer_dec
+
+    for entry in "${validator_entries[@]}"; do
+      name="${entry%% *}"
+      rpc_url="${entry#* }"
+      chain_id="$(rpc_hex_result "$rpc_url" "eth_chainId" || true)"
+      block_hex="$(rpc_hex_result "$rpc_url" "eth_blockNumber" || true)"
+      peer_hex="$(rpc_hex_result "$rpc_url" "net_peerCount" || true)"
+      if [[ -z "$chain_id" || -z "$block_hex" || -z "$peer_hex" ]]; then
+        all_ok=0
+        summary_parts+=("${name}:unready")
+        continue
+      fi
+
+      block_dec="$(hex_to_dec "$block_hex")"
+      peer_dec="$(hex_to_dec "$peer_hex")"
+      summary_parts+=("${name}:block=${block_dec}:peers=${peer_dec}")
+      if (( peer_dec < min_peers )); then
+        all_ok=0
+      fi
+      if (( min_height < 0 || block_dec < min_height )); then
+        min_height=$block_dec
+      fi
+      if (( max_height < 0 || block_dec > max_height )); then
+        max_height=$block_dec
+      fi
+    done
+
+    if (( min_height >= 0 && max_height >= 0 && max_height - min_height > max_height_delta )); then
+      all_ok=0
+      summary_parts+=("height_delta=$((max_height - min_height))")
+    fi
+
+    last_summary="$(IFS=' '; echo "${summary_parts[*]}")"
+    if (( all_ok == 1 )); then
+      stable_rounds=$((stable_rounds + 1))
+      if (( stable_rounds >= required_rounds )); then
+        log "validator topology converged ${last_summary}"
+        return 0
+      fi
+    else
+      stable_rounds=0
+    fi
+
+    sleep 1
+  done
+
+  die "validator topology did not converge after ${timeout}s: ${last_summary}"
+}
+
 wait_for_all_rpc_ports_released() {
   local timeout="${1:-30}"
   local deadline=$((SECONDS + timeout))
@@ -321,13 +427,6 @@ all_nodes_reth() {
 }
 
 pm2_start_all() {
-  if all_nodes_reth; then
-    log "pm2 start using $ECOSYSTEM_FILE (all-reth parallel startup)"
-    PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --update-env >/dev/null
-    wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
-    return 0
-  fi
-
   log "pm2 start using $ECOSYSTEM_FILE (staged startup)"
 
   if [[ ${#PM2_PROCS[@]} -eq 0 ]]; then
@@ -350,6 +449,9 @@ pm2_start_all() {
   local idx
   for ((idx=1; idx<${#PM2_PROCS[@]}; idx++)); do
     PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[$idx]}" --update-env >/dev/null
+    if (( idx < VALIDATOR_COUNT )); then
+      wait_for_rpc_ready "http://localhost:$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator$((idx+1))_http" "")" "$WAIT_TIMEOUT"
+    fi
     sleep 1
   done
 }
@@ -414,6 +516,10 @@ case "$ACTION" in
     [[ -f "$ENV_FILE" ]] || die "native env file not found: $ENV_FILE. Run 'make init' first."
     pm2_start_all
     pm2_wait_all_online
+    wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
+    if all_nodes_reth; then
+      wait_for_validator_topology_converged "$WAIT_TIMEOUT"
+    fi
     ;;
   down)
     stop_with_optional_coverage_flush
@@ -424,9 +530,15 @@ case "$ACTION" in
     pm2_start_all
     pm2_wait_all_online
     wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
+    if all_nodes_reth; then
+      wait_for_validator_topology_converged "$WAIT_TIMEOUT"
+    fi
     ;;
   ready)
     wait_for_all_rpcs_ready "$WAIT_TIMEOUT"
+    if all_nodes_reth; then
+      wait_for_validator_topology_converged "$WAIT_TIMEOUT"
+    fi
     ;;
   logs)
     pm2_logs

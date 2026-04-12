@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$SCRIPT_DIR/../network/lib.sh"
+# shellcheck source=scripts/scenarios/lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
@@ -26,7 +28,7 @@ hardhat_addr() {
 
 cleanup() {
   if [[ -f "$SESSION_FILE" ]]; then
-    bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
+    scenario_network down >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -85,11 +87,11 @@ TOPOLOGY=single \
 BOOTSTRAP_SIGNER_MODE=separate \
 BOOTSTRAP_VALIDATOR_BALANCE_WEI=0 \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
-bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
+scenario_network init
 
 RPC_URL="$(cfg_get "$SESSION_FILE" "native.external_rpc" "http://localhost:18545")"
-if bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"; then
-  if bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"; then
+if scenario_network up; then
+  if scenario_network ready; then
     stagnant=true
     for _ in $(seq 1 12); do
       block_hex="$(block_number_hex "$RPC_URL")"
@@ -104,7 +106,7 @@ if bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"; then
     fi
   fi
 fi
-bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE"
+scenario_network down
 
 echo "[scenario/negative] underfunded upgrade should defer migration and keep chain live"
 underfunded_validator="$(gen_addr "underfunded-upgrade-validator")"
@@ -123,14 +125,14 @@ UPGRADE_OVERRIDE_POSA_TIME="$underfunded_time" \
 UPGRADE_OVERRIDE_POSA_VALIDATORS="$underfunded_validator" \
 UPGRADE_OVERRIDE_POSA_SIGNERS="$runtime_signer" \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
-bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"
+scenario_network init
+scenario_network up
+scenario_network ready
 (
   cd "$ROOT_DIR"
   EXPECT_UPGRADE_DEFER=1 go test ./tests/epoch -run TestZ_UnderfundedUpgradeDefersMigration -count=1
 )
-bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE"
+scenario_network down
 
 echo "[scenario/negative] override drift on restart should be rejected"
 stable_validator="$(gen_addr "stable-upgrade-validator")"
@@ -145,14 +147,14 @@ UPGRADE_OVERRIDE_POSA_TIME="$stable_time" \
 UPGRADE_OVERRIDE_POSA_VALIDATORS="$stable_validator" \
 UPGRADE_OVERRIDE_POSA_SIGNERS="$runtime_signer" \
 bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
-bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
-bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"
+scenario_network init
+scenario_network up
+scenario_network ready
 (
   cd "$ROOT_DIR"
   go test ./tests/epoch -run TestZ_UpgradeOverrideBootstrapMapping -count=1
 )
-bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE"
+scenario_network down
 
 drift_validator="$(gen_addr "drift-upgrade-validator")"
 if env \

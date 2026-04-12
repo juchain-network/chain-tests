@@ -38,9 +38,9 @@ run_case() {
   TEST_NETWORK_EPOCH="$SCENARIO_EPOCH" \
   bash "$ROOT_DIR/scripts/gen_network_config.sh" >/dev/null
 
-  bash "$ROOT_DIR/scripts/network/native.sh" init "$SESSION_FILE"
-  bash "$ROOT_DIR/scripts/network/native.sh" up "$SESSION_FILE"
-  bash "$ROOT_DIR/scripts/network/native.sh" ready "$SESSION_FILE"
+  scenario_network init
+  scenario_network up
+  scenario_network ready
   wait_for_scenario_rpc_stability "$ROOT_DIR/data/test_config.yaml" "$SCENARIO_BOOTSTRAP_TIMEOUT" "$SCENARIO_BOOTSTRAP_STABLE_ROUNDS"
 
   scenario_mark_stage "checkpoint-wait"
@@ -50,7 +50,7 @@ run_case() {
   )
 
   scenario_mark_stage "completed"
-  bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE"
+  scenario_network down
 }
 
 run_case ./tests/rewards TestZ_CheckpointRuntimeRewardsStillUseOldSigner single

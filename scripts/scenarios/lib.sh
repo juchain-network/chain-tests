@@ -58,6 +58,23 @@ scenario_log() {
   printf '[scenario/%s] %s\n' "${SCENARIO_NAME:-unknown}" "$*"
 }
 
+scenario_network() {
+  local action="${1:?scenario network action required}"
+  local config_file="${2:-${CONFIG_FILE:-${TEST_ENV_CONFIG:-}}}"
+  local session_file="${3:-${SESSION_FILE:-${RUNTIME_SESSION_FILE:-}}}"
+  local effective_config="$config_file"
+
+  [[ -n "$config_file" ]] || die "scenario network action '$action' requires CONFIG_FILE or TEST_ENV_CONFIG"
+
+  if [[ "$action" == "init" && -n "$session_file" && -f "$session_file" ]]; then
+    effective_config="$session_file"
+  fi
+
+  TEST_ENV_CONFIG="$effective_config" \
+  RUNTIME_SESSION_FILE="$session_file" \
+  bash "$ROOT_DIR/scripts/network/dispatch.sh" "$action"
+}
+
 archive_log_tree() {
   local src_dir="$1"
   local dst_dir="$2"
@@ -117,7 +134,7 @@ scenario_cleanup() {
   fi
 
   if [[ -n "${SESSION_FILE:-}" && -f "${SESSION_FILE:-}" ]]; then
-    bash "$ROOT_DIR/scripts/network/native.sh" down "$SESSION_FILE" >/dev/null 2>&1 || true
+    scenario_network down >/dev/null 2>&1 || true
   fi
 
   return "$rc"
@@ -127,29 +144,200 @@ scenario_rpc_urls() {
   local config_file="${1:?config file required}"
   python3 - "$config_file" <<'PY'
 import sys
-import yaml
 
 cfg_path = sys.argv[1]
+entries = []
+seen = set()
+section = None
+current_node = None
+generic_rpcs = []
+has_specific_rpc = False
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def add(name, role, url):
+    global has_specific_rpc
+    url = strip_quotes(url or "")
+    if not url or url in seen:
+        return
+    if role in ("validator", "sync"):
+        has_specific_rpc = True
+    entries.append(((name or url).strip(), (role or "unknown").strip(), url))
+    seen.add(url)
+
+def flush_node():
+    global current_node
+    if current_node and current_node.get("url"):
+        add(current_node.get("name"), current_node.get("role"), current_node.get("url"))
+    current_node = None
+
 with open(cfg_path, "r", encoding="utf-8") as fh:
-    cfg = yaml.safe_load(fh) or {}
+    for raw in fh:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
 
-urls = []
+        if not line.startswith(" "):
+            flush_node()
+            if stripped.startswith("validator_rpcs:"):
+                section = "validator_rpcs"
+            elif stripped.startswith("sync_rpc:"):
+                section = "sync_rpc"
+                _, value = stripped.split(":", 1)
+                add("sync1", "sync", value)
+                section = None
+            elif stripped.startswith("node_rpcs:"):
+                section = "node_rpcs"
+            elif stripped.startswith("rpcs:"):
+                section = "rpcs"
+            else:
+                section = None
+            continue
 
-def add(url):
-    url = (url or "").strip()
-    if url and url not in urls:
-        urls.append(url)
+        if section in {"validator_rpcs", "rpcs"}:
+            if stripped.startswith("- "):
+                url = stripped[2:].strip()
+                if section == "validator_rpcs":
+                    name = f"validator{sum(1 for _, r, _ in entries if r == 'validator') + 1}"
+                    add(name, "validator", url)
+                else:
+                    generic_rpcs.append(url)
+            continue
 
-for url in cfg.get("validator_rpcs") or []:
-    add(url)
-add(cfg.get("sync_rpc"))
-for item in cfg.get("node_rpcs") or []:
-    add((item or {}).get("url"))
-for url in cfg.get("rpcs") or []:
-    add(url)
+        if section == "node_rpcs":
+            if stripped.startswith("- "):
+                flush_node()
+                current_node = {"name": "", "role": "unknown", "url": ""}
+                remainder = stripped[2:].strip()
+                if remainder and ":" in remainder:
+                    key, value = remainder.split(":", 1)
+                    current_node[key.strip()] = strip_quotes(value)
+                continue
 
-for url in urls:
+            if current_node and ":" in stripped:
+                key, value = stripped.split(":", 1)
+                current_node[key.strip()] = strip_quotes(value)
+
+flush_node()
+
+if not has_specific_rpc:
+    for url in generic_rpcs:
+        add(None, "rpc", url)
+
+for _, _, url in entries:
     print(url)
+PY
+}
+
+scenario_rpc_entries() {
+  local config_file="${1:?config file required}"
+  python3 - "$config_file" <<'PY'
+import sys
+
+cfg_path = sys.argv[1]
+entries = []
+seen = set()
+section = None
+current_node = None
+validator_idx = 0
+rpc_idx = 0
+generic_rpcs = []
+has_specific_rpc = False
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def add(name, role, url):
+    global validator_idx, rpc_idx, has_specific_rpc
+    url = strip_quotes(url or "")
+    role = (role or "unknown").strip()
+    if not url or url in seen:
+        return
+    if role in ("validator", "sync"):
+        has_specific_rpc = True
+    if not name:
+        if role == "validator":
+            validator_idx += 1
+            name = f"validator{validator_idx}"
+        elif role == "rpc":
+            rpc_idx += 1
+            name = f"rpc{rpc_idx}"
+        elif role == "sync":
+            name = "sync1"
+        else:
+            name = url
+    entries.append((name.strip(), role, url))
+    seen.add(url)
+
+def flush_node():
+    global current_node
+    if current_node and current_node.get("url"):
+        add(current_node.get("name"), current_node.get("role"), current_node.get("url"))
+    current_node = None
+
+with open(cfg_path, "r", encoding="utf-8") as fh:
+    for raw in fh:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if not line.startswith(" "):
+            flush_node()
+            if stripped.startswith("validator_rpcs:"):
+                section = "validator_rpcs"
+            elif stripped.startswith("sync_rpc:"):
+                section = "sync_rpc"
+                _, value = stripped.split(":", 1)
+                add("sync1", "sync", value)
+                section = None
+            elif stripped.startswith("node_rpcs:"):
+                section = "node_rpcs"
+            elif stripped.startswith("rpcs:"):
+                section = "rpcs"
+            else:
+                section = None
+            continue
+
+        if section in {"validator_rpcs", "rpcs"}:
+            if stripped.startswith("- "):
+                url = stripped[2:].strip()
+                if section == "validator_rpcs":
+                    add(None, "validator", url)
+                else:
+                    generic_rpcs.append(url)
+            continue
+
+        if section == "node_rpcs":
+            if stripped.startswith("- "):
+                flush_node()
+                current_node = {"name": "", "role": "unknown", "url": ""}
+                remainder = stripped[2:].strip()
+                if remainder and ":" in remainder:
+                    key, value = remainder.split(":", 1)
+                    current_node[key.strip()] = strip_quotes(value)
+                continue
+
+            if current_node and ":" in stripped:
+                key, value = stripped.split(":", 1)
+                current_node[key.strip()] = strip_quotes(value)
+
+flush_node()
+
+if not has_specific_rpc:
+    for url in generic_rpcs:
+        add(None, "rpc", url)
+
+for name, role, url in entries:
+    print(f"{name}\t{role}\t{url}")
 PY
 }
 
@@ -169,33 +357,86 @@ rpc_hex_result() {
   return 1
 }
 
+hex_to_dec() {
+  local raw="${1:-}"
+  raw="${raw#0x}"
+  if [[ -z "$raw" ]]; then
+    echo 0
+    return 0
+  fi
+  printf '%d\n' "$((16#$raw))"
+}
+
 wait_for_scenario_rpc_stability() {
   local config_file="${1:?config file required}"
   local timeout="${2:-30}"
   local required_rounds="${3:-3}"
+  local min_validator_peers="${SCENARIO_BOOTSTRAP_MIN_VALIDATOR_PEERS:-1}"
+  local max_height_delta="${SCENARIO_BOOTSTRAP_MAX_HEIGHT_DELTA:-2}"
   local deadline=$((SECONDS + timeout))
   local stable_rounds=0
   local last_summary=""
+  local rpc_entries=()
+  local validator_total=0
 
-  mapfile -t rpc_urls < <(scenario_rpc_urls "$config_file")
-  [[ ${#rpc_urls[@]} -gt 0 ]] || die "bootstrap rpc never stabilized: no rpc urls resolved from $config_file"
+  mapfile -t rpc_entries < <(scenario_rpc_entries "$config_file")
+  [[ ${#rpc_entries[@]} -gt 0 ]] || die "bootstrap rpc never stabilized: no rpc urls resolved from $config_file"
+  local rpc_entry
+  for rpc_entry in "${rpc_entries[@]}"; do
+    if [[ "$rpc_entry" == *$'\tvalidator\t'* ]]; then
+      validator_total=$((validator_total + 1))
+    fi
+  done
 
   scenario_log "waiting for RPC stabilization rounds=${required_rounds} timeout=${timeout}s"
   while (( SECONDS <= deadline )); do
     local all_ok=1
     local summary_parts=()
-    local rpc_url chain_id block_number
+    local validator_min_height=-1
+    local validator_max_height=-1
+    local validator_count=0
+    local entry name role rpc_url chain_id block_number peer_hex block_dec peer_dec
 
-    for rpc_url in "${rpc_urls[@]}"; do
+    for entry in "${rpc_entries[@]}"; do
+      IFS=$'\t' read -r name role rpc_url <<< "$entry"
       chain_id="$(rpc_hex_result "$rpc_url" "eth_chainId" || true)"
       block_number="$(rpc_hex_result "$rpc_url" "eth_blockNumber" || true)"
       if [[ -z "$chain_id" || -z "$block_number" ]]; then
         all_ok=0
-        summary_parts+=("$rpc_url:unready")
+        summary_parts+=("${name}:unready")
       else
-        summary_parts+=("$rpc_url:chainId=$chain_id:block=$block_number")
+        block_dec="$(hex_to_dec "$block_number")"
+        if [[ "$role" == "validator" ]]; then
+          peer_hex="$(rpc_hex_result "$rpc_url" "net_peerCount" || true)"
+          if [[ -z "$peer_hex" ]]; then
+            all_ok=0
+            summary_parts+=("${name}:block=${block_dec}:peers=unready")
+            continue
+          fi
+          peer_dec="$(hex_to_dec "$peer_hex")"
+          summary_parts+=("${name}:block=${block_dec}:peers=${peer_dec}")
+          validator_count=$((validator_count + 1))
+          if (( validator_total > 1 && peer_dec < min_validator_peers )); then
+            all_ok=0
+          fi
+          if (( validator_min_height < 0 || block_dec < validator_min_height )); then
+            validator_min_height=$block_dec
+          fi
+          if (( validator_max_height < 0 || block_dec > validator_max_height )); then
+            validator_max_height=$block_dec
+          fi
+        else
+          summary_parts+=("${name}:block=${block_dec}")
+        fi
       fi
     done
+
+    if (( validator_count > 1 )) && (( validator_min_height >= 0 && validator_max_height >= 0 )); then
+      if (( validator_max_height - validator_min_height > max_height_delta )); then
+        all_ok=0
+        summary_parts+=("validator_height_delta=$((validator_max_height - validator_min_height))")
+      fi
+    fi
 
     last_summary="$(IFS=' '; echo "${summary_parts[*]}")"
     if (( all_ok == 1 )); then

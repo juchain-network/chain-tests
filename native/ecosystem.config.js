@@ -199,12 +199,13 @@ function rethCommonArgs(opts) {
     'node',
     '--chain', rethChainFile,
     '--datadir', opts.datadir,
+    '--addr', '127.0.0.1',
     '--http',
-    '--http.addr', '0.0.0.0',
+    '--http.addr', '127.0.0.1',
     '--http.port', String(opts.httpPort),
     '--http.api', 'all',
     '--ws',
-    '--ws.addr', '0.0.0.0',
+    '--ws.addr', '127.0.0.1',
     '--ws.port', String(opts.wsPort),
     '--ws.api', 'all',
     '--authrpc.port', String(opts.enginePort),
@@ -215,7 +216,9 @@ function rethCommonArgs(opts) {
   ];
 
   if (bootnodes) {
-    args.push('--bootnodes', bootnodes, '--trusted-peers', bootnodes);
+    // Native local reth runtime relies on static trusted peers; bootnodes made
+    // late-joining nodes flaky in the smoke matrix.
+    args.push('--trusted-peers', bootnodes);
   }
   if (rethTrustedOnly === '1' || rethTrustedOnly === 'true' || rethTrustedOnly === 'yes' || rethTrustedOnly === 'on') {
     args.push('--trusted-only');

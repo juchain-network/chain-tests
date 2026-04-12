@@ -433,6 +433,18 @@ pm2_start_all() {
     die "no pm2 processes configured"
   fi
 
+  local startup_gap_seconds="${RETH_STARTUP_GAP_SECONDS:-}"
+  if [[ -z "$startup_gap_seconds" ]]; then
+    if all_nodes_reth; then
+      startup_gap_seconds=10
+    else
+      startup_gap_seconds=1
+    fi
+  fi
+  if ! [[ "$startup_gap_seconds" =~ ^[0-9]+$ ]]; then
+    die "RETH_STARTUP_GAP_SECONDS must be an integer, got: $startup_gap_seconds"
+  fi
+
   # Start primary validator first to avoid early clique fork races.
   PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[0]}" --update-env >/dev/null
 
@@ -449,10 +461,23 @@ pm2_start_all() {
   local idx
   for ((idx=1; idx<${#PM2_PROCS[@]}; idx++)); do
     PM2_NAMESPACE="$PM2_NAMESPACE" NATIVE_ENV_FILE="$ENV_FILE" "$MANAGER" start "$ECOSYSTEM_FILE" --only "${PM2_PROCS[$idx]}" --update-env >/dev/null
+    local node_http_port=""
     if (( idx < VALIDATOR_COUNT )); then
-      wait_for_rpc_ready "http://localhost:$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator$((idx+1))_http" "")" "$WAIT_TIMEOUT"
+      node_http_port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.validator$((idx+1))_http" "")"
+    else
+      local sync_idx=$((idx + 1 - VALIDATOR_COUNT))
+      if (( sync_idx == 1 )); then
+        node_http_port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync_http" "")"
+      else
+        node_http_port="$(cfg_get "$PORTS_SOURCE_FILE" "native.ports.sync${sync_idx}_http" "")"
+      fi
     fi
-    sleep 1
+    if [[ -n "$node_http_port" ]]; then
+      wait_for_rpc_ready "http://localhost:${node_http_port}" "$WAIT_TIMEOUT"
+    fi
+    if (( startup_gap_seconds > 0 && idx < ${#PM2_PROCS[@]} - 1 )); then
+      sleep "$startup_gap_seconds"
+    fi
   done
 }
 

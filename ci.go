@@ -760,20 +760,17 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "--- PASS: ") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "--- PASS: "))
+		if value, ok := extractTestOutputValue(line, "PASS"); ok {
 			pass = append(pass, value)
 			if tc, ok := parseTimedCase(value, "PASS"); ok {
 				timed = append(timed, tc)
 			}
-		} else if strings.HasPrefix(line, "--- FAIL: ") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "--- FAIL: "))
+		} else if value, ok := extractTestOutputValue(line, "FAIL"); ok {
 			fail = append(fail, value)
 			if tc, ok := parseTimedCase(value, "FAIL"); ok {
 				timed = append(timed, tc)
 			}
-		} else if strings.HasPrefix(line, "--- SKIP: ") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "--- SKIP: "))
+		} else if value, ok := extractTestOutputValue(line, "SKIP"); ok {
 			skip = append(skip, value)
 			if tc, ok := parseTimedCase(value, "SKIP"); ok {
 				timed = append(timed, tc)
@@ -781,6 +778,22 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 		}
 	}
 	return pass, fail, skip, timed
+}
+
+func extractTestOutputValue(line, status string) (string, bool) {
+	marker := "--- " + status + ": "
+	idx := strings.Index(line, marker)
+	if idx < 0 {
+		return "", false
+	}
+	if prefix := strings.Trim(line[:idx], ". \t"); prefix != "" {
+		return "", false
+	}
+	value := strings.TrimSpace(line[idx+len(marker):])
+	if value == "" {
+		return "", false
+	}
+	return value, true
 }
 
 func parseTimedCase(raw, status string) (timedCase, bool) {

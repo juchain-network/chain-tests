@@ -70,6 +70,42 @@ func TestParseTestOutput(t *testing.T) {
 	}
 }
 
+func TestParseTestOutputHandlesIndentedAndProgressPrefixedLines(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "go_test_prefixed.log")
+	content := strings.Join([]string{
+		".......--- PASS: TestF2_QuickReEntry (22.96s)",
+		"    --- PASS: TestF4_MiscExit/P-09_MinerOnlyPunish (6.14s)",
+		"..--- SKIP: TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus (195.28s)",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write prefixed test log: %v", err)
+	}
+
+	pass, fail, skip, timed := parseTestOutput(logPath)
+	if len(pass) != 2 {
+		t.Fatalf("unexpected pass case count: %#v", pass)
+	}
+	if len(fail) != 0 {
+		t.Fatalf("unexpected fail cases: %#v", fail)
+	}
+	if len(skip) != 1 {
+		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if pass[0] != "TestF2_QuickReEntry (22.96s)" {
+		t.Fatalf("unexpected first pass case: %q", pass[0])
+	}
+	if pass[1] != "TestF4_MiscExit/P-09_MinerOnlyPunish (6.14s)" {
+		t.Fatalf("unexpected second pass case: %q", pass[1])
+	}
+	if skip[0] != "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus (195.28s)" {
+		t.Fatalf("unexpected skip case: %q", skip[0])
+	}
+	if len(timed) != 3 {
+		t.Fatalf("unexpected timed case count: %d", len(timed))
+	}
+}
+
 func TestCollectSlowCasesSortByDurationDesc(t *testing.T) {
 	results := []stepResult{
 		{

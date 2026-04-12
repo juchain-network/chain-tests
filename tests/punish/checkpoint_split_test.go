@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"math/big"
+	"sort"
 	"testing"
 	"time"
 
@@ -10,11 +12,111 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 
 	"juchain.org/chain/tools/ci/contracts"
 	testctx "juchain.org/chain/tools/ci/internal/context"
 	"juchain.org/chain/tools/ci/internal/testkit"
 )
+
+type checkpointValidatorSigner struct {
+	validator common.Address
+	signer    common.Address
+}
+
+func selectCheckpointInTurnValidator(t *testing.T, validators []common.Address, checkpoint uint64) common.Address {
+	t.Helper()
+	if len(validators) == 0 {
+		t.Fatalf("no active validators available for checkpoint selection")
+	}
+
+	entries := make([]checkpointValidatorSigner, 0, len(validators))
+	for _, validator := range validators {
+		signer, err := ctx.Validators.GetValidatorSigner(nil, validator)
+		if err != nil {
+			t.Fatalf("read signer for validator %s failed: %v", validator.Hex(), err)
+		}
+		entries = append(entries, checkpointValidatorSigner{
+			validator: validator,
+			signer:    signer,
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return bytes.Compare(entries[i].signer.Bytes(), entries[j].signer.Bytes()) < 0
+	})
+
+	idx := int(checkpoint % uint64(len(entries)))
+	return entries[idx].validator
+}
+
+func openCheckpointLiveReader(
+	t *testing.T,
+	validators []common.Address,
+	exclude common.Address,
+) (*ethclient.Client, *contracts.Validators, *contracts.Punish, common.Address) {
+	t.Helper()
+
+	for _, validator := range validators {
+		if validator == exclude {
+			continue
+		}
+		rpcURL := ctx.ValidatorRPCByValidator(validator)
+		if rpcURL == "" {
+			continue
+		}
+		client, err := ethclient.Dial(rpcURL)
+		if err != nil {
+			continue
+		}
+		if _, err := client.BlockNumber(context.Background()); err != nil {
+			client.Close()
+			continue
+		}
+		valReader, err := contracts.NewValidators(testctx.ValidatorsAddr, client)
+		if err != nil {
+			client.Close()
+			t.Fatalf("create alternate validators binding for %s failed: %v", validator.Hex(), err)
+		}
+		punReader, err := contracts.NewPunish(testctx.PunishAddr, client)
+		if err != nil {
+			client.Close()
+			t.Fatalf("create alternate punish binding for %s failed: %v", validator.Hex(), err)
+		}
+		return client, valReader, punReader, validator
+	}
+
+	t.Fatalf("no live validator reader available after excluding %s", exclude.Hex())
+	return nil, nil, nil, common.Address{}
+}
+
+func waitUntilHeightOnClient(t *testing.T, client *ethclient.Client, target uint64, timeout time.Duration) uint64 {
+	t.Helper()
+	if client == nil {
+		t.Fatalf("waitUntilHeightOnClient called with nil client")
+	}
+
+	deadline := time.Now().Add(timeout)
+	var last uint64
+	var lastErr error
+	for time.Now().Before(deadline) {
+		height, err := client.BlockNumber(context.Background())
+		if err == nil {
+			last = height
+			if height >= target {
+				return height
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(ctx.BlockPollInterval())
+	}
+
+	if lastErr != nil {
+		t.Fatalf("wait for height %d failed: last=%d err=%v", target, last, lastErr)
+	}
+	t.Fatalf("wait for height %d timed out: last=%d", target, last)
+	return last
+}
 
 func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	if ctx == nil {
@@ -67,11 +169,6 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		_ = testkit.RestartValidatorNodeWithSigner(ctx, rotation.Validator, rotation.NewSignerKey, 90*time.Second)
 	}
 
-	primaryValidator := common.Address{}
-	if len(ctx.Config.Validators) > 0 {
-		primaryValidator = common.HexToAddress(ctx.Config.Validators[0].Address)
-	}
-
 	var targetValidator common.Address
 	var predictedCheckpoint uint64
 	for {
@@ -92,18 +189,17 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 			}
 			continue
 		}
-		for _, validator := range activeValidators {
-			if primaryValidator != (common.Address{}) && validator == primaryValidator {
-				continue
-			}
-			targetValidator = validator
-			break
-		}
-		if targetValidator == (common.Address{}) {
-			t.Skip("no non-primary active validator available for checkpoint punish scenario")
-		}
+		targetValidator = selectCheckpointInTurnValidator(t, activeValidators, predictedCheckpoint)
 		break
 	}
+	liveClient, liveValidators, livePunish, liveReaderValidator := openCheckpointLiveReader(t, activeValidators, targetValidator)
+	defer liveClient.Close()
+	t.Logf(
+		"checkpoint punish target=%s predictedCheckpoint=%d alternateReader=%s",
+		targetValidator.Hex(),
+		predictedCheckpoint,
+		liveReaderValidator.Hex(),
+	)
 
 	rotation, _, err := testkit.PrepareValidatorSignerRotation(ctx, targetValidator)
 	if err != nil {
@@ -234,12 +330,9 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	}
 
 	preBlock := rotation.EffectiveBlock - 1
-	if _, err := ctx.WaitUntilHeight(preBlock, 120*time.Second); err != nil {
-		restoreSigner(rotation)
-		t.Fatalf("wait for pre-checkpoint block %d failed: %v", preBlock, err)
-	}
+	waitUntilHeightOnClient(t, liveClient, preBlock, 120*time.Second)
 	preCall := &bind.CallOpts{BlockNumber: new(big.Int).SetUint64(preBlock)}
-	preRuntimeValidator, err := ctx.Validators.GetValidatorBySigner(preCall, rotation.NewSigner)
+	preRuntimeValidator, err := liveValidators.GetValidatorBySigner(preCall, rotation.NewSigner)
 	if err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("getValidatorBySigner before checkpoint failed: %v", err)
@@ -248,7 +341,7 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		restoreSigner(rotation)
 		t.Fatalf("pre-checkpoint runtime signer mapping unexpectedly exposes new signer: got=%s want=%s", preRuntimeValidator.Hex(), common.Address{}.Hex())
 	}
-	preHistoryValidator, err := ctx.Validators.GetValidatorBySignerHistory(preCall, rotation.NewSigner)
+	preHistoryValidator, err := liveValidators.GetValidatorBySignerHistory(preCall, rotation.NewSigner)
 	if err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("getValidatorBySignerHistory before checkpoint failed: %v", err)
@@ -258,25 +351,22 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		t.Fatalf("pre-checkpoint history signer mapping unexpectedly exposes new signer: got=%s want=%s", preHistoryValidator.Hex(), common.Address{}.Hex())
 	}
 
-	if _, err := ctx.WaitUntilHeight(rotation.EffectiveBlock, 120*time.Second); err != nil {
-		restoreSigner(rotation)
-		t.Fatalf("wait for checkpoint block %d failed: %v", rotation.EffectiveBlock, err)
-	}
+	waitUntilHeightOnClient(t, liveClient, rotation.EffectiveBlock, 120*time.Second)
 
 	checkpointNum := new(big.Int).SetUint64(rotation.EffectiveBlock)
 	checkpointCall := &bind.CallOpts{BlockNumber: checkpointNum}
-	runtimeSigners, err := ctx.Validators.GetTopSigners(checkpointCall)
+	runtimeSigners, err := liveValidators.GetTopSigners(checkpointCall)
 	if err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("getTopSigners at checkpoint failed: %v", err)
 	}
-	transitionSigners, err := ctx.Validators.GetTopSignersForEpochTransition(checkpointCall)
+	transitionSigners, err := liveValidators.GetTopSignersForEpochTransition(checkpointCall)
 	if err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("getTopSignersForEpochTransition at checkpoint failed: %v", err)
 	}
 
-	headerN, err := ctx.Clients[0].HeaderByNumber(context.Background(), checkpointNum)
+	headerN, err := liveClient.HeaderByNumber(context.Background(), checkpointNum)
 	if err != nil || headerN == nil {
 		restoreSigner(rotation)
 		t.Fatalf("read checkpoint header failed: %v", err)
@@ -286,13 +376,13 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		restoreSigner(rotation)
 		t.Fatalf("parse checkpoint header extra failed: %v", err)
 	}
-	currentValidator, err := ctx.Validators.GetValidatorBySigner(checkpointCall, rotation.OldSigner)
+	currentValidator, err := liveValidators.GetValidatorBySigner(checkpointCall, rotation.OldSigner)
 	if err != nil {
 		restoreSigner(rotation)
 		t.Fatalf("getValidatorBySigner at checkpoint failed: %v", err)
 	}
 	readPendingHead := func(call *bind.CallOpts) (common.Address, bool) {
-		addr, err := ctx.Punish.PendingValidators(call, big.NewInt(0))
+		addr, err := livePunish.PendingValidators(call, big.NewInt(0))
 		if err != nil {
 			return common.Address{}, false
 		}
@@ -303,10 +393,7 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	for offset := uint64(0); offset < 3; offset++ {
 		height := rotation.EffectiveBlock + offset
 		if offset > 0 {
-			if _, err := ctx.WaitUntilHeight(height, 30*time.Second); err != nil {
-				restoreSigner(rotation)
-				t.Fatalf("wait for pending punish observation height %d failed: %v", height, err)
-			}
+			waitUntilHeightOnClient(t, liveClient, height, 30*time.Second)
 		}
 		call := &bind.CallOpts{BlockNumber: new(big.Int).SetUint64(height)}
 		if addr, ok := readPendingHead(call); ok {
@@ -333,7 +420,14 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		t.Fatalf("checkpoint block was still produced by in-turn signer %s; out-of-turn punish path not triggered", rotation.OldSigner.Hex())
 	}
 	if headerN.Difficulty == nil || headerN.Difficulty.Cmp(big.NewInt(1)) != 0 {
-		t.Fatalf("checkpoint block is not out-of-turn: difficulty=%v", headerN.Difficulty)
+		t.Fatalf(
+			"checkpoint block is not out-of-turn: difficulty=%v coinbase=%s oldSigner=%s targetValidator=%s reader=%s",
+			headerN.Difficulty,
+			headerN.Coinbase.Hex(),
+			rotation.OldSigner.Hex(),
+			rotation.Validator.Hex(),
+			liveReaderValidator.Hex(),
+		)
 	}
 	if !sameAddressSet(extraSigners, transitionSigners) {
 		t.Fatalf("checkpoint header extra signer set mismatch: extra=%v transition=%v", extraSigners, transitionSigners)

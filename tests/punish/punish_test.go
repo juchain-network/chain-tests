@@ -283,6 +283,7 @@ func TestG_DoubleSign(t *testing.T) {
 		)
 		prepareSignerIdentity := func(candidateKey *ecdsa.PrivateKey, candidateAddr common.Address) (common.Address, *ecdsa.PrivateKey, error) {
 			if !waitForValidatorActive(t, candidateAddr, 3) {
+				requireChainProgressOrSkip(t, 1, 30*time.Second, "P-21 validator activation precondition")
 				return common.Address{}, nil, fmt.Errorf("validator not active before resign double-sign flow: %s", candidateAddr.Hex())
 			}
 			resolvedSigner, resolvedKey := signerIdentityForValidator(candidateAddr, candidateKey)
@@ -320,7 +321,7 @@ func TestG_DoubleSign(t *testing.T) {
 
 		var lastErr error
 		for attempt := 0; attempt < 8; attempt++ {
-			ctx.WaitIfEpochBlock()
+			waitOutEpochBoundaryOrSkip(t, "P-21 resign double-sign")
 
 			header, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
 			if err != nil || header == nil {

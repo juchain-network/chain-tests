@@ -208,6 +208,12 @@ resolve_runtime_session_file() {
   echo "$session_file"
 }
 
+ensure_go_build_env() {
+  export GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}"
+  export GOMODCACHE="${GOMODCACHE:-$ROOT_DIR/.gomodcache}"
+  mkdir -p "$GOCACHE" "$GOMODCACHE"
+}
+
 runtime_session_exists() {
   local session_file
   session_file="$(resolve_runtime_session_file "${1:-}")"

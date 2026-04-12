@@ -11,3 +11,4 @@ config/ci_budget.local.mk
 .gomodcache/
 __pycache__/
 config/test_env.yaml
+.codex

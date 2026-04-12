@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$SCRIPT_DIR/../network/lib.sh"
+ensure_go_build_env
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"

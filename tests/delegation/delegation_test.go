@@ -516,25 +516,8 @@ func TestE_Delegation(t *testing.T) {
 	})
 
 	t.Run("D-17_RoleDowngrade", func(t *testing.T) {
-		var (
-			key  *ecdsa.PrivateKey
-			addr common.Address
-			err  error
-		)
-		if reusedJailedFlowReady && reusedJailedValidatorKey != nil && reusedJailedValidatorAddr != (common.Address{}) {
-			if info, errInfo := ctx.Staking.GetValidatorInfo(nil, reusedJailedValidatorAddr); errInfo == nil && info.IsRegistered {
-				key = reusedJailedValidatorKey
-				addr = reusedJailedValidatorAddr
-				t.Logf("Reusing jailed validator from D-04a for D-17: %s", addr.Hex())
-			}
-		}
-		if key == nil {
-			key, addr, err = createAndRegisterValidator(t, "D-17 Downgrade")
-			if err != nil {
-				t.Logf("Skipping D-17: %v", err)
-				return
-			}
-		}
+		key, addr, err := createAndRegisterValidator(t, "D-17 Downgrade")
+		utils.AssertNoError(t, err, "setup validator failed")
 
 		infoBefore, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
 		utils.AssertNoError(t, errInfo, "failed to read validator info before resign")

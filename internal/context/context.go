@@ -47,6 +47,8 @@ const (
 	defaultProfileName       = "fast"
 	defaultRetryPollInterval = 100 * time.Millisecond
 	defaultBlockPollInterval = 100 * time.Millisecond
+	defaultEpochWaitTimeout  = 45 * time.Second
+	defaultEpochStallTimeout = 15 * time.Second
 	minPollInterval          = 20 * time.Millisecond
 	maxPollInterval          = 2 * time.Second
 )
@@ -696,7 +698,9 @@ func (c *CIContext) GetTransactorEx(key *ecdsa.PrivateKey, forceRefresh bool) (*
 	}
 
 	// Wait if we are at an epoch block to avoid "Epoch block forbidden" errors
-	c.WaitIfEpochBlock()
+	if err := c.WaitIfEpochBlockWithTimeout(defaultEpochWaitTimeout); err != nil {
+		return nil, err
+	}
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 
@@ -1303,7 +1307,9 @@ func (c *CIContext) WaitForNextEpochTransition() (uint64, error) {
 	if _, err := c.waitUntilHeight(nextEpochBlock, 60*time.Second); err != nil {
 		return 0, err
 	}
-	c.WaitIfEpochBlock()
+	if err := c.WaitIfEpochBlockWithTimeout(defaultEpochWaitTimeout); err != nil {
+		return 0, err
+	}
 
 	deadline := time.Now().Add(20 * time.Second)
 	var lastErr error
@@ -1361,42 +1367,112 @@ func (c *CIContext) triggerEpochTransition(height uint64, epoch uint64) bool {
 	return true
 }
 
-func (c *CIContext) WaitIfEpochBlock() {
-	epoch := c.epochValue()
-	if epoch == 0 {
-		return
+func (c *CIContext) recentCoinbases(limit int) []common.Address {
+	if c == nil || len(c.Clients) == 0 || limit <= 0 {
+		return nil
 	}
 
+	latest, err := c.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		return nil
+	}
+
+	start := uint64(1)
+	if latest >= uint64(limit) {
+		start = latest - uint64(limit) + 1
+	}
+
+	items := make([]common.Address, 0, latest-start+1)
+	for height := start; height <= latest; height++ {
+		header, err := c.Clients[0].HeaderByNumber(context.Background(), new(big.Int).SetUint64(height))
+		if err != nil || header == nil {
+			continue
+		}
+		items = append(items, header.Coinbase)
+	}
+	return items
+}
+
+func (c *CIContext) WaitIfEpochBlockWithTimeout(timeout time.Duration) error {
+	if c == nil || len(c.Clients) == 0 {
+		return fmt.Errorf("context not initialized")
+	}
+	epoch := c.epochValue()
+	if epoch == 0 {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = defaultEpochWaitTimeout
+	}
+
+	stallTimeout := defaultEpochStallTimeout
+	if timeout < stallTimeout {
+		stallTimeout = timeout
+	}
+
+	start := time.Now()
 	lastPoke := time.Now()
 	lastLog := time.Time{}
 	lastHeight := uint64(0)
-	stuckSince := time.Time{}
-	for {
+	lastProgress := time.Now()
+	var lastErr error
+
+	for time.Since(start) < timeout {
 		height, err := c.Clients[0].BlockNumber(context.Background())
 		if err != nil {
+			lastErr = err
+			if time.Since(lastPoke) > 2*time.Second {
+				c.sendDummyTx()
+				lastPoke = time.Now()
+			}
 			time.Sleep(c.BlockPollInterval())
 			continue
 		}
+
+		lastErr = nil
 		if height != lastHeight {
 			lastHeight = height
-			stuckSince = time.Time{}
+			lastProgress = time.Now()
 		}
 
 		mod := height % epoch
 		if mod != 0 && mod != epoch-1 {
-			return
-		}
-		if stuckSince.IsZero() {
-			stuckSince = time.Now()
+			return nil
 		}
 		if time.Since(lastLog) > 5*time.Second {
 			fmt.Printf("⏳ At epoch block %d, waiting for next block...\n", height)
 			lastLog = time.Now()
+		}
+		if time.Since(lastProgress) >= stallTimeout {
+			return fmt.Errorf(
+				"epoch-boundary wait stalled: height=%d epoch=%d stalled_for=%s recent_coinbases=%v",
+				height,
+				epoch,
+				time.Since(lastProgress).Round(time.Second),
+				c.recentCoinbases(12),
+			)
 		}
 		if time.Since(lastPoke) > 2*time.Second {
 			c.sendDummyTx()
 			lastPoke = time.Now()
 		}
 		time.Sleep(c.BlockPollInterval())
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("epoch-boundary wait timed out after %s: %w", timeout.Round(time.Second), lastErr)
+	}
+	return fmt.Errorf(
+		"epoch-boundary wait timed out after %s: height=%d epoch=%d recent_coinbases=%v",
+		timeout.Round(time.Second),
+		lastHeight,
+		epoch,
+		c.recentCoinbases(12),
+	)
+}
+
+func (c *CIContext) WaitIfEpochBlock() {
+	if err := c.WaitIfEpochBlockWithTimeout(defaultEpochWaitTimeout); err != nil {
+		fmt.Printf("⚠️ epoch-boundary wait aborted: %v\n", err)
 	}
 }

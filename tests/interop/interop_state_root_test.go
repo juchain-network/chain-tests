@@ -3,7 +3,6 @@ package tests
 import (
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -48,16 +47,7 @@ func TestI_StateRootCheckpoint(t *testing.T) {
 	}
 
 	for _, cp := range checkpoints {
-		tag := toBlockTag(cp)
-		vHash, vState := fetchStateRoot(t, primaryRPC, tag)
-		sHash, sState := fetchStateRoot(t, syncRPC, tag)
-
-		if !strings.EqualFold(vHash, sHash) {
-			t.Fatalf("block hash mismatch at height=%d: validator=%s sync=%s", cp, vHash, sHash)
-		}
-		if !strings.EqualFold(vState, sState) {
-			t.Fatalf("stateRoot mismatch at height=%d: validator=%s sync=%s", cp, vState, sState)
-		}
+		vHash, vState := waitForStableHistoricalParity(t, primary.Name, primaryRPC, syncNode.Name, syncRPC, cp, 20*time.Second)
 		t.Logf("checkpoint=%d hash=%s stateRoot=%s", cp, vHash, vState)
 	}
 

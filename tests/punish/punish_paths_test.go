@@ -80,15 +80,34 @@ func TestG_PunishPaths(t *testing.T) {
 		}
 		origPunishThreshold := new(big.Int).Set(punishThreshold)
 		origRemoveThreshold := new(big.Int).Set(removeThreshold)
+		configuredPunishThreshold := new(big.Int).Set(origPunishThreshold)
+		configuredRemoveThreshold := new(big.Int).Set(origRemoveThreshold)
+		testPunishThreshold := big.NewInt(3)
+		testRemoveThreshold := big.NewInt(1000)
 
 		t.Cleanup(func() {
-			if err := ctx.EnsureConfig(configIDPunishThreshold, origPunishThreshold, big.NewInt(1)); err != nil {
+			if err := ctx.EnsureConfig(configIDPunishThreshold, origPunishThreshold, configuredPunishThreshold); err != nil {
 				t.Errorf("restore punishThreshold failed: %v", err)
 			}
-			if err := ctx.EnsureConfig(configIDRemoveThreshold, origRemoveThreshold, big.NewInt(1000)); err != nil {
+			if err := ctx.EnsureConfig(configIDRemoveThreshold, origRemoveThreshold, configuredRemoveThreshold); err != nil {
 				t.Errorf("restore removeThreshold failed: %v", err)
 			}
 		})
+		if err := ctx.EnsureConfig(configIDPunishThreshold, testPunishThreshold, punishThreshold); err != nil {
+			t.Fatalf("set punishThreshold=%s for P-24 failed (original=%s): %v", testPunishThreshold.String(), origPunishThreshold.String(), err)
+		}
+		configuredPunishThreshold = new(big.Int).Set(testPunishThreshold)
+		if err := ctx.EnsureConfig(configIDRemoveThreshold, testRemoveThreshold, removeThreshold); err != nil {
+			t.Fatalf("set removeThreshold=%s for P-24 failed (original=%s): %v", testRemoveThreshold.String(), origRemoveThreshold.String(), err)
+		}
+		configuredRemoveThreshold = new(big.Int).Set(testRemoveThreshold)
+		t.Logf(
+			"P-24 config aligned punishThreshold=%s removeThreshold=%s (original punish=%s remove=%s)",
+			configuredPunishThreshold.String(),
+			configuredRemoveThreshold.String(),
+			origPunishThreshold.String(),
+			origRemoveThreshold.String(),
+		)
 
 		epochBig, err := ctx.Proposal.Epoch(nil)
 		if err != nil || epochBig == nil || epochBig.Sign() == 0 {
@@ -197,22 +216,16 @@ func TestG_PunishPaths(t *testing.T) {
 			dormantCandidates = append(dormantCandidates, signer)
 		}
 		if len(dormantCandidates) > 0 {
-			if !seenSigners[checkpointSlotSigner] {
-				targetScheduleSigner = checkpointSlotSigner
-				targetVal = signerToValidator[targetScheduleSigner]
-				useDormantTarget = true
-			} else {
-				dormantHex := make([]string, 0, len(dormantCandidates))
-				for _, signer := range dormantCandidates {
-					dormantHex = append(dormantHex, signer.Hex())
-				}
-				t.Skipf(
-					"P-24 shared state already has dormant validator signers on non-checkpoint slots; stopping another live signer would risk chain liveness (checkpoint_signer=%s dormant=%s signers=%v)",
-					checkpointSlotSigner.Hex(),
-					strings.Join(dormantHex, ","),
-					consensusSigners,
-				)
+			dormantHex := make([]string, 0, len(dormantCandidates))
+			for _, signer := range dormantCandidates {
+				dormantHex = append(dormantHex, signer.Hex())
 			}
+			t.Skipf(
+				"P-24 requires a clean 3-validator rotation window; found dormant validator signers and cannot safely align auto-consume (checkpoint_signer=%s dormant=%s signers=%v)",
+				checkpointSlotSigner.Hex(),
+				strings.Join(dormantHex, ","),
+				consensusSigners,
+			)
 		}
 
 		if useDormantTarget {
@@ -276,7 +289,7 @@ func TestG_PunishPaths(t *testing.T) {
 			// Use a two-cycle miss window so the first two misses happen on non-epoch
 			// blocks, and the third miss lands on the checkpoint block to enqueue the
 			// pending removal entry that consensus should auto-consume on the next block.
-			targetPunishThreshold = big.NewInt(3)
+			targetPunishThreshold = new(big.Int).Set(testPunishThreshold)
 			missWindow := uint64(len(consensusSigners)) * uint64(targetPunishThreshold.Int64()-1)
 			if epoch <= missWindow+1 {
 				t.Skipf("epoch=%d too small for deterministic P-24 stop window (need > %d)", epoch, missWindow+1)

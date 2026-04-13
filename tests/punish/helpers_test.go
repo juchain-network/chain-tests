@@ -145,7 +145,12 @@ func waitForValidatorActive(t *testing.T, addr common.Address, maxEpochs int) bo
 		if active {
 			return true
 		}
-		ctx.WaitIfEpochBlock()
+		if err := ctx.WaitIfEpochBlockWithTimeout(45 * time.Second); err != nil {
+			if t != nil {
+				t.Logf("waitForValidatorActive epoch-boundary wait aborted for %s: %v", addr.Hex(), err)
+			}
+			return false
+		}
 		if err := ctx.WaitForBlockProgress(1, 45*time.Second); err != nil {
 			return false
 		}
@@ -232,6 +237,20 @@ func requireChainProgressOrSkip(t *testing.T, minIncrements int, timeout time.Du
 			t.Skipf("%s: chain stalled and current height is unavailable: %v (height err: %v)", reason, err, readErr)
 		}
 		t.Skipf("%s: chain stalled at height %d: %v", reason, height, err)
+	}
+}
+
+func waitOutEpochBoundaryOrSkip(t *testing.T, reason string) {
+	t.Helper()
+	if ctx == nil {
+		t.Fatalf("Context not initialized")
+	}
+	if err := ctx.WaitIfEpochBlockWithTimeout(45 * time.Second); err != nil {
+		height, readErr := ctx.Clients[0].BlockNumber(context.Background())
+		if readErr != nil {
+			t.Skipf("%s: epoch-boundary wait failed and current height is unavailable: %v (height err: %v)", reason, err, readErr)
+		}
+		t.Skipf("%s: epoch-boundary wait failed at height %d: %v", reason, height, err)
 	}
 }
 

@@ -24,6 +24,11 @@ type interopNode struct {
 	Impl string
 }
 
+type historicalBlockView struct {
+	Hash      string
+	StateRoot string
+}
+
 var (
 	interopCfg        *config.Config
 	interopConfigPath = flag.String("config", "../../data/test_config.yaml", "Path to generated test configuration file")
@@ -182,6 +187,66 @@ func fetchStateRoot(t *testing.T, client *rpc.Client, blockTag string) (hash str
 		t.Fatalf("missing stateRoot at %s", blockTag)
 	}
 	return hash, stateRoot
+}
+
+func waitForStableHistoricalParity(
+	t *testing.T,
+	leftName string,
+	leftRPC *rpc.Client,
+	rightName string,
+	rightRPC *rpc.Client,
+	height uint64,
+	timeout time.Duration,
+) (string, string) {
+	t.Helper()
+
+	const stableReadsRequired = 3
+
+	tag := toBlockTag(height)
+	deadline := time.Now().Add(timeout)
+	stableReads := 0
+	lastMatch := historicalBlockView{}
+	lastLeft := historicalBlockView{}
+	lastRight := historicalBlockView{}
+
+	for time.Now().Before(deadline) {
+		leftHash, leftState := fetchStateRoot(t, leftRPC, tag)
+		rightHash, rightState := fetchStateRoot(t, rightRPC, tag)
+		lastLeft = historicalBlockView{Hash: leftHash, StateRoot: leftState}
+		lastRight = historicalBlockView{Hash: rightHash, StateRoot: rightState}
+
+		if strings.EqualFold(leftHash, rightHash) && strings.EqualFold(leftState, rightState) {
+			if !strings.EqualFold(lastMatch.Hash, leftHash) || !strings.EqualFold(lastMatch.StateRoot, leftState) {
+				lastMatch = historicalBlockView{Hash: leftHash, StateRoot: leftState}
+				stableReads = 1
+			} else {
+				stableReads++
+			}
+			if stableReads >= stableReadsRequired {
+				return leftHash, leftState
+			}
+		} else {
+			lastMatch = historicalBlockView{}
+			stableReads = 0
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	t.Fatalf(
+		"historical parity did not stabilize at height=%d within %s: %s=(hash=%s stateRoot=%s) %s=(hash=%s stateRoot=%s) stable_reads=%d/%d",
+		height,
+		timeout,
+		leftName,
+		lastLeft.Hash,
+		lastLeft.StateRoot,
+		rightName,
+		lastRight.Hash,
+		lastRight.StateRoot,
+		stableReads,
+		stableReadsRequired,
+	)
+	return "", ""
 }
 
 func parseCheckpointSpec(spec string, start, latest uint64) ([]uint64, error) {

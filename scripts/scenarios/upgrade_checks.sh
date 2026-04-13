@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../network/lib.sh"
 # shellcheck source=scripts/scenarios/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+ensure_go_build_env
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SESSION_FILE="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"

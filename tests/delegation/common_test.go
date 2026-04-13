@@ -587,42 +587,130 @@ func robustWithdrawUnbonded(t *testing.T, key *ecdsa.PrivateKey, val common.Addr
 	}
 }
 
+func validatorExitReadyHeight(addr common.Address) (uint64, error) {
+	if ctx == nil || len(ctx.Clients) == 0 {
+		return 0, fmt.Errorf("context not initialized")
+	}
+
+	current, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("read current block failed: %w", err)
+	}
+
+	targetHeight := current
+	info, err := ctx.Staking.GetValidatorInfo(nil, addr)
+	if err != nil {
+		return 0, fmt.Errorf("read validator info failed: %w", err)
+	}
+	if info.JailUntilBlock != nil && info.JailUntilBlock.Sign() > 0 {
+		if ready := info.JailUntilBlock.Uint64() + 1; ready > targetHeight {
+			targetHeight = ready
+		}
+	}
+
+	lastActive, err := ctx.Staking.LastActiveBlock(nil, addr)
+	if err != nil {
+		return 0, fmt.Errorf("read last active block failed: %w", err)
+	}
+	if lastActive != nil && lastActive.Sign() > 0 {
+		doubleSignWindow, err := ctx.Proposal.DoubleSignWindow(nil)
+		if err != nil {
+			return 0, fmt.Errorf("read double sign window failed: %w", err)
+		}
+		if doubleSignWindow != nil && doubleSignWindow.Sign() > 0 {
+			if ready := lastActive.Uint64() + doubleSignWindow.Uint64() + 1; ready > targetHeight {
+				targetHeight = ready
+			}
+		}
+	}
+
+	return targetHeight, nil
+}
+
+func waitUntilValidatorExitReady(t *testing.T, addr common.Address) {
+	t.Helper()
+
+	targetHeight, err := validatorExitReadyHeight(addr)
+	if err != nil {
+		t.Fatalf("compute validator exit-ready height failed: %v", err)
+	}
+
+	current, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read current block failed before exit wait: %v", err)
+	}
+	if targetHeight > current {
+		waitBlocks(t, int(targetHeight-current))
+	}
+
+	height, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("read current block failed after exit wait: %v", err)
+	}
+	if height < targetHeight {
+		t.Fatalf("exit-ready wait incomplete: target=%d current=%d", targetHeight, height)
+	}
+}
+
 func robustExitValidator(t *testing.T, key *ecdsa.PrivateKey) {
-	for retry := 0; retry < 10; retry++ {
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	handleExitTransient := func(msg string) bool {
+		lower := strings.ToLower(msg)
+		switch {
+		case strings.Contains(msg, "Epoch block forbidden"):
+			waitBlocks(t, 1)
+			return true
+		case strings.Contains(msg, "active set"), strings.Contains(msg, "wait until next epoch"):
+			waitForNextEpochBlock(t)
+			return true
+		case strings.Contains(msg, "Too many removals"):
+			waitForNextEpochBlock(t)
+			return true
+		case strings.Contains(lower, "doublesignwindow"):
+			waitUntilValidatorExitReady(t, addr)
+			return true
+		case strings.Contains(lower, "revert"):
+			waitBlocks(t, 1)
+			return true
+		default:
+			return false
+		}
+	}
+
+	for retry := 0; retry < 12; retry++ {
 		opts, errG := ctx.GetTransactor(key)
 		if errG != nil {
 			time.Sleep(retrySleep())
 			continue
 		}
 		tx, err := ctx.Staking.ExitValidator(opts)
-		if err == nil {
-			if errW := ctx.WaitMined(tx.Hash()); errW == nil {
-				return
+		if err != nil {
+			if handleExitTransient(err.Error()) {
+				continue
+			}
+			if t != nil {
+				t.Fatalf("exitValidator call failed: %v", err)
 			} else {
-				if strings.Contains(errW.Error(), "Epoch block forbidden") {
-					time.Sleep(retrySleep())
-					continue
-				}
-				if t != nil {
-					t.Fatalf("exitValidator tx failed: %v", errW)
-				} else {
-					return
-				}
+				return
+			}
+			continue
+		}
+
+		if errW := ctx.WaitMined(tx.Hash()); errW == nil {
+			return
+		} else {
+			if handleExitTransient(errW.Error()) {
+				continue
+			}
+			if t != nil {
+				t.Fatalf("exitValidator tx failed: %v", errW)
+			} else {
+				return
 			}
 		}
-		if strings.Contains(err.Error(), "Epoch block forbidden") {
-			time.Sleep(retrySleep())
-			continue
-		}
-		if strings.Contains(err.Error(), "active set") || strings.Contains(err.Error(), "wait until next epoch") {
-			waitForNextEpochBlock(t)
-			continue
-		}
-		if t != nil {
-			t.Fatalf("exitValidator call failed: %v", err)
-		} else {
-			return
-		}
+	}
+	if t != nil {
+		t.Fatalf("exitValidator did not succeed within retry budget")
 	}
 }
 

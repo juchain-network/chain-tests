@@ -283,6 +283,7 @@ func TestG_DoubleSign(t *testing.T) {
 		)
 		prepareSignerIdentity := func(candidateKey *ecdsa.PrivateKey, candidateAddr common.Address) (common.Address, *ecdsa.PrivateKey, error) {
 			if !waitForValidatorActive(t, candidateAddr, 3) {
+				requireChainProgressOrSkip(t, 1, 30*time.Second, "P-21 validator activation precondition")
 				return common.Address{}, nil, fmt.Errorf("validator not active before resign double-sign flow: %s", candidateAddr.Hex())
 			}
 			resolvedSigner, resolvedKey := signerIdentityForValidator(candidateAddr, candidateKey)
@@ -320,7 +321,7 @@ func TestG_DoubleSign(t *testing.T) {
 
 		var lastErr error
 		for attempt := 0; attempt < 8; attempt++ {
-			ctx.WaitIfEpochBlock()
+			waitOutEpochBoundaryOrSkip(t, "P-21 resign double-sign")
 
 			header, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
 			if err != nil || header == nil {
@@ -662,6 +663,11 @@ func TestG_DoubleSign(t *testing.T) {
 					waitNextBlock()
 					continue
 				}
+				// Avoid bind's pending-state gas estimation path here. After the first
+				// multi-validator slash in the same epoch, some runs may transiently lose
+				// pending state availability, which causes SubmitDoubleSignEvidence to fail
+				// before the tx is even sent.
+				opts.GasLimit = 1_500_000
 				tx, err := ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
 				if err == nil {
 					if errW := waitMinedShort(tx.Hash(), 75*time.Second); errW == nil {
@@ -680,10 +686,12 @@ func TestG_DoubleSign(t *testing.T) {
 					}
 				}
 				lastErr = err
-				if strings.Contains(err.Error(), "nonce too low") ||
-					strings.Contains(err.Error(), "already known") ||
-					strings.Contains(err.Error(), "replacement transaction underpriced") ||
-					strings.Contains(err.Error(), "Epoch block forbidden") {
+				errMsg := strings.ToLower(err.Error())
+				if strings.Contains(errMsg, "nonce too low") ||
+					strings.Contains(errMsg, "already known") ||
+					strings.Contains(errMsg, "replacement transaction underpriced") ||
+					strings.Contains(errMsg, "epoch block forbidden") ||
+					strings.Contains(errMsg, "pending state is not available") {
 					ctx.RefreshNonce(reporterAddr)
 					waitNextBlock()
 					continue

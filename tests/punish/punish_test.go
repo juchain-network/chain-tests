@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,12 @@ import (
 	"juchain.org/chain/tools/ci/internal/testkit"
 	"juchain.org/chain/tools/ci/internal/utils"
 )
+
+type doubleSignTarget struct {
+	validator common.Address
+	signer    common.Address
+	key       *ecdsa.PrivateKey
+}
 
 func TestG_DoubleSign(t *testing.T) {
 	if ctx == nil || len(ctx.GenesisValidators) == 0 {
@@ -530,211 +537,243 @@ func TestG_DoubleSign(t *testing.T) {
 
 	// [P-23] Multi-Validator Double Sign (same epoch)
 	t.Run("P-23_MultiValidatorDoubleSign", func(t *testing.T) {
-		if len(ctx.GenesisValidators) < 2 {
-			t.Fatalf("not enough validator keys")
-		}
+		targets, reporterCandidates := prepareMultiDoubleSignScenario(t)
+		utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[0], 0x41, reporterCandidates), "first multi double sign evidence failed")
+		utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[1], 0x51, reporterCandidates), "second multi double sign evidence failed")
+		assertValidatorsJailed(t, targets...)
+	})
+}
 
-		// Avoid epoch boundary blocks
-		ctx.WaitIfEpochBlock()
-		header, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
-		epochBI, _ := ctx.Proposal.Epoch(nil)
-		if epochBI != nil && epochBI.Sign() > 0 {
-			epoch := epochBI.Uint64()
-			mod := header.Number.Uint64() % epoch
-			if mod > epoch-5 {
-				waitForNextEpochBlock(t)
-				ctx.WaitIfEpochBlock()
-				header, _ = ctx.Clients[0].HeaderByNumber(context.Background(), nil)
-			}
-		}
+func TestZ_Manual_SingleValidatorLivenessAfterDoubleSign(t *testing.T) {
+	if ctx == nil || len(ctx.GenesisValidators) == 0 {
+		t.Fatalf("Context not initialized")
+	}
+	if strings.ToLower(strings.TrimSpace(os.Getenv("EXPECT_SINGLE_VALIDATOR_LIVENESS"))) != "1" {
+		t.Skip("set EXPECT_SINGLE_VALIDATOR_LIVENESS=1 to run destructive single-validator liveness check")
+	}
 
-		miner := header.Coinbase
-		minerValidator, err := ctx.ValidatorAddressBySigner(miner)
-		utils.AssertNoError(t, err, "map current miner signer to validator failed")
-		type target struct {
-			validator common.Address
-			signer    common.Address
-			key       *ecdsa.PrivateKey
-		}
-		targets := make([]target, 0, 2)
-		seen := make(map[common.Address]bool)
-		if activeVals, err := ctx.Validators.GetActiveValidators(nil); err == nil {
-			for _, addr := range activeVals {
-				if addr == minerValidator || seen[addr] {
-					continue
-				}
-				signerAddr, signerKey := signerIdentityForValidator(addr, nil)
-				key := signerKey
-				if key == nil {
-					continue
-				}
-				info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
-				if errInfo != nil || info.IsJailed {
-					continue
-				}
-				seen[addr] = true
-				targets = append(targets, target{validator: addr, signer: signerAddr, key: key})
-				if len(targets) >= 2 {
-					break
-				}
-			}
-		}
-		if len(targets) < 2 {
-			t.Skip("skip multi-validator double sign: not enough active non-miner validators")
-		}
-		if len(targets) < 2 {
-			t.Fatalf("insufficient distinct validators for multi-double-sign")
-		}
+	targets, reporterCandidates := prepareMultiDoubleSignScenario(t)
+	utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[0], 0x61, reporterCandidates), "first liveness double sign evidence failed")
+	utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[1], 0x71, reporterCandidates), "second liveness double sign evidence failed")
+	assertValidatorsJailed(t, targets...)
 
-		targetSet := map[common.Address]struct{}{
-			targets[0].validator: {},
-			targets[1].validator: {},
-		}
-		reporterCandidates := make([]*ecdsa.PrivateKey, 0, len(ctx.GenesisValidators)+1)
-		reporterSeen := make(map[common.Address]bool)
-		addReporter := func(key *ecdsa.PrivateKey) {
-			if key == nil {
-				return
-			}
-			addr := crypto.PubkeyToAddress(key.PublicKey)
-			if reporterSeen[addr] {
-				return
-			}
-			if _, blocked := targetSet[addr]; blocked {
-				return
-			}
-			reporterSeen[addr] = true
-			reporterCandidates = append(reporterCandidates, key)
-		}
-		addReporter(keyForAddress(miner))
-		for _, key := range ctx.GenesisValidators {
-			addReporter(key)
-		}
-		addReporter(ctx.FunderKey)
-		if len(reporterCandidates) == 0 {
-			t.Fatalf("no eligible reporter account for multi double sign")
-		}
+	activeValidators, err := ctx.Validators.GetActiveValidators(nil)
+	utils.AssertNoError(t, err, "read active validators after multi double sign failed")
+	if len(activeValidators) != 1 {
+		t.Fatalf("expected exactly 1 active validator after two double-sign punishments, got %d", len(activeValidators))
+	}
 
-		waitMinedShort := func(txHash common.Hash, timeout time.Duration) error {
-			deadline := time.Now().Add(timeout)
-			for time.Now().Before(deadline) {
-				receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
-				if err == nil && receipt != nil {
-					if receipt.Status == 0 {
-						return fmt.Errorf("transaction %s reverted", txHash.Hex())
-					}
-					return nil
-				}
-				time.Sleep(retrySleep())
-			}
-			return fmt.Errorf("timeout waiting for tx %s", txHash.Hex())
-		}
+	if err := ctx.WaitForBlockProgress(1, 90*time.Second); err != nil {
+		t.Fatalf("chain did not progress with a single remaining validator: %v", err)
+	}
+}
 
-		submitEvidence := func(tgt target, rootBase byte) {
+func prepareMultiDoubleSignScenario(t *testing.T) ([]doubleSignTarget, []*ecdsa.PrivateKey) {
+	t.Helper()
+	if len(ctx.GenesisValidators) < 2 {
+		t.Fatalf("not enough validator keys")
+	}
+
+	ctx.WaitIfEpochBlock()
+	header, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+	utils.AssertNoError(t, err, "read latest header failed")
+	epochBI, err := ctx.Proposal.Epoch(nil)
+	utils.AssertNoError(t, err, "read epoch failed")
+	if epochBI != nil && epochBI.Sign() > 0 {
+		epoch := epochBI.Uint64()
+		mod := header.Number.Uint64() % epoch
+		if mod > epoch-5 {
+			waitForNextEpochBlock(t)
 			ctx.WaitIfEpochBlock()
-			head, _ := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
-			targetHeight := new(big.Int).Sub(head.Number, big.NewInt(1))
-			if targetHeight.Sign() <= 0 {
-				targetHeight = big.NewInt(1)
-			}
-			baseTime := head.Time
-			if targetHeader, err := ctx.Clients[0].HeaderByNumber(context.Background(), targetHeight); err == nil && targetHeader != nil {
-				baseTime = targetHeader.Time
-			}
+			header, err = ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+			utils.AssertNoError(t, err, "read aligned header failed")
+		}
+	}
 
-			h1 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase}, Time: baseTime}
-			h2 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase + 1}, Time: baseTime}
-			rlp1, err := signHeaderClique(h1, tgt.key)
-			utils.AssertNoError(t, err, "failed to sign h1")
-			rlp2, err := signHeaderClique(h2, tgt.key)
-			utils.AssertNoError(t, err, "failed to sign h2")
+	minerSigner := header.Coinbase
+	minerValidator, err := ctx.ValidatorAddressBySigner(minerSigner)
+	utils.AssertNoError(t, err, "map current miner signer to validator failed")
+	currentSigner, currentSignerKey := signerIdentityForValidator(minerValidator, keyForAddress(minerValidator))
+	if currentSignerKey == nil {
+		t.Fatalf("missing signer key for current miner validator %s signer=%s", minerValidator.Hex(), currentSigner.Hex())
+	}
 
-			lastErr := error(nil)
-			maxAttempts := len(reporterCandidates) * 2
-			if maxAttempts < 4 {
-				maxAttempts = 4
-			}
-			for attempt := 0; attempt < maxAttempts; attempt++ {
-				reporterKey := reporterCandidates[attempt%len(reporterCandidates)]
-				reporterAddr := crypto.PubkeyToAddress(reporterKey.PublicKey)
-				opts, err := ctx.GetTransactor(reporterKey)
-				if err != nil {
-					lastErr = err
-					waitNextBlock()
-					continue
+	var firstTarget doubleSignTarget
+	foundFirst := false
+	activeVals, err := ctx.Validators.GetActiveValidators(nil)
+	utils.AssertNoError(t, err, "read active validators failed")
+	for _, addr := range activeVals {
+		if addr == minerValidator {
+			continue
+		}
+		signerAddr, signerKey := signerIdentityForValidator(addr, nil)
+		if signerKey == nil {
+			continue
+		}
+		info, errInfo := ctx.Staking.GetValidatorInfo(nil, addr)
+		if errInfo != nil || info.IsJailed {
+			continue
+		}
+		firstTarget = doubleSignTarget{validator: addr, signer: signerAddr, key: signerKey}
+		foundFirst = true
+		break
+	}
+	if !foundFirst {
+		t.Fatalf("no eligible non-miner validator available for multi double-sign setup")
+	}
+
+	targets := []doubleSignTarget{
+		firstTarget,
+		{validator: minerValidator, signer: currentSigner, key: currentSignerKey},
+	}
+	reporterCandidates := buildDoubleSignReporterCandidates(targets, minerSigner)
+	if len(reporterCandidates) == 0 {
+		t.Fatalf("no eligible reporter account for multi double sign")
+	}
+	return targets, reporterCandidates
+}
+
+func buildDoubleSignReporterCandidates(targets []doubleSignTarget, minerSigner common.Address) []*ecdsa.PrivateKey {
+	targetSet := make(map[common.Address]struct{}, len(targets))
+	for _, target := range targets {
+		targetSet[target.validator] = struct{}{}
+	}
+
+	reporterCandidates := make([]*ecdsa.PrivateKey, 0, len(ctx.GenesisValidators)+1)
+	reporterSeen := make(map[common.Address]bool)
+	addReporter := func(key *ecdsa.PrivateKey) {
+		if key == nil {
+			return
+		}
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		if reporterSeen[addr] {
+			return
+		}
+		if _, blocked := targetSet[addr]; blocked {
+			return
+		}
+		reporterSeen[addr] = true
+		reporterCandidates = append(reporterCandidates, key)
+	}
+
+	addReporter(keyForAddress(minerSigner))
+	for _, key := range ctx.GenesisValidators {
+		addReporter(key)
+	}
+	addReporter(ctx.FunderKey)
+	return reporterCandidates
+}
+
+func submitDoubleSignEvidenceForTarget(t *testing.T, tgt doubleSignTarget, rootBase byte, reporterCandidates []*ecdsa.PrivateKey) error {
+	t.Helper()
+
+	waitMinedShort := func(txHash common.Hash, timeout time.Duration) error {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			receipt, err := ctx.Clients[0].TransactionReceipt(context.Background(), txHash)
+			if err == nil && receipt != nil {
+				if receipt.Status == 0 {
+					return fmt.Errorf("transaction %s reverted", txHash.Hex())
 				}
-				// Avoid bind's pending-state gas estimation path here. After the first
-				// multi-validator slash in the same epoch, some runs may transiently lose
-				// pending state availability, which causes SubmitDoubleSignEvidence to fail
-				// before the tx is even sent.
-				opts.GasLimit = 1_500_000
-				tx, err := ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
-				if err == nil {
-					if errW := waitMinedShort(tx.Hash(), 75*time.Second); errW == nil {
-						return
-					} else {
-						lastErr = errW
-						if strings.Contains(errW.Error(), "timeout waiting for tx") {
-							if progErr := ctx.WaitForBlockProgress(1, 20*time.Second); progErr != nil {
-								t.Skipf("skip multi-validator double sign: chain stalled while tx pending (%s): %v", tx.Hash().Hex(), progErr)
-							}
-							ctx.RefreshNonce(reporterAddr)
-							waitNextBlock()
-							continue
-						}
-						t.Fatalf("failed to mine multi double sign evidence tx: %v", errW)
+				return nil
+			}
+			time.Sleep(retrySleep())
+		}
+		return fmt.Errorf("timeout waiting for tx %s", txHash.Hex())
+	}
+
+	ctx.WaitIfEpochBlock()
+	head, err := ctx.Clients[0].HeaderByNumber(context.Background(), nil)
+	if err != nil || head == nil {
+		return fmt.Errorf("read latest header for multi double sign failed: %w", err)
+	}
+	targetHeight := new(big.Int).Sub(head.Number, big.NewInt(1))
+	if targetHeight.Sign() <= 0 {
+		targetHeight = big.NewInt(1)
+	}
+	baseTime := head.Time
+	if targetHeader, err := ctx.Clients[0].HeaderByNumber(context.Background(), targetHeight); err == nil && targetHeader != nil {
+		baseTime = targetHeader.Time
+	}
+
+	h1 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase}, Time: baseTime}
+	h2 := &types.Header{Coinbase: tgt.signer, Number: targetHeight, Extra: make([]byte, 32+65), Root: common.Hash{rootBase + 1}, Time: baseTime}
+	rlp1, err := signHeaderClique(h1, tgt.key)
+	if err != nil {
+		return fmt.Errorf("failed to sign h1: %w", err)
+	}
+	rlp2, err := signHeaderClique(h2, tgt.key)
+	if err != nil {
+		return fmt.Errorf("failed to sign h2: %w", err)
+	}
+
+	lastErr := error(nil)
+	maxAttempts := len(reporterCandidates) * 2
+	if maxAttempts < 4 {
+		maxAttempts = 4
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		reporterKey := reporterCandidates[attempt%len(reporterCandidates)]
+		reporterAddr := crypto.PubkeyToAddress(reporterKey.PublicKey)
+		opts, err := ctx.GetTransactor(reporterKey)
+		if err != nil {
+			lastErr = err
+			waitNextBlock()
+			continue
+		}
+		opts.GasLimit = 1_500_000
+		tx, err := ctx.Punish.SubmitDoubleSignEvidence(opts, rlp1, rlp2)
+		if err == nil {
+			if errW := waitMinedShort(tx.Hash(), 75*time.Second); errW == nil {
+				return nil
+			} else {
+				lastErr = errW
+				if strings.Contains(errW.Error(), "timeout waiting for tx") {
+					if progErr := ctx.WaitForBlockProgress(1, 20*time.Second); progErr != nil {
+						return fmt.Errorf("chain stalled while tx pending (%s): %w", tx.Hash().Hex(), progErr)
 					}
-				}
-				lastErr = err
-				errMsg := strings.ToLower(err.Error())
-				if strings.Contains(errMsg, "nonce too low") ||
-					strings.Contains(errMsg, "already known") ||
-					strings.Contains(errMsg, "replacement transaction underpriced") ||
-					strings.Contains(errMsg, "epoch block forbidden") ||
-					strings.Contains(errMsg, "pending state is not available") {
 					ctx.RefreshNonce(reporterAddr)
 					waitNextBlock()
 					continue
 				}
-				t.Fatalf("failed to submit multi double sign evidence: %v", err)
-			}
-			t.Fatalf("failed to submit multi double sign evidence after retries: %v", lastErr)
-		}
-
-		// Submit evidence for two validators in the same epoch
-		submitEvidence(targets[0], 0x41)
-		submitEvidence(targets[1], 0x51)
-
-		// Both should be jailed
-		for _, tgt := range targets[:2] {
-			err := testkit.WaitUntil(testkit.WaitUntilOptions{
-				MaxAttempts: 6,
-				Interval:    retrySleep(),
-				OnRetry: func(int) {
-					waitBlocks(t, 1)
-				},
-			}, func() (bool, error) {
-				info, err := ctx.Staking.GetValidatorInfo(nil, tgt.validator)
-				if err != nil {
-					return false, err
-				}
-				return info.IsJailed, nil
-			})
-			utils.AssertNoError(t, err, "validator should be jailed after double sign")
-		}
-
-		// Ensure chain still progresses with remaining validator(s).
-		// On some runs, validator-set transition right after slashing can delay progress briefly.
-		if err := ctx.WaitForBlockProgress(1, 30*time.Second); err != nil {
-			t.Logf("initial progress check failed after multi-validator double sign: %v", err)
-			// Prefer a longer direct progress probe over forced epoch jumps: when the
-			// chain is temporarily stalled after multi-slash handling, block production
-			// can recover without reaching a specific epoch boundary.
-			if err2 := ctx.WaitForBlockProgress(1, 120*time.Second); err2 != nil {
-				t.Fatalf("chain did not progress after multi-validator double sign: %v (initial=%v)", err2, err)
+				return fmt.Errorf("failed to mine multi double sign evidence tx: %w", errW)
 			}
 		}
-	})
+
+		lastErr = err
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "nonce too low") ||
+			strings.Contains(errMsg, "already known") ||
+			strings.Contains(errMsg, "replacement transaction underpriced") ||
+			strings.Contains(errMsg, "epoch block forbidden") ||
+			strings.Contains(errMsg, "pending state is not available") {
+			ctx.RefreshNonce(reporterAddr)
+			waitNextBlock()
+			continue
+		}
+		return fmt.Errorf("failed to submit multi double sign evidence: %w", err)
+	}
+	return fmt.Errorf("failed to submit multi double sign evidence after retries: %w", lastErr)
+}
+
+func assertValidatorsJailed(t *testing.T, targets ...doubleSignTarget) {
+	t.Helper()
+	for _, tgt := range targets {
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 6,
+			Interval:    retrySleep(),
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			info, err := ctx.Staking.GetValidatorInfo(nil, tgt.validator)
+			if err != nil {
+				return false, err
+			}
+			return info.IsJailed, nil
+		})
+		utils.AssertNoError(t, err, "validator should be jailed after double sign")
+	}
 }
 
 func signHeaderClique(h *types.Header, key *ecdsa.PrivateKey) ([]byte, error) {

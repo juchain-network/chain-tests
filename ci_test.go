@@ -106,6 +106,33 @@ func TestParseTestOutputHandlesIndentedAndProgressPrefixedLines(t *testing.T) {
 	}
 }
 
+func TestParseTestOutputHandlesNestedCIRenderedStatusLines(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nested_ci.log")
+	content := strings.Join([]string{
+		"  🟢 PASS: TestF1_ExitFlow (28.80s)",
+		"  🔴 FAIL: TestB_ConfigBoundaryChecks (2.50s)",
+		"  🟡 SKIP: TestG_DoubleSign/P-23_MultiValidatorDoubleSign (98.16s)",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write nested ci log: %v", err)
+	}
+
+	pass, fail, skip, timed := parseTestOutput(logPath)
+	if len(pass) != 1 || pass[0] != "TestF1_ExitFlow (28.80s)" {
+		t.Fatalf("unexpected pass cases: %#v", pass)
+	}
+	if len(fail) != 1 || fail[0] != "TestB_ConfigBoundaryChecks (2.50s)" {
+		t.Fatalf("unexpected fail cases: %#v", fail)
+	}
+	if len(skip) != 1 || skip[0] != "TestG_DoubleSign/P-23_MultiValidatorDoubleSign (98.16s)" {
+		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(timed) != 3 {
+		t.Fatalf("unexpected timed case count: %d", len(timed))
+	}
+}
+
 func TestCollectSlowCasesSortByDurationDesc(t *testing.T) {
 	results := []stepResult{
 		{
@@ -273,11 +300,36 @@ func TestWriteReportIncludesSlowTestsSection(t *testing.T) {
 	if !strings.Contains(text, "| config | group_config | 10s | 8s | EXCEEDED |") {
 		t.Fatalf("group threshold row not found in report:\n%s", text)
 	}
+	if !strings.Contains(text, "- Totals: pass=0 fail=0 skip=0") {
+		t.Fatalf("report totals line not found in report")
+	}
 	if !strings.Contains(text, "## Slow Alerts (>= 5s)") {
 		t.Fatalf("slow alerts section not found in report")
 	}
 	if !strings.Contains(text, "- Status: 🟢 PASS") {
 		t.Fatalf("details status line not decorated:\n%s", text)
+	}
+}
+
+func TestBuildRunSummaryAccumulatesSkipCounts(t *testing.T) {
+	results := []stepResult{
+		{
+			Name:      "group_punish",
+			Status:    "PASS",
+			PassTests: []string{"TestF1_ExitFlow (1.00s)"},
+			SkipTests: []string{"TestG_DoubleSign/P-23_MultiValidatorDoubleSign (98.16s)"},
+		},
+	}
+
+	summary := buildRunSummary(results, reportStats{}, "groups", "punish", "", "", "data/test_config.yaml", "reports/report.md", false)
+	if summary.TotalPassTests != 1 {
+		t.Fatalf("unexpected total pass count: %d", summary.TotalPassTests)
+	}
+	if summary.TotalSkipTests != 1 {
+		t.Fatalf("unexpected total skip count: %d", summary.TotalSkipTests)
+	}
+	if len(summary.Steps) != 1 || summary.Steps[0].SkipCount != 1 {
+		t.Fatalf("unexpected step skip counts: %#v", summary.Steps)
 	}
 }
 

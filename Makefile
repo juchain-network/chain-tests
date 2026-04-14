@@ -374,13 +374,14 @@ test-group:
 			if [ -z "$$paths_epoch" ]; then paths_epoch="$$group_epoch"; fi; \
 			if [ -z "$$double_sign_epoch" ]; then double_sign_epoch="$$group_epoch"; fi; \
 			echo "⏱ punish epochs: paths=$$paths_epoch double_sign=$$double_sign_epoch"; \
-			if [ "$$paths_epoch" = "$$double_sign_epoch" ]; then \
-				echo "⏱ punish running in single pass (shared epoch=$$paths_epoch)"; \
-				EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths|TestG_DoubleSign"; \
-			else \
-				EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths"; \
-				EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign"; \
-			fi; \
+			echo "⏱ punish phase-1: shared lifecycle and non-isolated punish coverage"; \
+			EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestF1_ExitFlow|TestF2_QuickReEntry|TestF3_WithdrawProfits|TestF4_MiscExit|TestF5_RoleChange|TestF6_DoubleSignWindow|TestF7_PunishedRedemption|TestG_PunishPaths/(P-23_PunishNormal|P-24_ExecutePendingForbiddenExternalTx|P-25_DecreaseMissedBlocksCounter)"; \
+			echo "⏱ punish phase-2: isolated pending auto-consume path"; \
+			EPOCH="$$paths_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus" -max-skips 0; \
+			echo "⏱ punish phase-3: shared double-sign regression subset"; \
+			EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign/(P-07_DoubleSignEvidence|P-10-14_DoubleSignExceptions|P-21_ResignThenDoubleSign|P-22_ExitThenDoubleSign)"; \
+			echo "⏱ punish phase-4: isolated multi-validator double-sign path"; \
+			EPOCH="$$double_sign_epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/punish -run "TestG_DoubleSign/P-23_MultiValidatorDoubleSign" -max-skips 0; \
 			;; \
 		rewards) \
 			epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups rewards)"; \

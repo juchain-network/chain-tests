@@ -775,6 +775,21 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 			if tc, ok := parseTimedCase(value, "SKIP"); ok {
 				timed = append(timed, tc)
 			}
+		} else if value, ok := extractNestedTestOutputValue(line, "PASS"); ok {
+			pass = append(pass, value)
+			if tc, ok := parseTimedCase(value, "PASS"); ok {
+				timed = append(timed, tc)
+			}
+		} else if value, ok := extractNestedTestOutputValue(line, "FAIL"); ok {
+			fail = append(fail, value)
+			if tc, ok := parseTimedCase(value, "FAIL"); ok {
+				timed = append(timed, tc)
+			}
+		} else if value, ok := extractNestedTestOutputValue(line, "SKIP"); ok {
+			skip = append(skip, value)
+			if tc, ok := parseTimedCase(value, "SKIP"); ok {
+				timed = append(timed, tc)
+			}
 		}
 	}
 	return pass, fail, skip, timed
@@ -790,6 +805,19 @@ func extractTestOutputValue(line, status string) (string, bool) {
 		return "", false
 	}
 	value := strings.TrimSpace(line[idx+len(marker):])
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+func extractNestedTestOutputValue(line, status string) (string, bool) {
+	marker := displayStatus(status) + ": "
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, marker) {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(trimmed, marker))
 	if value == "" {
 		return "", false
 	}
@@ -923,7 +951,12 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 	}
 	sb.WriteString(fmt.Sprintf("- Config: %s\n", configPath))
 	sb.WriteString(fmt.Sprintf("- GOCACHE: %s\n", gocache))
-	sb.WriteString(fmt.Sprintf("- Debug: %t\n\n", debug))
+	sb.WriteString(fmt.Sprintf("- Debug: %t\n", debug))
+	sb.WriteString(fmt.Sprintf("- Totals: pass=%d fail=%d skip=%d\n\n",
+		countTotalCases(results, "PASS"),
+		countTotalCases(results, "FAIL"),
+		countTotalCases(results, "SKIP"),
+	))
 
 	groupDurations := collectGroupDurations(results, opts.GroupThresholds, opts.DefaultGroupThreshold)
 	if len(groupDurations) > 0 {
@@ -1069,9 +1102,20 @@ func displayStatus(status string) string {
 }
 
 func countTotalSkips(results []stepResult) int {
+	return countTotalCases(results, "SKIP")
+}
+
+func countTotalCases(results []stepResult, status string) int {
 	total := 0
 	for _, res := range results {
-		total += len(res.SkipTests)
+		switch strings.ToUpper(strings.TrimSpace(status)) {
+		case "PASS":
+			total += len(res.PassTests)
+		case "FAIL":
+			total += len(res.FailTests)
+		case "SKIP":
+			total += len(res.SkipTests)
+		}
 	}
 	return total
 }

@@ -400,16 +400,16 @@ func TestG_PunishPaths(t *testing.T) {
 		if !useDormantTarget && primaryValidator != (common.Address{}) && targetVal == primaryValidator {
 			observerURL := ""
 			if ctx.Config != nil {
-				observerURL = strings.TrimSpace(ctx.Config.SyncRPC)
-				if observerURL == "" {
-					targetRPC := strings.TrimSpace(ctx.ValidatorRPCByValidator(targetVal))
-					for _, rpcURL := range ctx.Config.ValidatorRPCs {
-						rpcURL = strings.TrimSpace(rpcURL)
-						if rpcURL != "" && rpcURL != targetRPC {
-							observerURL = rpcURL
-							break
-						}
+				targetRPC := strings.TrimSpace(ctx.ValidatorRPCByValidator(targetVal))
+				for _, rpcURL := range ctx.Config.ValidatorRPCs {
+					rpcURL = strings.TrimSpace(rpcURL)
+					if rpcURL != "" && rpcURL != targetRPC {
+						observerURL = rpcURL
+						break
 					}
+				}
+				if observerURL == "" {
+					observerURL = strings.TrimSpace(ctx.Config.SyncRPC)
 				}
 			}
 			if observerURL == "" {
@@ -474,17 +474,54 @@ func TestG_PunishPaths(t *testing.T) {
 			}
 		})
 		if !useDormantTarget {
+			heightBeforeStop, err := testkit.WaitUntilClientHeight(
+				ctx.Clients[0],
+				"P-24 wait until stop window",
+				stopHeight,
+				ctx.BlockPollInterval(),
+				testkit.LongWindowTimeout(stopHeight-currentHeight),
+			)
+			if err != nil {
+				t.Fatalf("wait for stop window failed: %v", err)
+			}
+			if heightBeforeStop < stopHeight {
+				observedMax, observedSamples := testkit.ObserveHeights(ctx)
+				t.Fatalf("stop window not reached: want>=%d local=%d observed_max=%d samples=%v", stopHeight, heightBeforeStop, observedMax, observedSamples)
+			}
+			if heightBeforeStop > stopHeight+1 {
+				t.Skipf("missed precise stop window: stop_height=%d current=%d", stopHeight, heightBeforeStop)
+			}
 			if err := testkit.StopValidatorNode(ctx, targetVal, 30*time.Second); err != nil {
 				t.Fatalf("stop target validator %s failed: %v", targetVal.Hex(), err)
+			}
+			beforeProgress, beforeSamples := testkit.ObserveHeights(ctx)
+			if _, err := testkit.WaitUntilHeightOrStall(
+				ctx,
+				"P-24 post-stop chain recovery",
+				beforeProgress+1,
+				15*time.Second,
+				30*time.Second,
+			); err != nil {
+				afterProgress, afterSamples := testkit.ObserveHeights(ctx)
+				t.Fatalf("chain did not recover after stopping validator: before=%d after=%d before_samples=%v after_samples=%v err=%v", beforeProgress, afterProgress, beforeSamples, afterSamples, err)
 			}
 		}
 
 		if _, err := testkit.WaitUntilHeightOrStall(
 			ctx,
+			"P-24 executePending reach checkpoint",
+			checkpoint,
+			20*time.Second,
+			testkit.LongWindowTimeout(checkpoint-waitStartHeight),
+		); err != nil {
+			t.Fatalf("wait for checkpoint failed: %v", err)
+		}
+		if _, err := testkit.WaitUntilHeightOrStall(
+			ctx,
 			"P-24 executePending auto-consume",
 			checkpoint+1,
 			20*time.Second,
-			testkit.LongWindowTimeout(checkpoint+1-waitStartHeight),
+			testkit.LongWindowTimeout(1),
 		); err != nil {
 			t.Fatalf("wait for post-epoch non-epoch block failed: %v", err)
 		}

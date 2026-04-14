@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -189,6 +190,124 @@ func RecentCoinbases(c *testctx.CIContext, limit int) []common.Address {
 	return items
 }
 
+type HeightSample struct {
+	Name   string
+	URL    string
+	Height uint64
+	Error  string
+}
+
+func observeRPCHeight(name, rpcURL string) HeightSample {
+	sample := HeightSample{
+		Name: strings.TrimSpace(name),
+		URL:  strings.TrimSpace(rpcURL),
+	}
+	if sample.Name == "" {
+		sample.Name = sample.URL
+	}
+	if sample.URL == "" {
+		sample.Error = "empty rpc"
+		return sample
+	}
+
+	client, err := ethclient.Dial(sample.URL)
+	if err != nil {
+		sample.Error = err.Error()
+		return sample
+	}
+	defer client.Close()
+
+	height, err := client.BlockNumber(context.Background())
+	if err != nil {
+		sample.Error = err.Error()
+		return sample
+	}
+	sample.Height = height
+	return sample
+}
+
+func ObserveHeights(c *testctx.CIContext) (uint64, []HeightSample) {
+	if c == nil {
+		return 0, nil
+	}
+
+	seen := make(map[string]bool)
+	samples := make([]HeightSample, 0, 1)
+	appendSample := func(name, rpcURL string) {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" || seen[strings.ToLower(rpcURL)] {
+			return
+		}
+		seen[strings.ToLower(rpcURL)] = true
+		samples = append(samples, observeRPCHeight(name, rpcURL))
+	}
+
+	if c.Config != nil {
+		for idx, rpcURL := range c.Config.RPCs {
+			appendSample(fmt.Sprintf("rpc[%d]", idx), rpcURL)
+		}
+		for idx, rpcURL := range c.Config.ValidatorRPCs {
+			appendSample(fmt.Sprintf("validator[%d]", idx), rpcURL)
+		}
+		if syncRPC := strings.TrimSpace(c.Config.SyncRPC); syncRPC != "" {
+			appendSample("sync", syncRPC)
+		}
+		for idx, nodeRPC := range c.Config.NodeRPCs {
+			name := strings.TrimSpace(nodeRPC.Name)
+			if name == "" {
+				name = fmt.Sprintf("node_rpc[%d]", idx)
+			}
+			appendSample(name, nodeRPC.URL)
+		}
+	}
+
+	var maxHeight uint64
+	for _, sample := range samples {
+		if sample.Error == "" && sample.Height > maxHeight {
+			maxHeight = sample.Height
+		}
+	}
+	sort.Slice(samples, func(i, j int) bool {
+		if samples[i].Height != samples[j].Height {
+			return samples[i].Height > samples[j].Height
+		}
+		return samples[i].Name < samples[j].Name
+	})
+	return maxHeight, samples
+}
+
+func WaitUntilClientHeight(client *ethclient.Client, label string, target uint64, poll, timeout time.Duration) (uint64, error) {
+	if client == nil {
+		return 0, fmt.Errorf("%s: nil client", label)
+	}
+	if poll <= 0 {
+		poll = 100 * time.Millisecond
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+
+	deadline := time.Now().Add(timeout)
+	var lastHeight uint64
+	var lastErr error
+	for time.Now().Before(deadline) {
+		height, err := client.BlockNumber(context.Background())
+		if err == nil {
+			lastHeight = height
+			if height >= target {
+				return height, nil
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(poll)
+	}
+	if lastErr != nil {
+		return lastHeight, fmt.Errorf("%s: timeout waiting for client height target=%d current=%d err=%w", label, target, lastHeight, lastErr)
+	}
+	return lastHeight, fmt.Errorf("%s: timeout waiting for client height target=%d current=%d", label, target, lastHeight)
+}
+
 func WaitUntilHeightOrStall(c *testctx.CIContext, label string, target uint64, stallTimeout, overallTimeout time.Duration) (uint64, error) {
 	if c == nil || len(c.Clients) == 0 {
 		return 0, fmt.Errorf("context not initialized")
@@ -202,9 +321,20 @@ func WaitUntilHeightOrStall(c *testctx.CIContext, label string, target uint64, s
 
 	start := time.Now()
 	lastProgress := time.Now()
-	lastHeight, err := c.Clients[0].BlockNumber(context.Background())
-	if err != nil {
-		return 0, fmt.Errorf("%s: read initial block height failed: %w", label, err)
+	lastHeight, samples := ObserveHeights(c)
+	if len(samples) == 0 {
+		return 0, fmt.Errorf("%s: no rpc samples available", label)
+	}
+	if lastHeight == 0 {
+		var errs []string
+		for _, sample := range samples {
+			if sample.Error != "" {
+				errs = append(errs, fmt.Sprintf("%s=%s", sample.Name, sample.Error))
+			}
+		}
+		if len(errs) > 0 {
+			return 0, fmt.Errorf("%s: read initial block height failed: %s", label, strings.Join(errs, "; "))
+		}
 	}
 	if lastHeight >= target {
 		return lastHeight, nil
@@ -216,24 +346,26 @@ func WaitUntilHeightOrStall(c *testctx.CIContext, label string, target uint64, s
 	}
 
 	for time.Since(start) < overallTimeout {
-		current, err := c.Clients[0].BlockNumber(context.Background())
-		if err == nil {
-			if current >= target {
-				return current, nil
-			}
-			if current > lastHeight {
-				lastHeight = current
-				lastProgress = time.Now()
-			}
+		current, currentSamples := ObserveHeights(c)
+		if current >= target {
+			return current, nil
+		}
+		if current > lastHeight {
+			lastHeight = current
+			lastProgress = time.Now()
+		}
+		if len(currentSamples) > 0 {
+			samples = currentSamples
 		}
 
 		if time.Since(lastProgress) >= stallTimeout {
 			return 0, fmt.Errorf(
-				"%s: chain stalled before target height: target=%d current=%d stalled_for=%s recent_coinbases=%v",
+				"%s: chain stalled before target height: target=%d observed_max=%d stalled_for=%s samples=%v recent_coinbases=%v",
 				label,
 				target,
 				lastHeight,
 				time.Since(lastProgress).Round(time.Second),
+				samples,
 				RecentCoinbases(c, 12),
 			)
 		}
@@ -242,11 +374,12 @@ func WaitUntilHeightOrStall(c *testctx.CIContext, label string, target uint64, s
 	}
 
 	return 0, fmt.Errorf(
-		"%s: timeout waiting for target height: target=%d current=%d waited=%s recent_coinbases=%v",
+		"%s: timeout waiting for target height: target=%d observed_max=%d waited=%s samples=%v recent_coinbases=%v",
 		label,
 		target,
 		lastHeight,
 		overallTimeout.Round(time.Second),
+		samples,
 		RecentCoinbases(c, 12),
 	)
 }

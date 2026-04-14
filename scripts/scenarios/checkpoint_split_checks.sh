@@ -27,6 +27,7 @@ run_case() {
   local pattern="$2"
   local topology="${3:-single}"
   local case_label
+  local go_test_log
   case_label="$(basename "$pkg")_${pattern}_${topology}"
 
   scenario_select_case "$case_label"
@@ -45,12 +46,14 @@ run_case() {
   wait_for_scenario_rpc_stability "$ROOT_DIR/data/test_config.yaml" "$SCENARIO_BOOTSTRAP_TIMEOUT" "$SCENARIO_BOOTSTRAP_STABLE_ROUNDS"
 
   scenario_mark_stage "checkpoint-wait"
+  go_test_log="${SCENARIO_CASE_DIR}/go_test.log"
   (
     cd "$ROOT_DIR"
-    go test "$pkg" -run "$pattern" -count=1
+    go test "$pkg" -run "$pattern" -count=1 2>&1 | tee "$go_test_log"
   )
 
   scenario_mark_stage "completed"
+  archive_scenario_artifacts "PASS"
   scenario_network down
 }
 
@@ -58,5 +61,9 @@ run_case ./tests/rewards TestZ_CheckpointRuntimeRewardsStillUseOldSigner single
 run_case ./tests/punish TestZ_CheckpointRuntimePunishStillUsesOldSigner multi
 run_case ./tests/punish TestZ_ExecutePendingAutoByConsensus multi
 run_case ./tests/epoch TestZ_CheckpointTransitionSignerSplit single
+
+scenario_select_case "main"
+scenario_mark_stage "completed"
+archive_scenario_artifacts "PASS"
 
 echo "[scenario/checkpoint] 🟢 PASS"

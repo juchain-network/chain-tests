@@ -556,12 +556,8 @@ func TestZ_Manual_SingleValidatorLivenessAfterDoubleSign(t *testing.T) {
 	utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[0], 0x61, reporterCandidates), "first liveness double sign evidence failed")
 	utils.AssertNoError(t, submitDoubleSignEvidenceForTarget(t, targets[1], 0x71, reporterCandidates), "second liveness double sign evidence failed")
 	assertValidatorsJailed(t, targets...)
-
-	activeValidators, err := ctx.Validators.GetActiveValidators(nil)
-	utils.AssertNoError(t, err, "read active validators after multi double sign failed")
-	if len(activeValidators) != 1 {
-		t.Fatalf("expected exactly 1 active validator after two double-sign punishments, got %d", len(activeValidators))
-	}
+	assertValidatorsInactive(t, targets...)
+	assertVotingValidatorCount(t, 1)
 
 	if err := ctx.WaitForBlockProgress(1, 90*time.Second); err != nil {
 		t.Fatalf("chain did not progress with a single remaining validator: %v", err)
@@ -774,6 +770,45 @@ func assertValidatorsJailed(t *testing.T, targets ...doubleSignTarget) {
 		})
 		utils.AssertNoError(t, err, "validator should be jailed after double sign")
 	}
+}
+
+func assertValidatorsInactive(t *testing.T, targets ...doubleSignTarget) {
+	t.Helper()
+	for _, tgt := range targets {
+		err := testkit.WaitUntil(testkit.WaitUntilOptions{
+			MaxAttempts: 10,
+			Interval:    retrySleep(),
+			OnRetry: func(int) {
+				waitBlocks(t, 1)
+			},
+		}, func() (bool, error) {
+			active, err := ctx.Validators.IsValidatorActive(nil, tgt.validator)
+			if err != nil {
+				return false, err
+			}
+			return !active, nil
+		})
+		utils.AssertNoError(t, err, "validator should become inactive after double sign")
+	}
+}
+
+func assertVotingValidatorCount(t *testing.T, expected int64) {
+	t.Helper()
+	target := big.NewInt(expected)
+	err := testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 10,
+		Interval:    retrySleep(),
+		OnRetry: func(int) {
+			waitBlocks(t, 1)
+		},
+	}, func() (bool, error) {
+		count, err := ctx.Validators.GetVotingValidatorCount(nil)
+		if err != nil {
+			return false, err
+		}
+		return count != nil && count.Cmp(target) == 0, nil
+	})
+	utils.AssertNoError(t, err, "unexpected voting validator count after double sign")
 }
 
 func signHeaderClique(h *types.Header, key *ecdsa.PrivateKey) ([]byte, error) {

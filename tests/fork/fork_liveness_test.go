@@ -105,38 +105,12 @@ func forkPhases() []forkPhase {
 }
 
 func validateForkSchedule() error {
-	if cfg == nil || !strings.EqualFold(cfg.Fork.Mode, "upgrade") {
-		return nil
+	if err := testkit.ValidateUpgradeForkSchedule(cfg); err != nil {
+		return err
 	}
 	phases := forkPhases()
 	if len(phases) == 0 {
-		return fmt.Errorf("missing upgrade fork schedule")
-	}
-	for i := 1; i < len(phases); i++ {
-		if phases[i-1].at > phases[i].at {
-			return fmt.Errorf("invalid fork ordering: %s(%d) > %s(%d)", phases[i-1].name, phases[i-1].at, phases[i].name, phases[i].at)
-		}
-	}
-	seenEnabled := false
-	seenGap := false
-	for _, phase := range []forkPhase{
-		{name: "shanghai", at: cfg.Fork.Schedule.ShanghaiTime},
-		{name: "cancun", at: cfg.Fork.Schedule.CancunTime},
-		{name: "fixHeader", at: cfg.Fork.Schedule.FixHeaderTime},
-		{name: "posa", at: cfg.Fork.Schedule.PosaTime},
-		{name: "prague", at: cfg.Fork.Schedule.PragueTime},
-		{name: "osaka", at: cfg.Fork.Schedule.OsakaTime},
-	} {
-		if phase.at <= 0 {
-			if seenEnabled {
-				seenGap = true
-			}
-			continue
-		}
-		if seenGap {
-			return fmt.Errorf("invalid fork prefix: later phase %s(%d) is enabled after an earlier missing phase", phase.name, phase.at)
-		}
-		seenEnabled = true
+		return nil
 	}
 	if strings.EqualFold(cfg.Fork.Target, "allStaggered") {
 		for i := 1; i < len(phases); i++ {

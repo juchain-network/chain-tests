@@ -48,9 +48,6 @@ esac
 if [[ "$SMOKE_GENESIS_MODE" == "smoke" && -z "$SMOKE_SINGLE_FORK_TARGET" ]]; then
   die "SMOKE_SINGLE_FORK_TARGET is required when SMOKE_SINGLE_GENESIS_MODE=smoke"
 fi
-if [[ "$SMOKE_IMPL" == "reth" && "$SMOKE_GENESIS_MODE" == "smoke" && "${SMOKE_SINGLE_FORK_TARGET:-}" == *"osaka" ]]; then
-  die "reth runtime does not support Osaka smoke profiles yet: ${SMOKE_SINGLE_FORK_TARGET}"
-fi
 
 TMP_CFG="$(mktemp "${TMPDIR:-/tmp}/chain-tests-smoke-single.XXXXXX")"
 cp "$CONFIG_FILE" "$TMP_CFG"
@@ -67,6 +64,12 @@ awk -v impl="$SMOKE_IMPL" -v auth_mode="$SMOKE_AUTH_MODE" '
   { print }
 ' "$TMP_CFG" > "${TMP_CFG}.next"
 mv "${TMP_CFG}.next" "$TMP_CFG"
+
+SUPPORT_REPORT="$(runtime_case_support_report "$TMP_CFG" "single" "$SMOKE_GENESIS_MODE" "${SMOKE_SINGLE_FORK_TARGET:-}")"
+if [[ "$(printf '%s' "$SUPPORT_REPORT" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["supported"] else "0")')" != "1" ]]; then
+  SUPPORT_SUMMARY="$(printf '%s' "$SUPPORT_REPORT" | python3 -c 'import json,sys; d=json.load(sys.stdin); nodes=", ".join("{}:{}@{}->{}".format(n["node"], n["impl"], n["version"], n["max_fork"]) for n in d["nodes"]); print("required={} network_max={} nodes=[{}]".format(d["required_fork"], d["network_max_fork"], nodes))')"
+  die "smoke single case is not supported by runtime capability matrix ($SUPPORT_SUMMARY)"
+fi
 
 echo "[smoke-single] config=$TMP_CFG impl=$SMOKE_IMPL auth_mode=$SMOKE_AUTH_MODE genesis_mode=$SMOKE_GENESIS_MODE fork_target=${SMOKE_SINGLE_FORK_TARGET:-<none>}"
 

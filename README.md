@@ -229,7 +229,7 @@ Default `SMOKE_CASES`:
 
 Notes:
 
-- Osaka smoke cases are currently reported as `SKIP` when the selected runtime topology contains `reth`.
+- Smoke/fork matrices resolve runtime support from `runtime_capability.version_matrix` and skip cases whose required fork is above the weakest node in the selected topology.
 
 Matrix examples:
 
@@ -307,7 +307,7 @@ Optional variables:
 
 Notes:
 
-- Osaka upgrade cases are currently reported as `SKIP` when the selected runtime topology contains `reth`.
+- Upgrade cases are selected by the same `runtime_capability.version_matrix`; unsupported fork targets are reported as `SKIP` in matrix mode.
 
 Examples:
 
@@ -383,6 +383,9 @@ Important fields:
 - `runtime_nodes.nodeX.impl`: per-node implementation in mixed mode
 - `runtime_nodes.nodeX.binary`: optional per-node native binary override
 - `binaries.geth_native` / `binaries.reth_native`: native binary defaults when node-level override is empty
+- `runtime_capability.version_matrix`: version-to-max-fork map used by smoke/fork matrix skipping
+  - keys support exact (`1.16.8`), prefix (`1.16`), wildcard patch (`1.16.x`), and fallback (`default`)
+  - topology capability is the minimum max-fork across all selected nodes
 - `validator_auth.mode`: `auto | keystore` (reth validator auth, keystore-only)
 - `network.fork_target`:
   - smoke static profiles:

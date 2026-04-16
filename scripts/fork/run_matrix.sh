@@ -94,30 +94,6 @@ archive_case_artifacts() {
   fi
 }
 
-case_requires_osaka_support() {
-  local mode="$1"
-  local target="$2"
-  case "$mode:$target" in
-    upgrade:osakaTime|upgrade:allSame|upgrade:allStaggered)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-runtime_supports_case() {
-  local mode="$1"
-  local target="$2"
-  local impls
-  impls="$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")"
-  if case_requires_osaka_support "$mode" "$target" && [[ ",$impls," == *",reth,"* ]]; then
-    return 1
-  fi
-  return 0
-}
-
 run_case() {
   local mode="$1"
   local target="$2"
@@ -152,15 +128,19 @@ run_case() {
   local case_dir="$FORK_REPORT_DIR/${TOPOLOGY}_${case_slug}"
   local case_log="$case_dir/run.log"
   local repro="FORK_CASES=$label FORK_DELAY_SECONDS=$FORK_DELAY_SECONDS FORK_TEST_TIMEOUT=$FORK_TEST_TIMEOUT TOPOLOGY=$TOPOLOGY make test-fork"
+  local support_report
+  support_report="$(runtime_case_support_report "$CONFIG_FILE" "$TOPOLOGY" "$mode" "$target")"
 
   mkdir -p "$case_dir"
 
-  if ! runtime_supports_case "$mode" "$target"; then
+  if [[ "$(printf '%s' "$support_report" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["supported"] else "0")')" != "1" ]]; then
+    local support_summary
+    support_summary="$(printf '%s' "$support_report" | python3 -c 'import json,sys; d=json.load(sys.stdin); nodes=", ".join("{}:{}@{}->{}".format(n["node"], n["impl"], n["version"], n["max_fork"]) for n in d["nodes"]); print("required={} network_max={} nodes=[{}]".format(d["required_fork"], d["network_max_fork"], nodes))')"
     {
       echo "=== [fork/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} ==="
       echo "Config: $CONFIG_FILE"
       echo "ReportDir: $case_dir"
-      echo "Case skipped: runtime set $(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY") does not support Osaka yet"
+      echo "Case skipped: runtime capability mismatch ($support_summary)"
       echo "Case result rc=0"
     } > "$case_log"
     cat "$case_log"

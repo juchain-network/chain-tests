@@ -25,6 +25,30 @@ binaries:
   geth_native: ""
   reth_native: ""
 
+# Runtime capability matrix used by smoke/fork case selection.
+# The network capability is the minimum supported fork across all selected nodes.
+# Version keys support:
+# - exact: 1.16.8
+# - prefix: 1.16
+# - wildcard patch: 1.16.x
+# - fallback: default
+runtime_capability:
+  fork_order:
+    - poa
+    - shanghai
+    - cancun
+    - fixHeader
+    - posa
+    - prague
+    - osaka
+  version_matrix:
+    geth:
+      "1.13.x": posa
+      "1.16.x": osaka
+    reth:
+      "1.1.x": osaka
+      "1.11.x": osaka
+
 # Native-only per-node runtime mapping for runtime.impl_mode=mixed.
 # In mixed mode, every node must set its own impl. `binary` is optional:
 # - if set, it overrides the node's native binary

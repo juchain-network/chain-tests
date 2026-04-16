@@ -176,30 +176,6 @@ resolve_artifact_paths() {
   manifest_path="$(printf '%s\n' "$artifact_triplet" | awk -F '\t' 'NR==1 {print $3}')"
 }
 
-case_requires_osaka_support() {
-  local mode="$1"
-  local target="$2"
-  case "$mode:$target" in
-    smoke:*osaka|upgrade:osakaTime|upgrade:allSame|upgrade:allStaggered)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-runtime_supports_case() {
-  local mode="$1"
-  local target="$2"
-  local impls
-  impls="$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")"
-  if case_requires_osaka_support "$mode" "$target" && [[ ",$impls," == *",reth,"* ]]; then
-    return 1
-  fi
-  return 0
-}
-
 run_case() {
   local mode="$1"
   local target="$2"
@@ -219,12 +195,16 @@ run_case() {
   mkdir -p "$case_dir"
 
   local repro="SMOKE_CASES=$label TOPOLOGY=$TOPOLOGY MATRIX=1 make test-smoke"
+  local support_report
+  support_report="$(runtime_case_support_report "$CONFIG_FILE" "$TOPOLOGY" "$mode" "$target")"
 
-  if ! runtime_supports_case "$mode" "$target"; then
+  if [[ "$(printf '%s' "$support_report" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["supported"] else "0")')" != "1" ]]; then
+    local support_summary
+    support_summary="$(printf '%s' "$support_report" | python3 -c 'import json,sys; d=json.load(sys.stdin); nodes=", ".join("{}:{}@{}->{}".format(n["node"], n["impl"], n["version"], n["max_fork"]) for n in d["nodes"]); print("required={} network_max={} nodes=[{}]".format(d["required_fork"], d["network_max_fork"], nodes))')"
     printf '=== [smoke/%s] case=%s mode=%s target=%s ===\n' "$TOPOLOGY" "$label" "$mode" "${target:-<none>}" > "$case_log"
     printf 'Config: %s\n' "$CONFIG_FILE" >> "$case_log"
     printf 'ReportDir: %s\n' "$case_dir" >> "$case_log"
-    printf 'Case skipped: runtime set %s does not support Osaka yet\n' "$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")" >> "$case_log"
+    printf 'Case skipped: runtime capability mismatch (%s)\n' "$support_summary" >> "$case_log"
     status="SKIP"
     resolve_artifact_paths "$(emit_case_artifacts "$case_dir" "$TOPOLOGY" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
     cat "$case_log"

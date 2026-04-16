@@ -144,7 +144,7 @@ help:
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
-	@echo "  test-scenario   - Scenario runs: SCENARIO=all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish CHECK=sync|state-root|all"
+	@echo "  test-scenario   - Scenario runs: SCENARIO=all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish|liveness-repro CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak PERF_SCOPE=single|multi (default: single)"
 	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
@@ -170,7 +170,7 @@ help:
 	@echo "  GROUPS=$(GROUPS)                 # ci MODE=groups group list override"
 	@echo "  TOPOLOGY=$(TOPOLOGY)             # init/test-smoke/test-fork: single|multi|all"
 	@echo "  MATRIX=$(MATRIX)                 # test-smoke: 0|1"
-	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish"
+	@echo "  SCENARIO=$(SCENARIO)             # test-scenario: all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish|liveness-repro"
 	@echo "  CHECK=$(CHECK)                   # test-scenario interop check: sync|state-root|all"
 	@echo "  SCOPE=$(SCOPE)                   # test-regression: core|full"
 	@echo "  PROFILE=$(PROFILE)               # ci profile: pr|nightly|release|weekly-soak"
@@ -516,7 +516,7 @@ test-scenario:
 	scenario="$(SCENARIO)"; \
 	check="$(if $(CHECK),$(CHECK),all)"; \
 	if [ -z "$$scenario" ]; then \
-		echo "Set SCENARIO=<all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish>"; \
+		echo "Set SCENARIO=<all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish|liveness-repro>"; \
 		exit 1; \
 	fi; \
 	case "$$scenario" in \
@@ -529,6 +529,7 @@ test-scenario:
 			$(MAKE) SCENARIO=rotation-live test-scenario; \
 			$(MAKE) SCENARIO=add-validator-live test-scenario; \
 			$(MAKE) SCENARIO=add-validator-punish test-scenario; \
+			$(MAKE) SCENARIO=liveness-repro test-scenario; \
 			$(MAKE) SCENARIO=posa test-scenario; \
 			$(MAKE) SCENARIO=interop CHECK=all test-scenario; \
 			;; \
@@ -546,6 +547,9 @@ test-scenario:
 			;; \
 		add-validator-punish) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/add_validator_punish_checks.sh; \
+			;; \
+		liveness-repro) \
+			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/liveness_repro_checks.sh; \
 			;; \
 		negative) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" bash ./scripts/scenarios/negative_checks.sh; \
@@ -587,7 +591,7 @@ test-scenario:
 			;; \
 		*) \
 			echo "Unsupported SCENARIO=$$scenario"; \
-			echo "Expected one of: all posa interop bootstrap upgrade checkpoint negative rotation-punish rotation-live add-validator-live add-validator-punish"; \
+			echo "Expected one of: all posa interop bootstrap upgrade checkpoint negative rotation-punish rotation-live add-validator-live add-validator-punish liveness-repro"; \
 			exit 1; \
 			;; \
 	esac

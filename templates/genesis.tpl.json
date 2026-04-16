@@ -20,9 +20,21 @@
         "target": 3,
         "max": 6,
         "baseFeeUpdateFraction": 3338477
+      },
+      "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      },
+      "osaka": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
       }
     },
     "shanghaiTime": 0,
+    "pragueTime": 0,
+    "osakaTime": 0,
     "posaTime": 0,
     "fixHeaderTime":0,
     "congress": {

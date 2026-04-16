@@ -82,9 +82,9 @@ network:
   genesis_mode: "posa"
   # Used only when genesis_mode=upgrade.
   # Valid values:
-  # - shanghaiTime | cancunTime | posaTime | fixHeaderTime
-  # - allStaggered  -> shanghai/cancun/fixHeader/posa all non-zero and +60s increment
-  # - allSame       -> shanghai/cancun/fixHeader/posa all equal and non-zero
+  # - shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime
+  # - allStaggered  -> shanghai/cancun/fixHeader/posa/prague/osaka all non-zero and +60s increment
+  # - allSame       -> shanghai/cancun/fixHeader/posa/prague/osaka all equal and non-zero
   #
   # Used only when genesis_mode=smoke.
   # Valid values:
@@ -93,6 +93,8 @@ network:
   # - poa_shanghai_cancun
   # - poa_shanghai_cancun_fixheader
   # - poa_shanghai_cancun_fixheader_posa
+  # - poa_shanghai_cancun_fixheader_posa_prague
+  # - poa_shanghai_cancun_fixheader_posa_prague_osaka
   fork_target: ""
   # Fork activation delay from init time (seconds), upgrade mode only.
   fork_delay_seconds: 120

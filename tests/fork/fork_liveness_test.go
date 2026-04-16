@@ -65,13 +65,15 @@ func (s *trafficStats) lastErr() string {
 
 func forkScheduleSummary() string {
 	return fmt.Sprintf(
-		"target=%s scheduled=%d schedule[shanghai=%d cancun=%d fixHeader=%d posa=%d]",
+		"target=%s scheduled=%d schedule[shanghai=%d cancun=%d fixHeader=%d posa=%d prague=%d osaka=%d]",
 		cfg.Fork.Target,
 		cfg.Fork.ScheduledTime,
 		cfg.Fork.Schedule.ShanghaiTime,
 		cfg.Fork.Schedule.CancunTime,
 		cfg.Fork.Schedule.FixHeaderTime,
 		cfg.Fork.Schedule.PosaTime,
+		cfg.Fork.Schedule.PragueTime,
+		cfg.Fork.Schedule.OsakaTime,
 	)
 }
 
@@ -90,6 +92,8 @@ func forkPhases() []forkPhase {
 		{name: "cancun", at: schedule.CancunTime},
 		{name: "fixHeader", at: schedule.FixHeaderTime},
 		{name: "posa", at: schedule.PosaTime},
+		{name: "prague", at: schedule.PragueTime},
+		{name: "osaka", at: schedule.OsakaTime},
 	}
 	out := make([]forkPhase, 0, len(phases))
 	for _, phase := range phases {
@@ -112,6 +116,27 @@ func validateForkSchedule() error {
 		if phases[i-1].at > phases[i].at {
 			return fmt.Errorf("invalid fork ordering: %s(%d) > %s(%d)", phases[i-1].name, phases[i-1].at, phases[i].name, phases[i].at)
 		}
+	}
+	seenEnabled := false
+	seenGap := false
+	for _, phase := range []forkPhase{
+		{name: "shanghai", at: cfg.Fork.Schedule.ShanghaiTime},
+		{name: "cancun", at: cfg.Fork.Schedule.CancunTime},
+		{name: "fixHeader", at: cfg.Fork.Schedule.FixHeaderTime},
+		{name: "posa", at: cfg.Fork.Schedule.PosaTime},
+		{name: "prague", at: cfg.Fork.Schedule.PragueTime},
+		{name: "osaka", at: cfg.Fork.Schedule.OsakaTime},
+	} {
+		if phase.at <= 0 {
+			if seenEnabled {
+				seenGap = true
+			}
+			continue
+		}
+		if seenGap {
+			return fmt.Errorf("invalid fork prefix: later phase %s(%d) is enabled after an earlier missing phase", phase.name, phase.at)
+		}
+		seenEnabled = true
 	}
 	if strings.EqualFold(cfg.Fork.Target, "allStaggered") {
 		for i := 1; i < len(phases); i++ {
@@ -376,7 +401,17 @@ func TestF_ForkLiveness(t *testing.T) {
 	}
 
 	verifyHistoricalBlocks(t, nodes[0], startHeights[nodes[0].name], maxHeights[nodes[0].name])
-	verifyCancunFields(t, nodes[0])
+	if err := testkit.VerifyForkRPCSurface(cfg, nodes[0].rpcURL, testkit.RuntimeImplForNode(cfg, 0)); err != nil {
+		t.Fatalf("verify fork rpc surface failed: %v", err)
+	}
+	if cfg != nil && cfg.Fork.Schedule.OsakaTime > 0 {
+		head, herr := latestHead(primary)
+		if herr == nil && int64(head.timestamp) >= cfg.Fork.Schedule.OsakaTime && strings.EqualFold(testkit.RuntimeImplForNode(cfg, 0), "geth") {
+			if err := testkit.VerifyOsakaTxGasCap(primary, funderKey, chainID); err != nil {
+				t.Fatalf("verify osaka gas cap failed: %v", err)
+			}
+		}
+	}
 	t.Logf("fork traffic summary: sent=%d failed=%d mode=%s target=%s", sent, failed, cfg.Fork.Mode, cfg.Fork.Target)
 }
 
@@ -820,85 +855,5 @@ func verifyHistoricalBlocks(t *testing.T, node forkNode, startHeight, endHeight 
 		if strings.TrimSpace(stateRoot) == "" || strings.EqualFold(stateRoot, "null") {
 			t.Fatalf("missing stateRoot at height=%d", height)
 		}
-	}
-}
-
-func verifyCancunFields(t *testing.T, node forkNode) {
-	t.Helper()
-
-	expectCancun := false
-	expectFixHeader := false
-	if strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "1") || strings.EqualFold(os.Getenv("EXPECT_CANCUN_FIELDS"), "true") {
-		expectCancun = true
-	}
-	if strings.EqualFold(os.Getenv("EXPECT_FIXHEADER_FIELDS"), "1") || strings.EqualFold(os.Getenv("EXPECT_FIXHEADER_FIELDS"), "true") {
-		expectFixHeader = true
-	}
-	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
-		expectCancun = true
-	}
-	if !expectCancun {
-		return
-	}
-
-	rpcClient, err := rpc.DialContext(context.Background(), node.rpcURL)
-	if err != nil {
-		t.Fatalf("dial rpc for cancun checks failed: %v", err)
-	}
-	defer rpcClient.Close()
-
-	var block map[string]any
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err = rpcClient.CallContext(ctx, &block, "eth_getBlockByNumber", "latest", false)
-	cancel()
-	if err != nil {
-		t.Fatalf("eth_getBlockByNumber(latest) failed: %v", err)
-	}
-	if block == nil {
-		t.Fatalf("latest block response is nil")
-	}
-
-	tsRaw, _ := block["timestamp"].(string)
-	ts, parseErr := parseUint64Hex(tsRaw)
-	if parseErr != nil {
-		t.Fatalf("parse latest block timestamp failed: %v", parseErr)
-	}
-
-	if cfg != nil && cfg.Fork.Schedule.CancunTime > 0 {
-		if int64(ts) < cfg.Fork.Schedule.CancunTime {
-			t.Logf("skip cancun field assertion: latest timestamp=%d < cancun_time=%d", ts, cfg.Fork.Schedule.CancunTime)
-			return
-		}
-	}
-	if cfg != nil && cfg.Fork.Schedule.FixHeaderTime > 0 && int64(ts) >= cfg.Fork.Schedule.FixHeaderTime {
-		expectFixHeader = true
-	}
-
-	required := []string{"blobGasUsed", "excessBlobGas"}
-	for _, field := range required {
-		value, exists := block[field]
-		if !exists || value == nil {
-			t.Fatalf("missing Cancun field %s in latest block", field)
-		}
-		str, _ := value.(string)
-		if strings.TrimSpace(str) == "" || strings.EqualFold(str, "null") {
-			t.Fatalf("empty Cancun field %s in latest block", field)
-		}
-	}
-
-	if !expectFixHeader {
-		return
-	}
-
-	value, exists := block["parentBeaconBlockRoot"]
-	if !exists || value == nil {
-		t.Fatalf("missing fixHeader field parentBeaconBlockRoot in latest block")
-	}
-	root, _ := value.(string)
-	if strings.TrimSpace(root) == "" || strings.EqualFold(root, "null") {
-		t.Fatalf("empty fixHeader field parentBeaconBlockRoot in latest block")
-	}
-	if !strings.EqualFold(root, "0x0000000000000000000000000000000000000000000000000000000000000000") {
-		t.Fatalf("invalid parentBeaconBlockRoot post-fixHeaderTime: have=%s", root)
 	}
 }

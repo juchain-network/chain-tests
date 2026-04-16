@@ -32,7 +32,8 @@ with open(results_file, "r", encoding="utf-8") as f:
 rows.sort(key=lambda r: (r.get("topology", ""), r.get("case", "")))
 
 passed = sum(1 for r in rows if r.get("status") == "PASS")
-failed = sum(1 for r in rows if r.get("status") != "PASS")
+failed = sum(1 for r in rows if r.get("status") == "FAIL")
+skipped = sum(1 for r in rows if r.get("status") == "SKIP")
 
 def display_status(status: str) -> str:
     normalized = (status or "").strip().upper()
@@ -49,7 +50,8 @@ def summarize_topology(name: str):
     return {
         "total": len(group),
         "passed": sum(1 for r in group if r.get("status") == "PASS"),
-        "failed": sum(1 for r in group if r.get("status") != "PASS"),
+        "failed": sum(1 for r in group if r.get("status") == "FAIL"),
+        "skipped": sum(1 for r in group if r.get("status") == "SKIP"),
     }
 
 matrix = {
@@ -57,6 +59,7 @@ matrix = {
     "total": len(rows),
     "passed": passed,
     "failed": failed,
+    "skipped": skipped,
     "status": "PASS" if failed == 0 else "FAIL",
     "topology": {
         "single": summarize_topology("single"),
@@ -77,9 +80,10 @@ with open(md_path, "w", encoding="utf-8") as f:
     f.write(f"- Total: {matrix['total']}\n")
     f.write(f"- Passed: {matrix['passed']}\n")
     f.write(f"- Failed: {matrix['failed']}\n")
+    f.write(f"- Skipped: {matrix['skipped']}\n")
     f.write(f"- Status: {display_status(matrix['status'])}\n")
-    f.write(f"- Single: total={matrix['topology']['single']['total']} pass={matrix['topology']['single']['passed']} fail={matrix['topology']['single']['failed']}\n")
-    f.write(f"- Multi: total={matrix['topology']['multi']['total']} pass={matrix['topology']['multi']['passed']} fail={matrix['topology']['multi']['failed']}\n\n")
+    f.write(f"- Single: total={matrix['topology']['single']['total']} pass={matrix['topology']['single']['passed']} fail={matrix['topology']['single']['failed']} skip={matrix['topology']['single']['skipped']}\n")
+    f.write(f"- Multi: total={matrix['topology']['multi']['total']} pass={matrix['topology']['multi']['passed']} fail={matrix['topology']['multi']['failed']} skip={matrix['topology']['multi']['skipped']}\n\n")
     f.write("| Topology | Case | Mode | Target | Status | RC | Report | Summary | Manifest | Log | Repro |\n")
     f.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
     for r in rows:

@@ -83,6 +83,7 @@ def main():
     pass_count = sum(1 for s in steps if (s.get("status") or "").upper() == "PASS")
     fail_count = sum(1 for s in steps if (s.get("status") or "").upper() == "FAIL")
     timeout_count = sum(1 for s in steps if (s.get("status") or "").upper() == "TIMEOUT")
+    skip_count = sum(1 for s in steps if (s.get("status") or "").upper() == "SKIP")
     total = len(steps)
     duration_total = sum(int(s.get("duration_sec", 0) or 0) for s in steps)
 
@@ -99,6 +100,7 @@ def main():
         "pass_steps": pass_count,
         "fail_steps": fail_count,
         "timeout_steps": timeout_count,
+        "skip_steps": skip_count,
         "duration_sec": duration_total,
         "categories": {
             cat: {
@@ -106,6 +108,7 @@ def main():
                 "pass": sum(1 for i in items if (i.get("status") or "").upper() == "PASS"),
                 "fail": sum(1 for i in items if (i.get("status") or "").upper() == "FAIL"),
                 "timeout": sum(1 for i in items if (i.get("status") or "").upper() == "TIMEOUT"),
+                "skip": sum(1 for i in items if (i.get("status") or "").upper() == "SKIP"),
                 "duration_sec": sum(int(i.get("duration_sec", 0) or 0) for i in items),
             }
             for cat, items in sorted(by_category.items(), key=lambda x: x[0])
@@ -127,14 +130,15 @@ def main():
         f.write(f"- Passed: {pass_count}\n")
         f.write(f"- Failed: {fail_count}\n")
         f.write(f"- Timeout: {timeout_count}\n")
+        f.write(f"- Skipped: {skip_count}\n")
         f.write(f"- Total Duration(s): {duration_total}\n\n")
 
         f.write("## Category Summary\n\n")
-        f.write("| Category | Total | Pass | Fail | Timeout | Duration(s) |\n")
-        f.write("| --- | ---: | ---: | ---: | ---: | ---: |\n")
+        f.write("| Category | Total | Pass | Fail | Timeout | Skip | Duration(s) |\n")
+        f.write("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
         for category, item in summary["categories"].items():
             f.write(
-                f"| {category} | {item['total']} | {item['pass']} | {item['fail']} | {item['timeout']} | {item['duration_sec']} |\n"
+                f"| {category} | {item['total']} | {item['pass']} | {item['fail']} | {item['timeout']} | {item['skip']} | {item['duration_sec']} |\n"
             )
         f.write("\n")
 

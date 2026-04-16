@@ -25,7 +25,7 @@ case "$TOPOLOGY" in
     ;;
 esac
 
-SMOKE_CASES="${SMOKE_CASES:-poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa}"
+SMOKE_CASES="${SMOKE_CASES:-poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka}"
 SMOKE_SINGLE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")}"
 SMOKE_REPORT_DIR="${SMOKE_REPORT_DIR:-$PROJECT_ROOT/reports/smoke_matrix_${TOPOLOGY}_$(date +%Y%m%d_%H%M%S)}"
 COLLECTOR_SCRIPT="$PROJECT_ROOT/scripts/smoke/collect_matrix_report.sh"
@@ -53,7 +53,7 @@ case_to_mode_target() {
     poa)
       printf 'poa\t\n'
       ;;
-    poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa)
+    poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka)
       printf 'smoke\t%s\n' "$label"
       ;;
     *)
@@ -78,15 +78,16 @@ find_ci_artifact() {
   echo ""
 }
 
-emit_single_case_artifacts() {
+emit_case_artifacts() {
   local case_dir="$1"
-  local label="$2"
-  local mode="$3"
-  local target="$4"
-  local status="$5"
-  local rc="$6"
-  local repro="$7"
-  local case_log="$8"
+  local topology="$2"
+  local label="$3"
+  local mode="$4"
+  local target="$5"
+  local status="$6"
+  local rc="$7"
+  local repro="$8"
+  local case_log="$9"
   local report_path="$case_dir/report.md"
   local summary_path="$case_dir/summary.json"
   local manifest_path="$case_dir/manifest.json"
@@ -99,7 +100,7 @@ emit_single_case_artifacts() {
 # Smoke Matrix Case Report
 
 - Generated: $generated_at
-- Topology: single
+- Topology: $topology
 - Case: $label
 - Genesis Mode: $mode
 - Target: ${target:-<none>}
@@ -112,13 +113,13 @@ REPORT
   cat > "$summary_path" <<SUMMARY
 {
   "generated_at": "$generated_at",
-  "mode": "smoke-single-case",
+  "mode": "smoke-case",
   "status": "$status",
   "total_step_count": 1,
-  "failed_step_count": $([[ "$status" == "PASS" ]] && echo 0 || echo 1),
+  "failed_step_count": $([[ "$status" == "FAIL" ]] && echo 1 || echo 0),
   "total_pass_tests": $([[ "$status" == "PASS" ]] && echo 1 || echo 0),
-  "total_fail_tests": $([[ "$status" == "PASS" ]] && echo 0 || echo 1),
-  "total_skip_tests": 0,
+  "total_fail_tests": $([[ "$status" == "FAIL" ]] && echo 1 || echo 0),
+  "total_skip_tests": $([[ "$status" == "SKIP" ]] && echo 1 || echo 0),
   "report_path": "$report_path",
   "steps": [
     {
@@ -126,8 +127,8 @@ REPORT
       "status": "$status",
       "duration": 0,
       "pass_count": $([[ "$status" == "PASS" ]] && echo 1 || echo 0),
-      "fail_count": $([[ "$status" == "PASS" ]] && echo 0 || echo 1),
-      "skip_count": 0,
+      "fail_count": $([[ "$status" == "FAIL" ]] && echo 1 || echo 0),
+      "skip_count": $([[ "$status" == "SKIP" ]] && echo 1 || echo 0),
       "log_path": "$case_log"
     }
   ]
@@ -137,7 +138,7 @@ SUMMARY
   cat > "$manifest_path" <<MANIFEST
 {
   "generated_at": "$generated_at",
-  "mode": "smoke-single-case",
+  "mode": "smoke-case",
   "runtime_backend": "native",
   "runtime_impl": "",
   "runtime_impl_mode": "single",
@@ -175,6 +176,30 @@ resolve_artifact_paths() {
   manifest_path="$(printf '%s\n' "$artifact_triplet" | awk -F '\t' 'NR==1 {print $3}')"
 }
 
+case_requires_osaka_support() {
+  local mode="$1"
+  local target="$2"
+  case "$mode:$target" in
+    smoke:*osaka|upgrade:osakaTime|upgrade:allSame|upgrade:allStaggered)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+runtime_supports_case() {
+  local mode="$1"
+  local target="$2"
+  local impls
+  impls="$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")"
+  if case_requires_osaka_support "$mode" "$target" && [[ ",$impls," == *",reth,"* ]]; then
+    return 1
+  fi
+  return 0
+}
+
 run_case() {
   local mode="$1"
   local target="$2"
@@ -194,6 +219,20 @@ run_case() {
   mkdir -p "$case_dir"
 
   local repro="SMOKE_CASES=$label TOPOLOGY=$TOPOLOGY MATRIX=1 make test-smoke"
+
+  if ! runtime_supports_case "$mode" "$target"; then
+    printf '=== [smoke/%s] case=%s mode=%s target=%s ===\n' "$TOPOLOGY" "$label" "$mode" "${target:-<none>}" > "$case_log"
+    printf 'Config: %s\n' "$CONFIG_FILE" >> "$case_log"
+    printf 'ReportDir: %s\n' "$case_dir" >> "$case_log"
+    printf 'Case skipped: runtime set %s does not support Osaka yet\n' "$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")" >> "$case_log"
+    status="SKIP"
+    resolve_artifact_paths "$(emit_case_artifacts "$case_dir" "$TOPOLOGY" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
+    cat "$case_log"
+    echo "$(status_display "$status") [smoke/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} rc=$rc"
+    printf '%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n' \
+      "$TOPOLOGY" "$label" "$mode" "$target" "$status" "$rc" "$case_log" "$report_path" "$summary_path" "$manifest_path" "$repro" >> "$RESULTS_TSV"
+    return 0
+  fi
 
   set +e
   {
@@ -236,11 +275,11 @@ run_case() {
     summary_path="$(find_ci_artifact "$case_dir/reports" summary.json)"
     manifest_path="$(find_ci_artifact "$case_dir/reports" manifest.json)"
   else
-    resolve_artifact_paths "$(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
+    resolve_artifact_paths "$(emit_case_artifacts "$case_dir" "$TOPOLOGY" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
   fi
 
   if [[ -z "$report_path" || -z "$summary_path" || -z "$manifest_path" ]]; then
-    resolve_artifact_paths "$(emit_single_case_artifacts "$case_dir" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
+    resolve_artifact_paths "$(emit_case_artifacts "$case_dir" "$TOPOLOGY" "$label" "$mode" "$target" "$status" "$rc" "$repro" "$case_log")"
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n' \

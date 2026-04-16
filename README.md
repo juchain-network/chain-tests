@@ -146,8 +146,8 @@ Notes:
 - `TOPOLOGY`: `single | multi`
 - `INIT_MODE`: `poa | posa | smoke | upgrade`
 - `INIT_TARGET`:
-  - when `INIT_MODE=smoke`: `poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa`
-  - when `INIT_MODE=upgrade`: `shanghaiTime | cancunTime | posaTime | fixHeaderTime | allStaggered | allSame`
+  - when `INIT_MODE=smoke`: `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka`
+  - when `INIT_MODE=upgrade`: `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime | allStaggered | allSame`
 - After `make init`, lifecycle commands operate on the generated runtime session snapshot:
   - default snapshot path: `data/runtime_session.yaml`
   - machine-readable copy: `data/runtime_session.json`
@@ -224,6 +224,12 @@ Default `SMOKE_CASES`:
 - `poa_shanghai_cancun`
 - `poa_shanghai_cancun_fixheader`
 - `poa_shanghai_cancun_fixheader_posa`
+- `poa_shanghai_cancun_fixheader_posa_prague`
+- `poa_shanghai_cancun_fixheader_posa_prague_osaka`
+
+Notes:
+
+- Osaka smoke cases are currently reported as `SKIP` when the selected runtime topology contains `reth`.
 
 Matrix examples:
 
@@ -294,10 +300,14 @@ TOPOLOGY=all make test-fork
 
 Optional variables:
 
-- `FORK_CASES` (default: `poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,upgrade:allStaggered,upgrade:allSame,posa`)
+- `FORK_CASES` (default: `poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:fixHeaderTime,upgrade:posaTime,upgrade:pragueTime,upgrade:osakaTime,upgrade:allStaggered,upgrade:allSame,posa`)
 - `FORK_DELAY_SECONDS`
 - `FORK_TEST_TIMEOUT`
 - `FORK_REPORT_DIR`
+
+Notes:
+
+- Osaka upgrade cases are currently reported as `SKIP` when the selected runtime topology contains `reth`.
 
 Examples:
 
@@ -376,11 +386,11 @@ Important fields:
 - `validator_auth.mode`: `auto | keystore` (reth validator auth, keystore-only)
 - `network.fork_target`:
   - smoke static profiles:
-    - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa`
+    - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka`
   - upgrade dynamic targets:
-  - `shanghaiTime | cancunTime | posaTime | fixHeaderTime`
-  - `allStaggered` (all four fork timestamps are non-zero and increase by 60s)
-  - `allSame` (all four fork timestamps are equal and non-zero)
+  - `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime`
+  - `allStaggered` (all six fork timestamps are non-zero and increase by 60s)
+  - `allSame` (all six fork timestamps are equal and non-zero)
 - `network.fork_delay_seconds`: fork delay in seconds for upgrade mode
 - `network.epoch`: base epoch length (can be overridden per run: `make init EPOCH=60`)
 - `tests.profile`: `fast | default | edge`

@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 
 	"juchain.org/chain/tools/ci/internal/config"
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 const (
@@ -125,6 +126,14 @@ func TestS_SmokeChainLivenessAllNodes(t *testing.T) {
 	}
 	if traffic.failed > traffic.sent*2 {
 		t.Fatalf("smoke traffic too many failures: sent=%d failed=%d lastErr=%v", traffic.sent, traffic.failed, traffic.lastErr)
+	}
+	if err := testkit.VerifyForkRPCSurface(cfg, nodes[0].rpcURL, testkit.RuntimeImplForNode(cfg, 0)); err != nil {
+		t.Fatalf("verify smoke rpc surface failed: %v", err)
+	}
+	if cfg != nil && cfg.Fork.Mode == "smoke" && strings.Contains(strings.ToLower(cfg.Fork.Target), "osaka") && strings.EqualFold(testkit.RuntimeImplForNode(cfg, 0), "geth") {
+		if err := testkit.VerifyOsakaTxGasCap(nodes[0].client, ctx.FunderKey, ctx.ChainID); err != nil {
+			t.Fatalf("verify osaka gas cap failed: %v", err)
+		}
 	}
 
 	t.Logf("smoke traffic summary: sent=%d failed=%d", traffic.sent, traffic.failed)

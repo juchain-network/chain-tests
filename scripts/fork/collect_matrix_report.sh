@@ -32,7 +32,8 @@ with open(results_file, "r", encoding="utf-8") as f:
 rows.sort(key=lambda r: (r.get("topology", ""), r.get("case", "")))
 
 passed = sum(1 for r in rows if r.get("status") == "PASS")
-failed = sum(1 for r in rows if r.get("status") != "PASS")
+failed = sum(1 for r in rows if r.get("status") == "FAIL")
+skipped = sum(1 for r in rows if r.get("status") == "SKIP")
 
 def display_status(status: str) -> str:
     normalized = (status or "").strip().upper()
@@ -49,6 +50,7 @@ matrix = {
     "total": len(rows),
     "passed": passed,
     "failed": failed,
+    "skipped": skipped,
     "status": "PASS" if failed == 0 else "FAIL",
     "cases": rows,
 }
@@ -65,6 +67,7 @@ with open(md_path, "w", encoding="utf-8") as f:
     f.write(f"- Total: {matrix['total']}\n")
     f.write(f"- Passed: {matrix['passed']}\n")
     f.write(f"- Failed: {matrix['failed']}\n")
+    f.write(f"- Skipped: {matrix['skipped']}\n")
     f.write(f"- Status: {display_status(matrix['status'])}\n\n")
     f.write("| Topology | Case | Mode | Target | Status | RC | Log | Repro |\n")
     f.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")

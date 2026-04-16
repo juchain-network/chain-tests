@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 const (
@@ -77,6 +80,14 @@ func TestS_SmokeSingleNodeLiveness(t *testing.T) {
 	growth := end - start
 	if growth < singleSmokeMinGrowth {
 		t.Fatalf("single-node growth too low: start=%d end=%d growth=%d", start, end, growth)
+	}
+	if err := testkit.VerifyForkRPCSurface(cfg, node.rpcURL, testkit.RuntimeImplForNode(cfg, 0)); err != nil {
+		t.Fatalf("verify single-node smoke rpc surface failed: %v", err)
+	}
+	if cfg != nil && cfg.Fork.Mode == "smoke" && strings.Contains(strings.ToLower(cfg.Fork.Target), "osaka") && strings.EqualFold(testkit.RuntimeImplForNode(cfg, 0), "geth") {
+		if err := testkit.VerifyOsakaTxGasCap(node.client, ctx.FunderKey, ctx.ChainID); err != nil {
+			t.Fatalf("verify osaka gas cap failed: %v", err)
+		}
 	}
 
 	t.Logf("single-node smoke node=%s rpc=%s start=%d end=%d growth=%d sent=%d failed=%d", node.name, node.rpcURL, start, end, growth, traffic.sent, traffic.failed)

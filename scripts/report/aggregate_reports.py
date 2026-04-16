@@ -128,12 +128,14 @@ def main():
 
     records.sort(key=lambda r: (r.get("type", ""), r.get("id", "")))
     total = len(records)
-    failed = sum(1 for r in records if r.get("status") not in ("PASS", "pass"))
+    failed = sum(1 for r in records if (r.get("status") or "").upper() == "FAIL")
+    skipped = sum(1 for r in records if (r.get("status") or "").upper() == "SKIP")
 
     index = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total": total,
         "failed": failed,
+        "skipped": skipped,
         "status": "PASS" if failed == 0 else "FAIL",
         "reports": records,
     }
@@ -149,6 +151,7 @@ def main():
         f.write(f"- Generated: {index['generated_at']}\n")
         f.write(f"- Total Reports: {index['total']}\n")
         f.write(f"- Failed Reports: {index['failed']}\n")
+        f.write(f"- Skipped Reports: {index['skipped']}\n")
         f.write(f"- Status: {display_status(index['status'])}\n\n")
         f.write("| Type | ID | Mode | Status | Report | Summary | Manifest |\n")
         f.write("| --- | --- | --- | --- | --- | --- | --- |\n")

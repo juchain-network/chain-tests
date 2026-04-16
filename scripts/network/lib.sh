@@ -168,6 +168,60 @@ print(json.dumps(value))
 PY
 }
 
+runtime_impls_for_topology() {
+  local config_file="$1"
+  local topology="${2:-multi}"
+
+  python3 - "$config_file" "$topology" <<'PY'
+import sys
+
+try:
+    import yaml
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+config_file, topology = sys.argv[1], (sys.argv[2] or "multi").strip().lower()
+
+try:
+    with open(config_file, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+runtime = data.get("runtime") or {}
+network = data.get("network") or {}
+runtime_nodes = data.get("runtime_nodes") or {}
+
+default_impl = str(runtime.get("impl") or "geth").strip().lower()
+impl_mode = str(runtime.get("impl_mode") or "single").strip().lower()
+node_count = 1 if topology == "single" else int(network.get("node_count") or 4)
+
+def node_cfg(idx):
+    if isinstance(runtime_nodes, list):
+        if idx < len(runtime_nodes) and isinstance(runtime_nodes[idx], dict):
+            return runtime_nodes[idx]
+        return {}
+    if isinstance(runtime_nodes, dict):
+        node = runtime_nodes.get(f"node{idx}") or {}
+        return node if isinstance(node, dict) else {}
+    return {}
+
+impls = []
+if impl_mode == "mixed":
+    for idx in range(node_count):
+        impl = str(node_cfg(idx).get("impl") or default_impl).strip().lower()
+        if impl:
+            impls.append(impl)
+else:
+    if default_impl:
+        impls.append(default_impl)
+
+print(",".join(sorted(set(impls))))
+PY
+}
+
 wait_for_rpc_ready() {
   local rpc_url="$1"
   local timeout="${2:-120}"

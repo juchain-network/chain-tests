@@ -16,7 +16,7 @@ case "$TOPOLOGY" in
 esac
 
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
-FORK_CASES="${FORK_CASES:-poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:posaTime,upgrade:fixHeaderTime,upgrade:allStaggered,upgrade:allSame,posa}"
+FORK_CASES="${FORK_CASES:-poa,upgrade:shanghaiTime,upgrade:cancunTime,upgrade:fixHeaderTime,upgrade:posaTime,upgrade:pragueTime,upgrade:osakaTime,upgrade:allStaggered,upgrade:allSame,posa}"
 FORK_DELAY_SECONDS="${FORK_DELAY_SECONDS:-$(cfg_get "$CONFIG_FILE" "network.fork_delay_seconds" "120")}"
 FORK_UPGRADE_STARTUP_BUFFER_SINGLE="${FORK_UPGRADE_STARTUP_BUFFER_SINGLE:-5}"
 FORK_UPGRADE_STARTUP_BUFFER_MULTI="${FORK_UPGRADE_STARTUP_BUFFER_MULTI:-30}"
@@ -94,6 +94,30 @@ archive_case_artifacts() {
   fi
 }
 
+case_requires_osaka_support() {
+  local mode="$1"
+  local target="$2"
+  case "$mode:$target" in
+    upgrade:osakaTime|upgrade:allSame|upgrade:allStaggered)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+runtime_supports_case() {
+  local mode="$1"
+  local target="$2"
+  local impls
+  impls="$(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY")"
+  if case_requires_osaka_support "$mode" "$target" && [[ ",$impls," == *",reth,"* ]]; then
+    return 1
+  fi
+  return 0
+}
+
 run_case() {
   local mode="$1"
   local target="$2"
@@ -130,6 +154,20 @@ run_case() {
   local repro="FORK_CASES=$label FORK_DELAY_SECONDS=$FORK_DELAY_SECONDS FORK_TEST_TIMEOUT=$FORK_TEST_TIMEOUT TOPOLOGY=$TOPOLOGY make test-fork"
 
   mkdir -p "$case_dir"
+
+  if ! runtime_supports_case "$mode" "$target"; then
+    {
+      echo "=== [fork/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} ==="
+      echo "Config: $CONFIG_FILE"
+      echo "ReportDir: $case_dir"
+      echo "Case skipped: runtime set $(runtime_impls_for_topology "$CONFIG_FILE" "$TOPOLOGY") does not support Osaka yet"
+      echo "Case result rc=0"
+    } > "$case_log"
+    cat "$case_log"
+    echo "$(status_display SKIP) [fork/$TOPOLOGY] case=$label mode=$mode target=${target:-<none>} rc=0"
+    printf '%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n' "$TOPOLOGY" "$label" "$mode" "${target:-}" "SKIP" 0 "$case_log" "$repro" >> "$RESULTS_TSV"
+    return 0
+  fi
 
   set +e
   {

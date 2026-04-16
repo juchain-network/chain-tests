@@ -3,12 +3,22 @@ import json
 import sys
 import time
 
-FORK_FIELDS = ("cancunTime", "shanghaiTime", "posaTime", "fixHeaderTime")
+FORK_FIELDS = (
+    "shanghaiTime",
+    "cancunTime",
+    "fixHeaderTime",
+    "posaTime",
+    "pragueTime",
+    "osakaTime",
+)
+POSA_BASE_FIELDS = ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime")
 UPGRADE_DEPENDENCIES = {
     "shanghaiTime": ("shanghaiTime",),
     "cancunTime": ("shanghaiTime", "cancunTime"),
     "fixHeaderTime": ("shanghaiTime", "cancunTime", "fixHeaderTime"),
     "posaTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
+    "pragueTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime"),
+    "osakaTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime"),
 }
 STAGGER_STEP_SECONDS = 60
 SMOKE_STATIC_CASES = {
@@ -17,14 +27,35 @@ SMOKE_STATIC_CASES = {
     "poa_shanghai_cancun": ("shanghaiTime", "cancunTime"),
     "poa_shanghai_cancun_fixheader": ("shanghaiTime", "cancunTime", "fixHeaderTime"),
     "poa_shanghai_cancun_fixheader_posa": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
+    "poa_shanghai_cancun_fixheader_posa_prague": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime"),
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime"),
 }
 DEFAULT_BLOB_SCHEDULE = {
     "cancun": {
         "target": 3,
         "max": 6,
         "baseFeeUpdateFraction": 3338477,
-    }
+    },
+    "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716,
+    },
+    "osaka": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716,
+    },
 }
+
+FORK_ORDER = (
+    "shanghaiTime",
+    "cancunTime",
+    "fixHeaderTime",
+    "posaTime",
+    "pragueTime",
+    "osakaTime",
+)
 
 
 def canonical_target(raw: str) -> str:
@@ -36,6 +67,10 @@ def canonical_target(raw: str) -> str:
         "shanghaitime": "shanghaiTime",
         "posa": "posaTime",
         "posatime": "posaTime",
+        "prague": "pragueTime",
+        "praguetime": "pragueTime",
+        "osaka": "osakaTime",
+        "osakatime": "osakaTime",
         "fixheader": "fixHeaderTime",
         "fixheadertime": "fixHeaderTime",
         "staggered": "allStaggered",
@@ -62,6 +97,10 @@ def canonical_smoke_case(raw: str) -> str:
         "poa-shanghai-cancun-fixheader": "poa_shanghai_cancun_fixheader",
         "poa_shanghai_cancun_fixheader_posa": "poa_shanghai_cancun_fixheader_posa",
         "poa-shanghai-cancun-fixheader-posa": "poa_shanghai_cancun_fixheader_posa",
+        "poa_shanghai_cancun_fixheader_posa_prague": "poa_shanghai_cancun_fixheader_posa_prague",
+        "poa-shanghai-cancun-fixheader-posa-prague": "poa_shanghai_cancun_fixheader_posa_prague",
+        "poa_shanghai_cancun_fixheader_posa_prague_osaka": "poa_shanghai_cancun_fixheader_posa_prague_osaka",
+        "poa-shanghai-cancun-fixheader-posa-prague-osaka": "poa_shanghai_cancun_fixheader_posa_prague_osaka",
     }
     return aliases.get(value, "")
 
@@ -71,8 +110,33 @@ def ensure_blob_schedule(cfg: dict) -> None:
     if not isinstance(blob_schedule, dict):
         blob_schedule = {}
         cfg["blobSchedule"] = blob_schedule
-    if "cancun" not in blob_schedule or not isinstance(blob_schedule["cancun"], dict):
-        blob_schedule["cancun"] = dict(DEFAULT_BLOB_SCHEDULE["cancun"])
+    for fork_name, fork_cfg in DEFAULT_BLOB_SCHEDULE.items():
+        if fork_name not in blob_schedule or not isinstance(blob_schedule[fork_name], dict):
+            blob_schedule[fork_name] = dict(fork_cfg)
+
+
+def validate_prefix_schedule(mode: str, cfg: dict) -> None:
+    enabled = [key for key in FORK_ORDER if key in cfg]
+    if mode == "poa":
+        if enabled:
+            raise SystemExit(f"poa mode must not enable forks, got: {enabled}")
+        return
+    if not enabled:
+        raise SystemExit(f"{mode} mode must enable at least one fork in {FORK_ORDER}")
+    expected_prefix = list(FORK_ORDER[:len(enabled)])
+    if enabled != expected_prefix:
+        raise SystemExit(
+            f"invalid fork prefix: enabled={enabled}, expected_prefix={expected_prefix}"
+        )
+    for i in range(1, len(enabled)):
+        prev_key = enabled[i - 1]
+        curr_key = enabled[i]
+        prev_value = int(cfg.get(prev_key, 0) or 0)
+        curr_value = int(cfg.get(curr_key, 0) or 0)
+        if prev_value > curr_value:
+            raise SystemExit(
+                f"invalid fork ordering: {prev_key}={prev_value} > {curr_key}={curr_value}"
+            )
 
 
 def main() -> int:
@@ -103,6 +167,8 @@ def main() -> int:
         cfg.pop("blobSchedule", None)
     elif mode == "posa":
         for key in FORK_FIELDS:
+            cfg.pop(key, None)
+        for key in POSA_BASE_FIELDS:
             cfg[key] = 0
         ensure_blob_schedule(cfg)
         effective_target = "all"
@@ -110,7 +176,7 @@ def main() -> int:
         effective_target = canonical_target(target_raw)
         if not effective_target:
             print(
-                "upgrade mode requires target in {shanghaiTime,cancunTime,posaTime,fixHeaderTime,allStaggered,allSame}",
+                "upgrade mode requires target in {shanghaiTime,cancunTime,fixHeaderTime,posaTime,pragueTime,osakaTime,allStaggered,allSame}",
                 file=sys.stderr,
             )
             return 1
@@ -128,22 +194,24 @@ def main() -> int:
             cfg["cancunTime"] = start_time + STAGGER_STEP_SECONDS
             cfg["fixHeaderTime"] = start_time + STAGGER_STEP_SECONDS*2
             cfg["posaTime"] = start_time + STAGGER_STEP_SECONDS*3
-            scheduled_time = cfg["posaTime"]
-            effective_delay_seconds = effective_delay_seconds + STAGGER_STEP_SECONDS*3
+            cfg["pragueTime"] = start_time + STAGGER_STEP_SECONDS*4
+            cfg["osakaTime"] = start_time + STAGGER_STEP_SECONDS*5
+            scheduled_time = cfg["osakaTime"]
+            effective_delay_seconds = effective_delay_seconds + STAGGER_STEP_SECONDS*5
         elif effective_target == "allSame":
-            for key in ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"):
+            for key in ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime"):
                 cfg[key] = start_time
             scheduled_time = start_time
         else:
             print(f"unsupported upgrade target: {effective_target}", file=sys.stderr)
             return 1
-        if cfg.get("cancunTime", 0) > 0:
+        if any(cfg.get(key, 0) > 0 for key in ("cancunTime", "pragueTime", "osakaTime")):
             ensure_blob_schedule(cfg)
     elif mode == "smoke":
         effective_target = canonical_smoke_case(target_raw)
         if not effective_target:
             print(
-                "smoke mode requires target in {poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa}",
+                "smoke mode requires target in {poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka}",
                 file=sys.stderr,
             )
             return 1
@@ -153,12 +221,14 @@ def main() -> int:
 
         for key in SMOKE_STATIC_CASES[effective_target]:
             cfg[key] = 0
-        if "cancunTime" in SMOKE_STATIC_CASES[effective_target]:
+        if any(key in SMOKE_STATIC_CASES[effective_target] for key in ("cancunTime", "pragueTime", "osakaTime")):
             ensure_blob_schedule(cfg)
         effective_delay_seconds = 0
     else:
         print(f"unsupported mode: {mode}", file=sys.stderr)
         return 1
+
+    validate_prefix_schedule(mode, cfg)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

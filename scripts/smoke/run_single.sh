@@ -48,6 +48,9 @@ esac
 if [[ "$SMOKE_GENESIS_MODE" == "smoke" && -z "$SMOKE_SINGLE_FORK_TARGET" ]]; then
   die "SMOKE_SINGLE_FORK_TARGET is required when SMOKE_SINGLE_GENESIS_MODE=smoke"
 fi
+if [[ "$SMOKE_IMPL" == "reth" && "$SMOKE_GENESIS_MODE" == "smoke" && "${SMOKE_SINGLE_FORK_TARGET:-}" == *"osaka" ]]; then
+  die "reth runtime does not support Osaka smoke profiles yet: ${SMOKE_SINGLE_FORK_TARGET}"
+fi
 
 TMP_CFG="$(mktemp "${TMPDIR:-/tmp}/chain-tests-smoke-single.XXXXXX")"
 cp "$CONFIG_FILE" "$TMP_CFG"

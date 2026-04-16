@@ -33,6 +33,8 @@ type Config struct {
 			CancunTime    int64 `yaml:"cancun_time"`
 			FixHeaderTime int64 `yaml:"fix_header_time"`
 			PosaTime      int64 `yaml:"posa_time"`
+			PragueTime    int64 `yaml:"prague_time"`
+			OsakaTime     int64 `yaml:"osaka_time"`
 		} `yaml:"schedule"`
 		Override struct {
 			PosaTime       int64    `yaml:"posa_time"`

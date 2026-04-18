@@ -764,14 +764,22 @@ These rules matter more as the suite grows.
 | Cancun | `transient_storage_lifecycle` | active | Pre-fork rejection; post-fork `TSTORE` / `TLOAD` lifecycle succeeds on the running chain |
 | Cancun | `cancun_header_surface` | active | Cancun-era header / RPC surface is observable when Cancun is enabled |
 | Cancun | `blob_tx_submission` | deferred | Blob tx success path remains blocked by current txpool policy |
+| fixHeader | `fixheader_rpc_surface` | active | FixHeader-era header surface such as zero `parentBeaconBlockRoot`, plus post-fork baseFee validation, is observable when FixHeader is enabled |
+| posa | `posa_contract_surface` | active | Pre-PoSA system contract set absent; post-PoSA validators/proposal/punish/staking contracts are deployed at canonical addresses |
+| posa | `posa_proposal_wiring_surface` | active | Post-PoSA proposal contract is initialized and wired to the canonical validators / punish / staking contract addresses |
 | Prague | `prague_rpc_surface` | active | Prague-era RPC / header surface such as `requestsHash` is observable when Prague is enabled |
+| Prague | `prague_eth_config_precompile_surface` | active | Prague BLS12-381 precompile set appears in `eth_config.current.precompiles`, while Osaka-only `P256VERIFY` remains absent |
 | Prague | `prague_setcode_tx` | active | Pre-Prague `SetCodeTx` rejection; post-Prague acceptance and delegation-code installation |
 | Prague | `prague_capability_matrix` | deferred | Reserved slot for additional Prague semantic probes not yet implemented |
 | Osaka | `osaka_engine_getpayload_transition` | active | Pre-Osaka `getPayloadV4` succeeds and `getPayloadV5` rejects; post-Osaka polarity flips |
 | Osaka | `osaka_engine_blob_api_transition` | active | Pre-Osaka `getBlobsV2`/`V3` return `null`; post-Osaka `getBlobsV3` exposes partial-response semantics as `[null]` |
+| Osaka | `osaka_eth_config_precompile_surface` | active | `eth_config.current.precompiles` exposes Osaka-only `P256VERIFY` at `0x0100` |
+| Osaka | `osaka_modexp_gas_semantics` | active | Empty-input MODEXP call succeeds with `21300` gas pre-Osaka but requires at least `21600` gas after Osaka |
 | Osaka | `osaka_p256verify_precompile` | active | Pre-Osaka precompile gate absent; post-Osaka `P256VERIFY` returns true for a valid secp256r1 vector |
 | Osaka | `osaka_tx_gas_cap` | active | Pre-Osaka oversized tx remains accepted; post-Osaka oversized tx is rejected by gas-cap gate |
 | Osaka | `osaka_capability_matrix` | deferred | Reserved slot for additional Osaka semantic probes not yet implemented |
+| bpo1 | `bpo1_blob_schedule` | active | BPO1 blob schedule becomes the current `eth_config` schedule at the BPO1 boundary |
+| bpo2 | `bpo2_blob_schedule` | active | BPO2 blob schedule becomes the current `eth_config` schedule at the BPO2 boundary |
 
 Interpretation rules:
 - `active` means the current harness proves a real pre-/post-fork difference or fork-gated surface on the running chain.
@@ -789,10 +797,10 @@ It should answer a question the repository does not answer today:
 For the current concrete scope:
 - Shanghai validates `PUSH0`
 - Cancun validates `MCOPY`, `TSTORE/TLOAD`, and Cancun-era block / RPC surface
-- fixHeader validates fixHeader-era header / RPC surface
-- posa validates PoSA system-contract surface on the running chain
+- fixHeader validates fixHeader-era header / RPC surface plus post-fork baseFee validation
+- posa validates PoSA system-contract surface, proposal-contract wiring, and harness-configured proposal parameter exposure on the running chain
 - Prague validates Prague-era RPC surface (`requestsHash`) and `SetCodeTx` fork gating plus delegation-code installation on the running chain
-- Osaka validates `P256VERIFY` precompile activation, authrpc `engine_getPayloadV4` / `engine_getPayloadV5` fork gating, authrpc `engine_getBlobsV2` / `engine_getBlobsV3` blob-API partial-response transition, and max transaction gas-cap enforcement through the forkcap suite
+- Osaka validates `P256VERIFY` precompile activation, `eth_config` Osaka-only precompile exposure, MODEXP gas-threshold changes, authrpc `engine_getPayloadV4` / `engine_getPayloadV5` fork gating, authrpc `engine_getBlobsV2` / `engine_getBlobsV3` blob-API partial-response transition, and max transaction gas-cap enforcement through the forkcap suite
 - bpo1 validates blob schedule transition through `eth_config`
 - bpo2 validates blob schedule transition through `eth_config`
 - blob transactions remain explicitly deferred because they are currently disabled at the txpool layer
@@ -801,5 +809,8 @@ For the long-term scope:
 - the same registry and suite model must remain valid through the chain ladder `Shanghai -> Cancun -> fixHeader -> posa -> Prague -> Osaka -> bpo1 -> bpo2`
 - later fork layers should be added by populating capability items, not redesigning the framework
 - non-geth runtime coverage (`reth` / `rchain`, mixed-mode parity, and cross-client comparison) is intentionally deferred and is not part of the current forkcap success criteria
+
+That is the point of this refinement: make the initial implementation small, but make the structure durable.
+a
 
 That is the point of this refinement: make the initial implementation small, but make the structure durable.

@@ -420,13 +420,18 @@ If Osaka later exposes additional blob-engine or semantic execution probes, thos
 | Cancun | `transient_storage_lifecycle` | active | raw-bytecode execution gate |
 | Cancun | `cancun_header_surface` | active | block / RPC surface wrapper |
 | Cancun | `blob_tx_submission` | deferred | txpool policy currently blocks blob success path |
-| fixHeader | `fixheader_rpc_surface` | active | block / RPC surface wrapper |
+| fixHeader | `fixheader_rpc_surface` | active | block / RPC surface wrapper plus post-fork baseFee validation |
 | posa | `posa_contract_surface` | active | canonical PoSA system-contract deployment surface |
+| posa | `posa_proposal_wiring_surface` | active | proposal contract initialized with canonical validators / punish / staking wiring |
+| posa | `posa_proposal_params_surface` | active | proposal contract exposes the harness-configured epoch and test-friendly governance parameters |
 | Prague | `prague_rpc_surface` | active | block / RPC surface wrapper |
+| Prague | `prague_eth_config_precompile_surface` | active | `eth_config.current.precompiles` exposes Prague BLS12-381 precompiles without Osaka-only `P256VERIFY` |
 | Prague | `prague_setcode_tx` | active | semantic transaction gate + on-chain delegation-code effect |
 | Prague | `prague_capability_matrix` | deferred | placeholder for later Prague semantic expansion |
 | Osaka | `osaka_engine_getpayload_transition` | active | authrpc/JWT engine gate |
 | Osaka | `osaka_engine_blob_api_transition` | active | authrpc/JWT blob-engine partial-response transition |
+| Osaka | `osaka_eth_config_precompile_surface` | active | `eth_config.current.precompiles` exposes Osaka-only `P256VERIFY` at `0x0100` |
+| Osaka | `osaka_modexp_gas_semantics` | active | empty-input MODEXP call crosses the Osaka gas threshold |
 | Osaka | `osaka_p256verify_precompile` | active | precompile semantic gate |
 | Osaka | `osaka_tx_gas_cap` | active | transaction validation gate |
 | Osaka | `osaka_capability_matrix` | deferred | placeholder for later Osaka semantic expansion |

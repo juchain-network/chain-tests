@@ -58,7 +58,7 @@ func TestDefaultSuitePosaIncludesIntermediateForkLayers(t *testing.T) {
 	for _, cap := range suite.Capabilities {
 		seen[cap.Name] = struct{}{}
 	}
-	for _, required := range []string{"push0_execution", "mcopy_execution", "transient_storage_lifecycle", "cancun_header_surface", "blob_tx_submission", "fixheader_rpc_surface", "posa_contract_surface"} {
+	for _, required := range []string{"push0_execution", "mcopy_execution", "transient_storage_lifecycle", "cancun_header_surface", "blob_tx_submission", "fixheader_rpc_surface", "posa_contract_surface", "posa_proposal_wiring_surface", "posa_proposal_params_surface"} {
 		if _, ok := seen[required]; !ok {
 			t.Fatalf("expected posa suite to include %s", required)
 		}
@@ -80,11 +80,18 @@ func TestDefaultSuiteOsakaIncludesAllPriorForkLayers(t *testing.T) {
 		"transient_storage_lifecycle",
 		"cancun_header_surface",
 		"blob_tx_submission",
+		"fixheader_rpc_surface",
+		"posa_contract_surface",
+		"posa_proposal_wiring_surface",
+		"posa_proposal_params_surface",
 		"prague_rpc_surface",
+		"prague_eth_config_precompile_surface",
 		"prague_setcode_tx",
 		"prague_capability_matrix",
 		"osaka_engine_blob_api_transition",
 		"osaka_engine_getpayload_transition",
+		"osaka_eth_config_precompile_surface",
+		"osaka_modexp_gas_semantics",
 		"osaka_p256verify_precompile",
 		"osaka_tx_gas_cap",
 		"osaka_capability_matrix",

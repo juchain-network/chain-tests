@@ -82,7 +82,7 @@ func DefaultRegistry() []Capability {
 			Name:        "fixheader_rpc_surface",
 			MinimumFork: "fixheader",
 			Status:      StatusActive,
-			Description: "Validate FixHeader-era block/RPC header fields such as baseFee and parentBeaconBlockRoot handling on the running chain.",
+			Description: "Validate FixHeader-era block/RPC header fields such as parentBeaconBlockRoot and post-fork baseFee handling on the running chain.",
 			Tags:        []string{"fixheader", "rpc", "header"},
 		},
 		{
@@ -93,11 +93,32 @@ func DefaultRegistry() []Capability {
 			Tags:        []string{"posa", "contracts", "surface"},
 		},
 		{
+			Name:        "posa_proposal_wiring_surface",
+			MinimumFork: "posa",
+			Status:      StatusActive,
+			Description: "Validate PoSA proposal-contract initialization and canonical validator/punish/staking wiring on the running chain.",
+			Tags:        []string{"posa", "contracts", "wiring"},
+		},
+		{
+			Name:        "posa_proposal_params_surface",
+			MinimumFork: "posa",
+			Status:      StatusActive,
+			Description: "Validate PoSA proposal-contract parameter surface against the harness-configured epoch and test-friendly governance settings.",
+			Tags:        []string{"posa", "contracts", "params"},
+		},
+		{
 			Name:        "prague_rpc_surface",
 			MinimumFork: "prague",
 			Status:      StatusActive,
 			Description: "Validate Prague-era RPC surface fields such as requestsHash on the running chain.",
 			Tags:        []string{"prague", "rpc", "surface"},
+		},
+		{
+			Name:        "prague_eth_config_precompile_surface",
+			MinimumFork: "prague",
+			Status:      StatusActive,
+			Description: "Validate Prague eth_config precompile exposure for the BLS12-381 precompile set on the running chain.",
+			Tags:        []string{"prague", "rpc", "precompile"},
 		},
 		{
 			Name:        "prague_setcode_tx",
@@ -142,6 +163,20 @@ func DefaultRegistry() []Capability {
 			Status:      StatusActive,
 			Description: "Validate Osaka authrpc getPayload transition: GetPayloadV4 works pre-Osaka while GetPayloadV5 works only after Osaka.",
 			Tags:        []string{"osaka", "engine-api", "gate"},
+		},
+		{
+			Name:        "osaka_eth_config_precompile_surface",
+			MinimumFork: "osaka",
+			Status:      StatusActive,
+			Description: "Validate Osaka eth_config precompile exposure for the Osaka-only P256VERIFY precompile on the running chain.",
+			Tags:        []string{"osaka", "rpc", "precompile"},
+		},
+		{
+			Name:        "osaka_modexp_gas_semantics",
+			MinimumFork: "osaka",
+			Status:      StatusActive,
+			Description: "Validate Osaka MODEXP gas-threshold behavior: an empty-input call succeeds with 21300 gas pre-Osaka but requires at least 21600 gas after Osaka.",
+			Tags:        []string{"osaka", "precompile", "gas"},
 		},
 		{
 			Name:        "osaka_p256verify_precompile",

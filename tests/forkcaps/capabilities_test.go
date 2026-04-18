@@ -190,6 +190,34 @@ func TestK_ForkcapCapability_PosaContractSurface(t *testing.T) {
 	}
 }
 
+func TestK_ForkcapCapability_PosaProposalWiringSurface(t *testing.T) {
+	expectation := requireForkcapCapability(t, "posa")
+	if ctx == nil {
+		t.Fatal("forkcap context not initialized")
+	}
+	h, err := fc.NewHarness(ctx)
+	if err != nil {
+		t.Fatalf("create forkcap harness: %v", err)
+	}
+	if err := fc.CheckPosaProposalWiringSurface(h, expectation.ShouldFail); err != nil {
+		t.Fatalf("verify PoSA proposal wiring surface: %v", err)
+	}
+}
+
+func TestK_ForkcapCapability_PosaProposalParamsSurface(t *testing.T) {
+	expectation := requireForkcapCapability(t, "posa")
+	if ctx == nil || cfg == nil {
+		t.Fatal("forkcap context or config not initialized")
+	}
+	h, err := fc.NewHarness(ctx)
+	if err != nil {
+		t.Fatalf("create forkcap harness: %v", err)
+	}
+	if err := fc.CheckPosaProposalParamsSurface(h, cfg, expectation.ShouldFail); err != nil {
+		t.Fatalf("verify PoSA proposal params surface: %v", err)
+	}
+}
+
 func TestK_ForkcapCapability_PragueSurface(t *testing.T) {
 	expectation := requireForkcapCapability(t, "prague")
 	if cfg == nil || len(cfg.RPCs) == 0 {
@@ -211,6 +239,16 @@ func TestK_ForkcapCapability_PragueSurface(t *testing.T) {
 	}
 	if !fc.FieldPresent(block, "requestsHash") {
 		t.Fatalf("expected post-Prague latest block to expose requestsHash, got %v", block["requestsHash"])
+	}
+}
+
+func TestK_ForkcapCapability_PragueEthConfigPrecompileSurface(t *testing.T) {
+	expectation := requireForkcapCapability(t, "prague")
+	if cfg == nil || len(cfg.RPCs) == 0 {
+		t.Fatal("forkcap config not initialized")
+	}
+	if err := fc.CheckPragueEthConfigPrecompileSurface(cfg.RPCs[0], expectation.ShouldFail); err != nil {
+		t.Fatalf("verify Prague eth_config precompile surface: %v", err)
 	}
 }
 
@@ -281,6 +319,30 @@ func TestK_ForkcapCapability_OsakaEngineGetPayloadTransition(t *testing.T) {
 	}
 	if err := fc.CheckOsakaEngineGetPayloadTransition(cfg, expectation.ShouldFail); err != nil {
 		t.Fatalf("verify Osaka engine getPayload transition: %v", err)
+	}
+}
+
+func TestK_ForkcapCapability_OsakaEthConfigPrecompileSurface(t *testing.T) {
+	expectation := requireForkcapCapability(t, "osaka")
+	if cfg == nil || len(cfg.RPCs) == 0 {
+		t.Fatal("forkcap config not initialized")
+	}
+	if err := fc.CheckOsakaEthConfigPrecompileSurface(cfg.RPCs[0], expectation.ShouldFail); err != nil {
+		t.Fatalf("verify Osaka eth_config precompile surface: %v", err)
+	}
+}
+
+func TestK_ForkcapCapability_OsakaModexpGasSemantics(t *testing.T) {
+	expectation := requireForkcapCapability(t, "osaka")
+	if ctx == nil {
+		t.Fatal("forkcap context not initialized")
+	}
+	h, err := fc.NewHarness(ctx)
+	if err != nil {
+		t.Fatalf("create forkcap harness: %v", err)
+	}
+	if err := fc.CheckOsakaModexpGasSemantics(h, expectation.ShouldFail); err != nil {
+		t.Fatalf("verify Osaka MODEXP gas semantics: %v", err)
 	}
 }
 

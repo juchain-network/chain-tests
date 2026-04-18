@@ -12,3 +12,5 @@ config/ci_budget.local.mk
 __pycache__/
 config/test_env.yaml
 .codex
+.gsd/
+.bg-shell/

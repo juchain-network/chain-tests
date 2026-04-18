@@ -24,6 +24,12 @@ const (
 	PragueBlobTarget                = uint64(6)
 	PragueBlobMax                   = uint64(9)
 	PragueBlobBaseFeeUpdateFraction = uint64(5007716)
+	BPO1BlobTarget                  = uint64(10)
+	BPO1BlobMax                     = uint64(15)
+	BPO1BlobBaseFeeUpdateFraction   = uint64(8346193)
+	BPO2BlobTarget                  = uint64(14)
+	BPO2BlobMax                     = uint64(21)
+	BPO2BlobBaseFeeUpdateFraction   = uint64(11684671)
 	OsakaMaxTxGas                   = uint64(1 << 24)
 )
 
@@ -69,6 +75,8 @@ func VerifyForkRPCSurface(cfg *config.Config, rpcURL string, runtimeImpl string)
 	expectFixHeader := forkIsActive(cfg, "fixheader", timestamp)
 	expectPrague := forkIsActive(cfg, "prague", timestamp)
 	expectOsaka := forkIsActive(cfg, "osaka", timestamp)
+	expectBPO1 := forkIsActive(cfg, "bpo1", timestamp)
+	expectBPO2 := forkIsActive(cfg, "bpo2", timestamp)
 
 	if expectCancun {
 		if err := requireRPCStringField(block, "blobGasUsed"); err != nil {
@@ -91,6 +99,14 @@ func VerifyForkRPCSurface(cfg *config.Config, rpcURL string, runtimeImpl string)
 
 	if strings.EqualFold(runtimeImpl, "geth") {
 		switch {
+		case expectBPO2:
+			if err := verifyEthConfigBlobSchedule(rpcURL, BPO2BlobTarget, BPO2BlobMax, BPO2BlobBaseFeeUpdateFraction); err != nil {
+				return err
+			}
+		case expectBPO1:
+			if err := verifyEthConfigBlobSchedule(rpcURL, BPO1BlobTarget, BPO1BlobMax, BPO1BlobBaseFeeUpdateFraction); err != nil {
+				return err
+			}
 		case expectOsaka:
 			if err := verifyEthConfigBlobSchedule(rpcURL, PragueBlobTarget, PragueBlobMax, PragueBlobBaseFeeUpdateFraction); err != nil {
 				return err
@@ -107,6 +123,10 @@ func VerifyForkRPCSurface(cfg *config.Config, rpcURL string, runtimeImpl string)
 	}
 
 	return nil
+}
+
+func VerifyBlobScheduleForDebug(rpcURL string, wantTarget, wantMax, wantBaseFeeUpdateFraction uint64) error {
+	return verifyEthConfigBlobSchedule(rpcURL, wantTarget, wantMax, wantBaseFeeUpdateFraction)
 }
 
 func VerifyOsakaTxGasCap(client *ethclient.Client, key *ecdsa.PrivateKey, chainID *big.Int) error {
@@ -205,10 +225,16 @@ func forkIsActive(cfg *config.Config, forkName string, timestamp uint64) bool {
 			return strings.Contains(target, "cancun")
 		case "fixheader":
 			return strings.Contains(target, "fixheader")
+		case "posa":
+			return strings.Contains(target, "posa")
 		case "prague":
 			return strings.Contains(target, "prague")
 		case "osaka":
 			return strings.Contains(target, "osaka")
+		case "bpo1":
+			return strings.Contains(target, "bpo1")
+		case "bpo2":
+			return strings.Contains(target, "bpo2")
 		}
 	}
 
@@ -218,10 +244,16 @@ func forkIsActive(cfg *config.Config, forkName string, timestamp uint64) bool {
 		at = cfg.Fork.Schedule.CancunTime
 	case "fixheader":
 		at = cfg.Fork.Schedule.FixHeaderTime
+	case "posa":
+		at = cfg.Fork.Schedule.PosaTime
 	case "prague":
 		at = cfg.Fork.Schedule.PragueTime
 	case "osaka":
 		at = cfg.Fork.Schedule.OsakaTime
+	case "bpo1":
+		at = cfg.Fork.Schedule.BPO1Time
+	case "bpo2":
+		at = cfg.Fork.Schedule.BPO2Time
 	default:
 		return false
 	}

@@ -10,6 +10,8 @@ FORK_FIELDS = (
     "posaTime",
     "pragueTime",
     "osakaTime",
+    "bpo1Time",
+    "bpo2Time",
 )
 POSA_BASE_FIELDS = ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime")
 UPGRADE_DEPENDENCIES = {
@@ -19,6 +21,8 @@ UPGRADE_DEPENDENCIES = {
     "posaTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
     "pragueTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime"),
     "osakaTime": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime"),
+    "bpo1Time": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime", "bpo1Time"),
+    "bpo2Time": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime", "bpo1Time", "bpo2Time"),
 }
 STAGGER_STEP_SECONDS = 60
 SMOKE_STATIC_CASES = {
@@ -29,6 +33,8 @@ SMOKE_STATIC_CASES = {
     "poa_shanghai_cancun_fixheader_posa": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime"),
     "poa_shanghai_cancun_fixheader_posa_prague": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime"),
     "poa_shanghai_cancun_fixheader_posa_prague_osaka": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime"),
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime", "bpo1Time"),
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2": ("shanghaiTime", "cancunTime", "fixHeaderTime", "posaTime", "pragueTime", "osakaTime", "bpo1Time", "bpo2Time"),
 }
 DEFAULT_BLOB_SCHEDULE = {
     "cancun": {
@@ -46,6 +52,16 @@ DEFAULT_BLOB_SCHEDULE = {
         "max": 9,
         "baseFeeUpdateFraction": 5007716,
     },
+    "bpo1": {
+        "target": 10,
+        "max": 15,
+        "baseFeeUpdateFraction": 8346193,
+    },
+    "bpo2": {
+        "target": 14,
+        "max": 21,
+        "baseFeeUpdateFraction": 11684671,
+    },
 }
 
 FORK_ORDER = (
@@ -55,6 +71,8 @@ FORK_ORDER = (
     "posaTime",
     "pragueTime",
     "osakaTime",
+    "bpo1Time",
+    "bpo2Time",
 )
 
 
@@ -71,6 +89,10 @@ def canonical_target(raw: str) -> str:
         "praguetime": "pragueTime",
         "osaka": "osakaTime",
         "osakatime": "osakaTime",
+        "bpo1": "bpo1Time",
+        "bpo1time": "bpo1Time",
+        "bpo2": "bpo2Time",
+        "bpo2time": "bpo2Time",
         "fixheader": "fixHeaderTime",
         "fixheadertime": "fixHeaderTime",
         "staggered": "allStaggered",
@@ -101,6 +123,10 @@ def canonical_smoke_case(raw: str) -> str:
         "poa-shanghai-cancun-fixheader-posa-prague": "poa_shanghai_cancun_fixheader_posa_prague",
         "poa_shanghai_cancun_fixheader_posa_prague_osaka": "poa_shanghai_cancun_fixheader_posa_prague_osaka",
         "poa-shanghai-cancun-fixheader-posa-prague-osaka": "poa_shanghai_cancun_fixheader_posa_prague_osaka",
+        "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1": "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1",
+        "poa-shanghai-cancun-fixheader-posa-prague-osaka-bpo1": "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1",
+        "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2": "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2",
+        "poa-shanghai-cancun-fixheader-posa-prague-osaka-bpo1-bpo2": "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2",
     }
     return aliases.get(value, "")
 
@@ -176,7 +202,7 @@ def main() -> int:
         effective_target = canonical_target(target_raw)
         if not effective_target:
             print(
-                "upgrade mode requires target in {shanghaiTime,cancunTime,fixHeaderTime,posaTime,pragueTime,osakaTime,allStaggered,allSame}",
+                "upgrade mode requires target in {shanghaiTime,cancunTime,fixHeaderTime,posaTime,pragueTime,osakaTime,bpo1Time,bpo2Time,allStaggered,allSame}",
                 file=sys.stderr,
             )
             return 1
@@ -211,7 +237,7 @@ def main() -> int:
         effective_target = canonical_smoke_case(target_raw)
         if not effective_target:
             print(
-                "smoke mode requires target in {poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka}",
+                "smoke mode requires target in {poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2}",
                 file=sys.stderr,
             )
             return 1
@@ -221,7 +247,7 @@ def main() -> int:
 
         for key in SMOKE_STATIC_CASES[effective_target]:
             cfg[key] = 0
-        if any(key in SMOKE_STATIC_CASES[effective_target] for key in ("cancunTime", "pragueTime", "osakaTime")):
+        if any(key in SMOKE_STATIC_CASES[effective_target] for key in ("cancunTime", "pragueTime", "osakaTime", "bpo1Time", "bpo2Time")):
             ensure_blob_schedule(cfg)
         effective_delay_seconds = 0
     else:

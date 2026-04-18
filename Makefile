@@ -4,7 +4,7 @@ SHELL := /bin/bash
         coverage-start coverage-merge coverage-stop coverage-status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready sync-contract-clients test \
-        test-group test-smoke test-fork test-scenario test-regression test-perf test-coverage-max \
+        test-group test-smoke test-fork test-forkcap test-scenario test-regression test-perf test-coverage-max \
         ci ci-tool ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
@@ -42,13 +42,15 @@ INIT_MODE ?=
 INIT_TARGET ?=
 INIT_DELAY_SECONDS ?=
 FORK_CASES ?=
+FORK ?=
+CASE ?=
 FORK_DELAY_SECONDS ?=
 FORK_UPGRADE_STARTUP_BUFFER_SINGLE ?= 5
 FORK_UPGRADE_STARTUP_BUFFER_MULTI ?= 30
 FORK_TEST_TIMEOUT ?= 20m
 FORK_REPORT_DIR ?=
 MATRIX ?= 0
-SMOKE_CASES ?= poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka
+SMOKE_CASES ?= poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2
 SMOKE_TOPOLOGY ?=
 SMOKE_REPORT_DIR ?=
 SMOKE_SINGLE_IMPL ?=
@@ -144,6 +146,7 @@ help:
 	@echo "  test-group      - Run one business group: GROUP=config|governance|staking|delegation|punish|rewards|epoch|all"
 	@echo "  test-smoke      - Smoke runs: TOPOLOGY=single|multi|all MATRIX=0|1 (default: multi, MATRIX=0)"
 	@echo "  test-fork       - Fork matrix runs: TOPOLOGY=single|multi|all (default: multi)"
+	@echo "  test-forkcap    - Fork capability runs with automatic pre/post fork orchestration: FORK=shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all CASE=<go test pattern optional>"
 	@echo "  test-scenario   - Scenario runs: SCENARIO=all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish|liveness-repro CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak PERF_SCOPE=single|multi (default: single)"
@@ -182,6 +185,8 @@ help:
 	@echo "  INIT_DELAY_SECONDS=$(INIT_DELAY_SECONDS) # init-only: upgrade delay seconds"
 	@echo "  RUN=$(RUN) TESTS=$(TESTS) PKGS=$(PKGS) TIMEOUT=$(TIMEOUT)"
 	@echo "  FORK_CASES=$(FORK_CASES)         # e.g. poa,upgrade:shanghaiTime,upgrade:allStaggered,upgrade:allSame,posa"
+	@echo "  FORK=$(FORK)                     # test-forkcap: shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all"
+	@echo "  CASE=$(CASE)                     # test-forkcap: optional go test -run override"
 	@echo "  FORK_DELAY_SECONDS=$(FORK_DELAY_SECONDS) # optional override; empty -> use config network.fork_delay_seconds"
 	@echo "  FORK_TEST_TIMEOUT=$(FORK_TEST_TIMEOUT) FORK_REPORT_DIR=$(FORK_REPORT_DIR)"
 	@echo "  SMOKE_CASES=$(SMOKE_CASES) SMOKE_REPORT_DIR=$(SMOKE_REPORT_DIR)"
@@ -499,6 +504,16 @@ test-fork:
 		FORK_REPORT_DIR="$(FORK_REPORT_DIR)" \
 		bash ./scripts/fork/run_matrix.sh "$$topology"; \
 	fi
+
+test-forkcap:
+	@set -e; \
+		fork="$(if $(FORK),$(FORK),all)"; \
+		case "$$fork" in \
+			shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all) ;; \
+			*) echo "FORK must be shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all"; exit 1 ;; \
+		esac; \
+		echo "🧪 Running fork capability suite fork=$$fork pattern=$(if $(CASE),$(CASE),TestK_Forkcap.*)"; \
+		FORK="$$fork" CASE="$(CASE)" REPORT_DIR="$(REPORT_DIR)" bash ./scripts/forkcap/run_suite.sh
 
 test-scenario:
 	@set -e; \

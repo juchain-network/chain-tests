@@ -205,6 +205,85 @@ Notes:
 - `make test-regression SCOPE=core` uses the default local environment and may intentionally skip topology/epoch/upgrade-specific `TestZ_*` cases.
 - Use the scenario commands above to cover long-epoch, single-validator checkpoint, and upgrade-only paths.
 
+### 6.1 Fork capability runbook (`test-forkcap`)
+`make test-forkcap` is the dedicated real-chain fork capability surface.
+It is separate from business-group regression and is meant to prove fork-gated EVM / protocol behavior directly.
+
+Current execution boundary:
+- the runner always forces a temporary **single-node geth** config
+- it runs both `pre` and `post` phases for the selected fork automatically
+- it does **not** currently validate `reth` / `rchain` parity or mixed-mode behavior
+
+Supported fork selector:
+- `FORK=shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all`
+
+Useful commands:
+```bash
+# run all forkcap suites
+make test-forkcap FORK=all
+
+# run one fork layer only
+make test-forkcap FORK=shanghai
+make test-forkcap FORK=cancun
+make test-forkcap FORK=prague
+make test-forkcap FORK=osaka
+
+# run a narrow regex against the test names
+make test-forkcap FORK=shanghai CASE='TestK_ForkcapCapability_Push0'
+make test-forkcap FORK=cancun CASE='TestK_ForkcapCapability_(Mcopy|TransientStorage|CancunHeaderSurface)'
+make test-forkcap FORK=osaka CASE='TestK_ForkcapCapability_(OsakaEngineGetPayloadTransition|OsakaEngineBlobAPITransition)'
+```
+
+Important `CASE` rule:
+- `CASE` is passed to `go test -run` as a regular expression
+- use Go test names or regex groups, not registry keys
+- for example, prefer `CASE='TestK_ForkcapCapability_Push0'` instead of `CASE=push0_execution`
+
+What the runner does for you:
+1. rewrites the active config into a temporary single-node geth variant
+2. initializes the selected `pre` fork phase
+3. starts the chain and runs `./tests/forkcaps`
+4. stops the chain
+5. repeats the same flow for the `post` fork phase
+
+Per-fork phase mapping:
+- `shanghai`: `poa` -> `poa_shanghai`
+- `cancun`: `poa_shanghai` -> `poa_shanghai_cancun`
+- `fixheader`: `poa_shanghai_cancun` -> `poa_shanghai_cancun_fixheader`
+- `posa`: `poa_shanghai_cancun_fixheader` -> `poa_shanghai_cancun_fixheader_posa`
+- `prague`: `poa_shanghai_cancun_fixheader_posa` -> `poa_shanghai_cancun_fixheader_posa_prague`
+- `osaka`: `poa_shanghai_cancun_fixheader_posa_prague` -> `poa_shanghai_cancun_fixheader_posa_prague_osaka`
+- `bpo1`: `poa_shanghai_cancun_fixheader_posa_prague_osaka` -> `poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1`
+- `bpo2`: `poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1` -> `poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2`
+
+Report locations:
+- top-level forkcap root: `reports/forkcap_<timestamp>/` unless `REPORT_DIR=...` is provided
+- the runner creates per-phase subdirectories under that root: `<root>/<fork>/pre/` and `<root>/<fork>/post/`
+- each phase invokes the shared CI runner, which writes the usual artifacts:
+  - `report.md`
+  - `summary.json`
+  - `manifest.json`
+
+How to read results:
+- `PASS`: the harness proved the expected pre/post fork behavior on the running chain
+- `FAIL`: the claimed capability did not match chain behavior or the harness hit a real setup/runtime error
+- `SKIP`: expected in two cases:
+  - selection skip: the current test does not belong to the chosen fork selection
+  - deferred-by-design capability: the capability stays visible, but current chain policy or missing implementation means the suite does not claim proof yet
+
+How to read active vs deferred surfaces:
+- active capabilities are the ones the suite currently proves for real
+- deferred capabilities stay visible on purpose and should include a reason
+- today, `blob_tx_submission` is the main intentional deferred item because blob tx success-path coverage is blocked by txpool policy
+- for the current authoritative list, use the capability matrix in:
+  - `docs/fork_capability_test_plan.md`
+  - `docs/fork_capability_implementation_blueprint.md`
+
+When to use `test-forkcap` instead of other surfaces:
+- use `test-forkcap` when the question is “does this fork-gated capability actually exist on the running chain?”
+- use `test-fork` for upgrade/liveness matrix verification
+- use `test-group` / `test-regression` for business behavior and contract/congress integration paths
+
 ## 7. Performance and soak
 - TPS profile:
   - `make test-perf MODE=tiers PERF_SCOPE=single`
@@ -298,6 +377,18 @@ Notes:
   - then `make run`
 
 ### 10.4 Node lag or stall
+- Check `reports/*/report.md` slow cases and group duration tables
+- Verify runtime logs and peer status
+- Restart the network session:
+  - `make stop && make run`
+
+## 11. Rollback
+1. Pin the previous geth binary and contract artifact versions
+2. Reset local runtime data:
+   - `make clean`
+3. Re-init and rerun smoke:
+   - `make reset && make test-smoke`
+ Node lag or stall
 - Check `reports/*/report.md` slow cases and group duration tables
 - Verify runtime logs and peer status
 - Restart the network session:

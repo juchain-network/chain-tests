@@ -25,7 +25,7 @@ case "$TOPOLOGY" in
     ;;
 esac
 
-SMOKE_CASES="${SMOKE_CASES:-poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka}"
+SMOKE_CASES="${SMOKE_CASES:-poa,poa_shanghai,poa_shanghai_cancun,poa_shanghai_cancun_fixheader,poa_shanghai_cancun_fixheader_posa,poa_shanghai_cancun_fixheader_posa_prague,poa_shanghai_cancun_fixheader_posa_prague_osaka,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1,poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2}"
 SMOKE_SINGLE_OBSERVE_SECONDS="${SMOKE_SINGLE_OBSERVE_SECONDS:-$(cfg_get "$CONFIG_FILE" "tests.smoke.observe_seconds" "300")}"
 SMOKE_REPORT_DIR="${SMOKE_REPORT_DIR:-$PROJECT_ROOT/reports/smoke_matrix_${TOPOLOGY}_$(date +%Y%m%d_%H%M%S)}"
 COLLECTOR_SCRIPT="$PROJECT_ROOT/scripts/smoke/collect_matrix_report.sh"
@@ -53,7 +53,7 @@ case_to_mode_target() {
     poa)
       printf 'poa\t\n'
       ;;
-    poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka)
+    poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2)
       printf 'smoke\t%s\n' "$label"
       ;;
     *)

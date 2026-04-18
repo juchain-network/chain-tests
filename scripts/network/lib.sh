@@ -264,6 +264,8 @@ fork_order = runtime_capability.get("fork_order") or [
     "posa",
     "prague",
     "osaka",
+    "bpo1",
+    "bpo2",
 ]
 fork_rank = {name: idx for idx, name in enumerate(fork_order)}
 
@@ -412,14 +414,18 @@ required_fork_map = {
     ("smoke", "poa_shanghai_cancun_fixheader_posa"): "posa",
     ("smoke", "poa_shanghai_cancun_fixheader_posa_prague"): "prague",
     ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka"): "osaka",
+    ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1"): "bpo1",
+    ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2"): "bpo2",
     ("upgrade", "shanghaiTime"): "shanghai",
     ("upgrade", "cancunTime"): "cancun",
     ("upgrade", "fixHeaderTime"): "fixHeader",
     ("upgrade", "posaTime"): "posa",
     ("upgrade", "pragueTime"): "prague",
     ("upgrade", "osakaTime"): "osaka",
-    ("upgrade", "allSame"): "osaka",
-    ("upgrade", "allStaggered"): "osaka",
+    ("upgrade", "bpo1Time"): "bpo1",
+    ("upgrade", "bpo2Time"): "bpo2",
+    ("upgrade", "allSame"): "bpo2",
+    ("upgrade", "allStaggered"): "bpo2",
 }
 
 required_fork = required_fork_map.get((mode, target))

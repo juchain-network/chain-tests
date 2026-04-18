@@ -23,6 +23,8 @@ func UpgradeForkSchedulePhases(cfg *config.Config) []forkSchedulePhase {
 		{name: "posa", at: cfg.Fork.Schedule.PosaTime},
 		{name: "prague", at: cfg.Fork.Schedule.PragueTime},
 		{name: "osaka", at: cfg.Fork.Schedule.OsakaTime},
+		{name: "bpo1", at: cfg.Fork.Schedule.BPO1Time},
+		{name: "bpo2", at: cfg.Fork.Schedule.BPO2Time},
 	}
 	out := make([]forkSchedulePhase, 0, len(phases))
 	for _, phase := range phases {

@@ -41,13 +41,15 @@ runtime_capability:
     - posa
     - prague
     - osaka
+    - bpo1
+    - bpo2
   version_matrix:
     geth:
       "1.13.x": posa
-      "1.16.x": osaka
+      "1.16.x": bpo2
     reth:
-      "1.1.x": osaka
-      "1.11.x": osaka
+      "1.1.x": bpo2
+      "1.11.x": bpo2
 
 # Native-only per-node runtime mapping for runtime.impl_mode=mixed.
 # In mixed mode, every node must set its own impl. `binary` is optional:
@@ -106,9 +108,9 @@ network:
   genesis_mode: "posa"
   # Used only when genesis_mode=upgrade.
   # Valid values:
-  # - shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime
-  # - allStaggered  -> shanghai/cancun/fixHeader/posa/prague/osaka all non-zero and +60s increment
-  # - allSame       -> shanghai/cancun/fixHeader/posa/prague/osaka all equal and non-zero
+  # - shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime | bpo1Time | bpo2Time
+  # - allStaggered  -> shanghai/cancun/fixHeader/posa/prague/osaka/bpo1/bpo2 all non-zero and +60s increment
+  # - allSame       -> shanghai/cancun/fixHeader/posa/prague/osaka/bpo1/bpo2 all equal and non-zero
   #
   # Used only when genesis_mode=smoke.
   # Valid values:
@@ -279,6 +281,11 @@ ci:
   release_gate:
     run_smoke: true
     run_smoke_matrix: true
+    run_fork_all: true
+    run_posa: true
+  weekly_soak:
+    enabled: true
+ true
     run_fork_all: true
     run_posa: true
   weekly_soak:

@@ -9,6 +9,13 @@ It validates:
 - PoA -> PoSA upgrade fork liveness
 - native `pm2` runtime
 - both runtime implementations: `geth` and `reth`
+- a fork capability verification surface (`make test-forkcap`) for real-chain fork-gated EVM / protocol behavior
+
+Current forkcap scope note:
+- forkcap is currently verified only on a **single-node geth** baseline
+- the implemented fork ladder follows the chain's current runtime order: `shanghai -> cancun -> fixheader -> posa -> prague -> osaka -> bpo1 -> bpo2`
+- non-geth runtime coverage (`reth` / `rchain`), mixed-mode parity, and cross-client comparison are intentionally deferred
+- this does not limit the overall repository runtime model; it only limits the current forkcap success criteria
 
 ## 1. Dependency boundary
 
@@ -146,8 +153,8 @@ Notes:
 - `TOPOLOGY`: `single | multi`
 - `INIT_MODE`: `poa | posa | smoke | upgrade`
 - `INIT_TARGET`:
-  - when `INIT_MODE=smoke`: `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka`
-  - when `INIT_MODE=upgrade`: `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime | allStaggered | allSame`
+  - when `INIT_MODE=smoke`: `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka | poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1 | poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2`
+  - when `INIT_MODE=upgrade`: `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime | bpo1Time | bpo2Time | allStaggered | allSame`
 - After `make init`, lifecycle commands operate on the generated runtime session snapshot:
   - default snapshot path: `data/runtime_session.yaml`
   - machine-readable copy: `data/runtime_session.json`
@@ -226,6 +233,8 @@ Default `SMOKE_CASES`:
 - `poa_shanghai_cancun_fixheader_posa`
 - `poa_shanghai_cancun_fixheader_posa_prague`
 - `poa_shanghai_cancun_fixheader_posa_prague_osaka`
+- `poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1`
+- `poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2`
 
 Notes:
 
@@ -276,7 +285,37 @@ make ci MODE=groups BUDGET=1
 make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
 ```
 
-### 5.3 Regression bundles
+### 5.3 Fork capability surface (`test-forkcap`)
+
+`test-forkcap` is the dedicated fork capability runner for real-chain fork-gated EVM / protocol behavior.
+It currently runs on a temporary **single-node geth** baseline and automatically executes both `pre` and `post` phases for the selected fork.
+Non-geth runtime parity (`reth` / `rchain`, mixed mode, cross-client comparison) is intentionally outside the current forkcap scope.
+
+Examples:
+
+```bash
+# all fork capability suites
+make test-forkcap FORK=all
+
+# one fork layer
+make test-forkcap FORK=shanghai
+make test-forkcap FORK=cancun
+make test-forkcap FORK=prague
+make test-forkcap FORK=osaka
+
+# narrow test-name regex via go test -run
+make test-forkcap FORK=shanghai CASE='TestK_ForkcapCapability_Push0'
+make test-forkcap FORK=osaka CASE='TestK_ForkcapCapability_(OsakaEngineGetPayloadTransition|OsakaEngineBlobAPITransition)'
+```
+
+Notes:
+
+- `FORK`: `shanghai | cancun | prague | osaka | all`
+- `CASE` is a `go test -run` regular expression, not a registry capability key
+- reports are written under `reports/forkcap_<timestamp>/` unless `REPORT_DIR=...` is provided
+- deferred capabilities remain visible in output by design; they are not hidden just because the chain or harness cannot prove them yet
+
+### 5.4 Regression bundles
 
 ```bash
 make test-regression
@@ -290,7 +329,7 @@ Notes:
 - `SCOPE=full` orchestrates smoke + business groups + fork matrix + PoSA + interop aggregation
 - `make test` runs a single-pass `go test -run .` and expects network already ready
 
-### 5.4 Fork/upgrade liveness matrix (dynamic)
+### 5.5 Fork/upgrade liveness matrix (dynamic)
 
 ```bash
 make test-fork
@@ -322,7 +361,7 @@ FORK_CASES=upgrade:allStaggered FORK_DELAY_SECONDS=60 FORK_TEST_TIMEOUT=30m TOPO
 FORK_REPORT_DIR=reports/fork_custom TOPOLOGY=single make test-fork
 ```
 
-### 5.5 Scenario suites
+### 5.6 Scenario suites
 
 ```bash
 make test-scenario SCENARIO=posa
@@ -355,7 +394,7 @@ Scenario-only coverage notes:
   - `TestZ_UnderfundedUpgradeDefersMigration`
   - `TestZ_OverrideDriftRestartKeepsStoredMapping`
 
-### 5.6 Performance / soak
+### 5.7 Performance / soak
 
 ```bash
 make test-perf MODE=tiers
@@ -389,11 +428,11 @@ Important fields:
 - `validator_auth.mode`: `auto | keystore` (reth validator auth, keystore-only)
 - `network.fork_target`:
   - smoke static profiles:
-    - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka`
+    - `poa | poa_shanghai | poa_shanghai_cancun | poa_shanghai_cancun_fixheader | poa_shanghai_cancun_fixheader_posa | poa_shanghai_cancun_fixheader_posa_prague | poa_shanghai_cancun_fixheader_posa_prague_osaka | poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1 | poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2`
   - upgrade dynamic targets:
-  - `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime`
-  - `allStaggered` (all six fork timestamps are non-zero and increase by 60s)
-  - `allSame` (all six fork timestamps are equal and non-zero)
+  - `shanghaiTime | cancunTime | fixHeaderTime | posaTime | pragueTime | osakaTime | bpo1Time | bpo2Time`
+  - `allStaggered` (all eight fork timestamps are non-zero and increase by 60s)
+  - `allSame` (all eight fork timestamps are equal and non-zero)
 - `network.fork_delay_seconds`: fork delay in seconds for upgrade mode
 - `network.epoch`: base epoch length (can be overridden per run: `make init EPOCH=60`)
 - `tests.profile`: `fast | default | edge`
@@ -466,6 +505,18 @@ When system contracts change:
 
 When Congress consensus logic changes (`congress.go`):
 
+1. Rebuild geth
+2. Replace runtime binary
+3. Restart from clean data and run regression
+
+## 10. CI profiles
+
+```bash
+make ci PROFILE=pr
+make ci PROFILE=nightly
+make ci PROFILE=weekly-soak
+make ci PROFILE=release
+```
 1. Rebuild geth
 2. Replace runtime binary
 3. Restart from clean data and run regression

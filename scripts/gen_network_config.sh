@@ -422,7 +422,13 @@ if not validators or not signers:
 if mode not in {"upgrade", "smoke"}:
     raise SystemExit(f"upgrade override only supports upgrade/smoke migration modes, got: {mode or '<empty>'}")
 
-if mode == "smoke" and target not in {"poa_shanghai_cancun_fixheader_posa", "poa_shanghai_cancun_fixheader_posa_prague", "poa_shanghai_cancun_fixheader_posa_prague_osaka"}:
+if mode == "smoke" and target not in {
+    "poa_shanghai_cancun_fixheader_posa",
+    "poa_shanghai_cancun_fixheader_posa_prague",
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka",
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1",
+    "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2",
+}:
     raise SystemExit(
         "upgrade override in smoke mode only supports fork targets with PoSA enabled"
     )
@@ -485,14 +491,18 @@ enabled_by_mode = {
     ("smoke", "poa_shanghai_cancun_fixheader_posa"): fork_order[:4],
     ("smoke", "poa_shanghai_cancun_fixheader_posa_prague"): fork_order[:5],
     ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka"): fork_order[:6],
+    ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1"): fork_order[:7],
+    ("smoke", "poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2"): fork_order[:8],
     ("upgrade", "shanghaiTime"): fork_order[:1],
     ("upgrade", "cancunTime"): fork_order[:2],
     ("upgrade", "fixHeaderTime"): fork_order[:3],
     ("upgrade", "posaTime"): fork_order[:4],
     ("upgrade", "pragueTime"): fork_order[:5],
     ("upgrade", "osakaTime"): fork_order[:6],
-    ("upgrade", "allSame"): fork_order[:6],
-    ("upgrade", "allStaggered"): fork_order[:6],
+    ("upgrade", "bpo1Time"): fork_order[:7],
+    ("upgrade", "bpo2Time"): fork_order[:8],
+    ("upgrade", "allSame"): fork_order[:8],
+    ("upgrade", "allStaggered"): fork_order[:8],
 }
 
 enabled = enabled_by_mode.get((mode, target))
@@ -607,19 +617,19 @@ case "$GENESIS_MODE" in
 esac
 if [ "$GENESIS_MODE" = "upgrade" ]; then
     case "$FORK_TARGET" in
-        shanghaiTime|cancunTime|fixHeaderTime|posaTime|pragueTime|osakaTime|allStaggered|allSame)
+        shanghaiTime|cancunTime|fixHeaderTime|posaTime|pragueTime|osakaTime|bpo1Time|bpo2Time|allStaggered|allSame)
             ;;
         *)
-            die "FORK_TARGET must be one of shanghaiTime|cancunTime|fixHeaderTime|posaTime|pragueTime|osakaTime|allStaggered|allSame when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
+            die "FORK_TARGET must be one of shanghaiTime|cancunTime|fixHeaderTime|posaTime|pragueTime|osakaTime|bpo1Time|bpo2Time|allStaggered|allSame when GENESIS_MODE=upgrade, got: ${FORK_TARGET:-<empty>}"
             ;;
     esac
 fi
 if [ "$GENESIS_MODE" = "smoke" ]; then
     case "$FORK_TARGET" in
-        poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka)
+        poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2)
             ;;
         *)
-            die "FORK_TARGET must be one of poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka when GENESIS_MODE=smoke, got: ${FORK_TARGET:-<empty>}"
+            die "FORK_TARGET must be one of poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2 when GENESIS_MODE=smoke, got: ${FORK_TARGET:-<empty>}"
             ;;
     esac
 fi
@@ -814,7 +824,7 @@ case "$GENESIS_MODE" in
             poa|poa_shanghai|poa_shanghai_cancun|poa_shanghai_cancun_fixheader)
                 USE_POA_ALLOC=true
                 ;;
-            poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka)
+            poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2)
                 USE_POA_ALLOC=false
                 ;;
             *)
@@ -906,17 +916,21 @@ FORK_FIX_HEADER_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.fixHead
 FORK_POSA_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.posaTime // 0')"
 FORK_PRAGUE_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.pragueTime // 0')"
 FORK_OSAKA_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.osakaTime // 0')"
+FORK_BPO1_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.bpo1Time // 0')"
+FORK_BPO2_TIME="$(printf '%s' "$FORK_META_JSON" | jq -r '.schedule.bpo2Time // 0')"
 FORK_RUNTIME_SHANGHAI_TIME="$FORK_SHANGHAI_TIME"
 FORK_RUNTIME_CANCUN_TIME="$FORK_CANCUN_TIME"
 FORK_RUNTIME_FIX_HEADER_TIME="$FORK_FIX_HEADER_TIME"
 FORK_RUNTIME_POSA_TIME="$FORK_POSA_TIME"
 FORK_RUNTIME_PRAGUE_TIME="$FORK_PRAGUE_TIME"
 FORK_RUNTIME_OSAKA_TIME="$FORK_OSAKA_TIME"
+FORK_RUNTIME_BPO1_TIME="$FORK_BPO1_TIME"
+FORK_RUNTIME_BPO2_TIME="$FORK_BPO2_TIME"
 FORK_RUNTIME_SCHEDULED_TIME="$FORK_SCHEDULED_TIME"
 if [ -n "$UPGRADE_OVERRIDE_POSA_TIME" ]; then
     FORK_RUNTIME_POSA_TIME="$UPGRADE_OVERRIDE_POSA_TIME"
     case "$FORK_EFFECTIVE_TARGET" in
-        posaTime|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka)
+        posaTime|poa_shanghai_cancun_fixheader_posa|poa_shanghai_cancun_fixheader_posa_prague|poa_shanghai_cancun_fixheader_posa_prague_osaka|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1|poa_shanghai_cancun_fixheader_posa_prague_osaka_bpo1_bpo2)
             FORK_RUNTIME_SCHEDULED_TIME="$UPGRADE_OVERRIDE_POSA_TIME"
             ;;
     esac
@@ -929,7 +943,9 @@ validate_runtime_fork_schedule \
     "$FORK_RUNTIME_FIX_HEADER_TIME" \
     "$FORK_RUNTIME_POSA_TIME" \
     "$FORK_RUNTIME_PRAGUE_TIME" \
-    "$FORK_RUNTIME_OSAKA_TIME"
+    "$FORK_RUNTIME_OSAKA_TIME" \
+    "$FORK_RUNTIME_BPO1_TIME" \
+    "$FORK_RUNTIME_BPO2_TIME"
 
 RETH_CHAIN_FILE="$DATA_DIR/reth_chain.json"
 jq \
@@ -1087,6 +1103,8 @@ fork:
     posa_time: $FORK_RUNTIME_POSA_TIME
     prague_time: $FORK_RUNTIME_PRAGUE_TIME
     osaka_time: $FORK_RUNTIME_OSAKA_TIME
+    bpo1_time: $FORK_RUNTIME_BPO1_TIME
+    bpo2_time: $FORK_RUNTIME_BPO2_TIME
   override:
     posa_time: ${UPGRADE_OVERRIDE_POSA_TIME:-}
     posa_validators: $UPGRADE_OVERRIDE_POSA_VALIDATORS_JSON
@@ -1309,6 +1327,8 @@ jq -n \
   --argjson posa_time "$FORK_RUNTIME_POSA_TIME" \
   --argjson prague_time "$FORK_RUNTIME_PRAGUE_TIME" \
   --argjson osaka_time "$FORK_RUNTIME_OSAKA_TIME" \
+  --argjson bpo1_time "$FORK_RUNTIME_BPO1_TIME" \
+  --argjson bpo2_time "$FORK_RUNTIME_BPO2_TIME" \
   --arg override_posa_time "${UPGRADE_OVERRIDE_POSA_TIME:-}" \
   --argjson bootstrap_validators "$BOOTSTRAP_VALIDATORS_JSON" \
   --argjson bootstrap_signers "$BOOTSTRAP_SIGNERS_JSON" \
@@ -1360,7 +1380,9 @@ jq -n \
         fix_header_time: $fix_header_time,
         posa_time: $posa_time,
         prague_time: $prague_time,
-        osaka_time: $osaka_time
+        osaka_time: $osaka_time,
+        bpo1_time: $bpo1_time,
+        bpo2_time: $bpo2_time
       },
       override: {
         posa_time: (if ($override_posa_time | length) == 0 then null else ($override_posa_time | tonumber) end),

@@ -35,6 +35,8 @@ type Config struct {
 			PosaTime      int64 `yaml:"posa_time"`
 			PragueTime    int64 `yaml:"prague_time"`
 			OsakaTime     int64 `yaml:"osaka_time"`
+			BPO1Time      int64 `yaml:"bpo1_time"`
+			BPO2Time      int64 `yaml:"bpo2_time"`
 		} `yaml:"schedule"`
 		Override struct {
 			PosaTime       int64    `yaml:"posa_time"`

@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"crypto/ecdsa"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -194,4 +195,37 @@ func pickInTurnValidatorForNextBlock(t *testing.T) (*ecdsa.PrivateKey, common.Ad
 
 func waitNextBlock() {
 	waitBlocks(nil, 1)
+}
+
+func waitProposalCooldownFor(t *testing.T, proposer common.Address) {
+	if ctx == nil {
+		if t != nil {
+			t.Fatalf("Context not initialized")
+		}
+		return
+	}
+	cooldown, err := ctx.Proposal.ProposalCooldown(nil)
+	if err != nil || cooldown == nil || cooldown.Sign() <= 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	lastBlock, err := ctx.Proposal.LastProposalBlock(nil, proposer)
+	if err != nil || lastBlock == nil || lastBlock.Sign() == 0 {
+		waitBlocks(t, 1)
+		return
+	}
+	curHeight, err := ctx.Clients[0].BlockNumber(context.Background())
+	if err != nil {
+		waitBlocks(t, 1)
+		return
+	}
+	target := new(big.Int).Add(lastBlock, cooldown)
+	if !target.IsUint64() {
+		waitBlocks(t, 1)
+		return
+	}
+	targetHeight := target.Uint64()
+	if curHeight < targetHeight {
+		waitBlocks(t, int(targetHeight-curHeight))
+	}
 }

@@ -88,6 +88,15 @@ func TestZ_AddValidatorWithSeparateSignerBecomesActiveAndSealsBlocks(t *testing.
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "add-validator-live-activation", activationCheckpoint+1, 15*time.Second, testkit.LongWindowTimeout(remainingToActivation)); err != nil {
 		t.Fatalf("%v", err)
 	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"add-validator-live-activation-primary",
+		activationCheckpoint+1,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
 	checkpointHeader, err := ctx.Clients[0].HeaderByNumber(context.Background(), new(big.Int).SetUint64(activationCheckpoint))
 	if err != nil || checkpointHeader == nil {
 		t.Fatalf("read activation checkpoint header failed: %v", err)
@@ -150,6 +159,15 @@ func TestZ_AddValidatorWithSeparateSignerBecomesActiveAndSealsBlocks(t *testing.
 	// offline, so canonical progress can have noticeably longer gaps before out-of-turn
 	// sealing recovers liveness.
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "add-validator-live-observation", observationEnd, 45*time.Second, testkit.LongWindowTimeout(24)); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"add-validator-live-observation-primary",
+		observationEnd,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
 		t.Fatalf("%v", err)
 	}
 

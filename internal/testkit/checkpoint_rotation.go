@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -427,6 +428,138 @@ func runtimeNodeForValidator(c *testctx.CIContext, validator common.Address) (in
 	return 0, "", "", fmt.Errorf("runtime node not found for validator %s", validator.Hex())
 }
 
+func bootnodesByP2PPort(raw string) map[string]string {
+	entries := make(map[string]string)
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		at := strings.LastIndex(item, "@")
+		if at < 0 || at+1 >= len(item) {
+			continue
+		}
+		hostPort := item[at+1:]
+		colon := strings.LastIndex(hostPort, ":")
+		if colon < 0 || colon+1 >= len(hostPort) {
+			continue
+		}
+		port := strings.TrimSpace(hostPort[colon+1:])
+		if port != "" {
+			entries[port] = item
+		}
+	}
+	return entries
+}
+
+func uniqueNodeRPCs(c *testctx.CIContext, exclude string) []string {
+	if c == nil || c.Config == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	urls := make([]string, 0, len(c.Config.ValidatorRPCs)+len(c.Config.NodeRPCs)+1)
+	appendURL := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		key := strings.ToLower(raw)
+		if strings.EqualFold(raw, exclude) || seen[key] {
+			return
+		}
+		seen[key] = true
+		urls = append(urls, raw)
+	}
+	for _, rpcURL := range c.Config.ValidatorRPCs {
+		appendURL(rpcURL)
+	}
+	appendURL(c.Config.SyncRPC)
+	for _, nodeRPC := range c.Config.NodeRPCs {
+		appendURL(nodeRPC.URL)
+	}
+	return urls
+}
+
+func addPeerRPC(client *ethclient.Client, enode string) error {
+	if client == nil {
+		return fmt.Errorf("nil client")
+	}
+	enode = strings.TrimSpace(enode)
+	if enode == "" {
+		return fmt.Errorf("empty enode")
+	}
+	var ok bool
+	if err := client.Client().CallContext(context.Background(), &ok, "admin_addPeer", enode); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_addPeer returned false for %s", enode)
+	}
+	return nil
+}
+
+func reconnectValidatorNodePeers(c *testctx.CIContext, restartedClient *ethclient.Client, restartedRPC, nativeEnvFile string, validatorIndex int, timeout time.Duration) error {
+	if c == nil || c.Config == nil || restartedClient == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	if validatorIndex < 0 {
+		return fmt.Errorf("invalid validator index: %d", validatorIndex)
+	}
+
+	selfPort := strings.TrimSpace(envValueFromFile(nativeEnvFile, fmt.Sprintf("VALIDATOR%d_P2P_PORT", validatorIndex+1)))
+	if selfPort == "" {
+		return fmt.Errorf("missing VALIDATOR%d_P2P_PORT in native env", validatorIndex+1)
+	}
+	bootnodes := bootnodesByP2PPort(envValueFromFile(nativeEnvFile, "BOOTNODES"))
+	if len(bootnodes) == 0 {
+		return fmt.Errorf("BOOTNODES missing from native env")
+	}
+
+	selfEnode := strings.TrimSpace(bootnodes[selfPort])
+	if selfEnode == "" {
+		return fmt.Errorf("self enode not found in BOOTNODES for p2p port %s", selfPort)
+	}
+
+	otherEnodes := make([]string, 0, len(bootnodes)-1)
+	for port, enode := range bootnodes {
+		if port == selfPort || strings.TrimSpace(enode) == "" {
+			continue
+		}
+		otherEnodes = append(otherEnodes, strings.TrimSpace(enode))
+	}
+
+	for _, enode := range otherEnodes {
+		if err := addPeerRPC(restartedClient, enode); err != nil {
+			return fmt.Errorf("add peer on restarted validator failed for %s: %w", enode, err)
+		}
+	}
+
+	for _, rpcURL := range uniqueNodeRPCs(c, restartedRPC) {
+		peerClient, err := ethclient.Dial(rpcURL)
+		if err != nil {
+			return fmt.Errorf("dial peer rpc %s failed during validator reconnect: %w", rpcURL, err)
+		}
+		if err := addPeerRPC(peerClient, selfEnode); err != nil {
+			peerClient.Close()
+			return fmt.Errorf("add restarted validator peer on %s failed: %w", rpcURL, err)
+		}
+		peerClient.Close()
+	}
+
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var peerCount hexutil.Uint
+		if err := restartedClient.Client().CallContext(context.Background(), &peerCount, "net_peerCount"); err == nil && uint64(peerCount) > 0 {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("validator rpc %s still has zero peers after reconnect", restartedRPC)
+}
+
 func ActivateRotatedSignerOnSingleNode(c *testctx.CIContext, rotation *SignerRotation, timeout time.Duration) error {
 	if rotation == nil {
 		return fmt.Errorf("rotation is nil")
@@ -562,6 +695,72 @@ func RestartValidatorNodeWithSigner(c *testctx.CIContext, validator common.Addre
 		return fmt.Errorf("validator rpc %s not ready after pm2 restart", rpcURL)
 	}
 	defer client.Close()
+	reconnectTimeout := timeout / 3
+	if reconnectTimeout < 10*time.Second {
+		reconnectTimeout = 10 * time.Second
+	}
+	if err := reconnectValidatorNodePeers(c, client, rpcURL, nativeEnvFile, idx, reconnectTimeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+func RestartValidatorNode(c *testctx.CIContext, validator common.Address, timeout time.Duration) error {
+	if c == nil || c.Config == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	if strings.TrimSpace(c.Config.SourcePath) == "" {
+		return fmt.Errorf("config source path is empty")
+	}
+
+	idx, _, _, err := runtimeNodeForValidator(c, validator)
+	if err != nil {
+		return err
+	}
+
+	repoRoot := filepath.Dir(filepath.Dir(c.Config.SourcePath))
+	nativeEnvFile := filepath.Join(repoRoot, "data", "native", ".env")
+	processName := fmt.Sprintf("%s-validator%d", defaultPM2Namespace(c), idx+1)
+	cmd := exec.Command("pm2", "restart", processName, "--update-env")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PM2_NAMESPACE=%s", defaultPM2Namespace(c)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pm2 restart failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
+	}
+
+	rpcURL := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
+	if rpcURL == "" {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	var client *ethclient.Client
+	for time.Now().Before(deadline) {
+		client, err = ethclient.Dial(rpcURL)
+		if err == nil {
+			_, blockErr := client.BlockNumber(context.Background())
+			if blockErr == nil {
+				break
+			}
+			client.Close()
+			client = nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if client == nil {
+		return fmt.Errorf("validator rpc %s not ready after pm2 restart", rpcURL)
+	}
+	defer client.Close()
+
+	reconnectTimeout := timeout / 3
+	if reconnectTimeout < 10*time.Second {
+		reconnectTimeout = 10 * time.Second
+	}
+	if err := reconnectValidatorNodePeers(c, client, rpcURL, nativeEnvFile, idx, reconnectTimeout); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -619,6 +619,7 @@ func runSingleTest(runDir, testName, packagePattern, timeout, configPath string,
 	}
 
 	pass, fail, skip, timed := parseTestOutput(logPath)
+	fail = attributeImplicitFailures(status, fail, []string{testName}, "", name)
 
 	res := stepResult{
 		Name:      name,
@@ -673,6 +674,7 @@ func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string,
 	}
 
 	pass, fail, skip, timed := parseTestOutput(logPath)
+	fail = attributeImplicitFailures(status, fail, nil, pattern, name)
 
 	res := stepResult{
 		Name:      name,
@@ -707,6 +709,10 @@ func runStep(runDir, name, cmd string, args []string, env []string, workdir stri
 	}
 
 	pass, fail, skip, timed := parseTestOutput(logPath)
+	if nestedPass, nestedFail, nestedSkip, nestedTimed, ok := collectNestedSummaryCases(logPath); ok {
+		pass, fail, skip, timed = nestedPass, nestedFail, nestedSkip, nestedTimed
+	}
+	fail = attributeImplicitFailures(status, fail, nil, "", name)
 
 	res := stepResult{
 		Name:      name,
@@ -793,6 +799,141 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 		}
 	}
 	return pass, fail, skip, timed
+}
+
+func attributeImplicitFailures(status string, fail []string, tests []string, runPattern, fallback string) []string {
+	if strings.ToUpper(strings.TrimSpace(status)) != "FAIL" || len(fail) > 0 {
+		return fail
+	}
+	if strings.TrimSpace(runPattern) != "" {
+		return append(fail, strings.TrimSpace(runPattern))
+	}
+	for _, testName := range tests {
+		testName = strings.TrimSpace(testName)
+		if testName != "" {
+			fail = append(fail, testName)
+		}
+	}
+	if len(fail) > 0 {
+		return fail
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback != "" {
+		return append(fail, fallback)
+	}
+	return fail
+}
+
+func collectNestedSummaryCases(logPath string) ([]string, []string, []string, []timedCase, bool) {
+	summaryPaths := extractSummaryPaths(logPath)
+	if len(summaryPaths) == 0 {
+		return nil, nil, nil, nil, false
+	}
+
+	var pass []string
+	var fail []string
+	var skip []string
+	var timed []timedCase
+	for _, summaryPath := range summaryPaths {
+		nestedPass, nestedFail, nestedSkip, nestedTimed, err := collectCasesFromSummary(summaryPath)
+		if err != nil {
+			continue
+		}
+		pass = append(pass, nestedPass...)
+		fail = append(fail, nestedFail...)
+		skip = append(skip, nestedSkip...)
+		timed = append(timed, nestedTimed...)
+	}
+	return pass, fail, skip, timed, true
+}
+
+func extractSummaryPaths(logPath string) []string {
+	file, err := os.Open(logPath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	seen := make(map[string]struct{})
+	var out []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "Summary: ") {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, "Summary: "))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func collectCasesFromSummary(summaryPath string) ([]string, []string, []string, []timedCase, error) {
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	var summary runSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	var pass []string
+	var fail []string
+	var skip []string
+	var timed []timedCase
+	for _, step := range summary.Steps {
+		stepPass, stepFail, stepSkip, stepTimed := parseTestOutput(step.LogPath)
+		stepFail = attributeImplicitFailures(step.Status, stepFail, summary.Tests, summary.RunPattern, step.Name)
+		stepPass = padCaseList(stepPass, step.PassCount, "pass", summary, step)
+		stepFail = padCaseList(stepFail, step.FailCount, "fail", summary, step)
+		stepSkip = padCaseList(stepSkip, step.SkipCount, "skip", summary, step)
+		pass = append(pass, stepPass...)
+		fail = append(fail, stepFail...)
+		skip = append(skip, stepSkip...)
+		timed = append(timed, attachStepName(step.Name, stepTimed)...)
+	}
+	return pass, fail, skip, timed, nil
+}
+
+func padCaseList(items []string, want int, status string, summary runSummary, step summaryStep) []string {
+	if want <= len(items) {
+		return items
+	}
+	out := append([]string{}, items...)
+	bases := fallbackCaseBases(summary, step)
+	for len(out) < want {
+		base := bases[(len(out)-len(items))%len(bases)]
+		out = append(out, fmt.Sprintf("%s [%s fallback %d]", base, status, len(out)-len(items)+1))
+	}
+	return out
+}
+
+func fallbackCaseBases(summary runSummary, step summaryStep) []string {
+	var bases []string
+	if pattern := strings.TrimSpace(summary.RunPattern); pattern != "" {
+		bases = append(bases, pattern)
+	}
+	for _, testName := range summary.Tests {
+		testName = strings.TrimSpace(testName)
+		if testName != "" {
+			bases = append(bases, testName)
+		}
+	}
+	if name := strings.TrimSpace(step.Name); name != "" {
+		bases = append(bases, name)
+	}
+	if len(bases) == 0 {
+		bases = append(bases, "unknown")
+	}
+	return bases
 }
 
 func extractTestOutputValue(line, status string) (string, bool) {

@@ -86,6 +86,15 @@ func TestZ_SignerRotationNewSignerContinuesSealingAfterCheckpoint(t *testing.T) 
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "rotation-live-checkpoint", rotation.EffectiveBlock, 15*time.Second, testkit.LongWindowTimeout(rotation.EffectiveBlock)); err != nil {
 		t.Fatalf("%v", err)
 	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"rotation-live-checkpoint-primary",
+		rotation.EffectiveBlock,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	checkpointCall := testkit.CallAt(rotation.EffectiveBlock)
 	runtimeSigners, err := ctx.Validators.GetTopSigners(checkpointCall)
@@ -131,6 +140,15 @@ func TestZ_SignerRotationNewSignerContinuesSealingAfterCheckpoint(t *testing.T) 
 	testkit.MarkScenarioStage("post-checkpoint-observation")
 	observationEnd := rotation.EffectiveBlock + 12
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "rotation-live-observation", observationEnd, 15*time.Second, testkit.LongWindowTimeout(12)); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"rotation-live-observation-primary",
+		observationEnd,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
 		t.Fatalf("%v", err)
 	}
 

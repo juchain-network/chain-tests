@@ -370,11 +370,16 @@ wait_for_coverage_flush() {
 
 pm2_stop_known_graceful() {
   local proc
+  local -a existing=()
   for proc in "${PM2_PROCS[@]}"; do
     if "$MANAGER" describe "$proc" >/dev/null 2>&1; then
-      "$MANAGER" stop "$proc" >/dev/null 2>&1 || true
+      existing+=("$proc")
     fi
   done
+  if [[ ${#existing[@]} -eq 0 ]]; then
+    return 0
+  fi
+  "$MANAGER" stop "${existing[@]}" >/dev/null 2>&1 || true
 }
 
 pm2_wait_all_stopped() {

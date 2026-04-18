@@ -137,6 +137,15 @@ func TestZ_AddValidatorMissingSignerTriggersPunishAndJail(t *testing.T) {
 	if _, err := testkit.WaitUntilHeightOrStall(ctx, "add-validator-punish-threshold", thresholdHeight, 15*time.Second, testkit.LongWindowTimeout(thresholdHeight-activationCheckpoint)); err != nil {
 		t.Fatalf("%v", err)
 	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"add-validator-punish-threshold-primary",
+		thresholdHeight,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	thresholdCall := testkit.CallAt(thresholdHeight)
 	thresholdRecord, err := ctx.Punish.GetPunishRecord(thresholdCall, candidate.Validator)
@@ -166,6 +175,15 @@ func TestZ_AddValidatorMissingSignerTriggersPunishAndJail(t *testing.T) {
 
 	jailHeight, err := testkit.WaitForJailTransitionOrStall(ctx, candidate.Validator, thresholdHeight+1, jailDeadline, 15*time.Second)
 	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, err := testkit.WaitUntilClientHeight(
+		ctx.Clients[0],
+		"add-validator-punish-jail-primary",
+		jailHeight,
+		ctx.BlockPollInterval(),
+		30*time.Second,
+	); err != nil {
 		t.Fatalf("%v", err)
 	}
 

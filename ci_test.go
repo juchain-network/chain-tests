@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +131,130 @@ func TestParseTestOutputHandlesNestedCIRenderedStatusLines(t *testing.T) {
 	}
 	if len(timed) != 3 {
 		t.Fatalf("unexpected timed case count: %d", len(timed))
+	}
+}
+
+func TestAttributeImplicitFailures(t *testing.T) {
+	fail := attributeImplicitFailures("FAIL", nil, nil, "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus", "test_run_pattern")
+	if len(fail) != 1 || fail[0] != "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus" {
+		t.Fatalf("unexpected implicit failures: %#v", fail)
+	}
+
+	fail = attributeImplicitFailures("FAIL", nil, []string{"TestA_SystemConfigSetup"}, "", "test_TestA_SystemConfigSetup")
+	if len(fail) != 1 || fail[0] != "TestA_SystemConfigSetup" {
+		t.Fatalf("unexpected test fallback failures: %#v", fail)
+	}
+}
+
+func TestCollectCasesFromSummaryUsesFallbackCounts(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "inner.log")
+	if err := os.WriteFile(logPath, []byte("panic: test timed out after 30m0s\n"), 0o644); err != nil {
+		t.Fatalf("failed to write inner log: %v", err)
+	}
+
+	summaryPath := filepath.Join(dir, "summary.json")
+	summary := runSummary{
+		RunPattern: "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus",
+		Steps: []summaryStep{
+			{
+				Name:      "test_run_pattern",
+				Status:    "FAIL",
+				FailCount: 1,
+				LogPath:   logPath,
+			},
+		},
+	}
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("failed to marshal summary: %v", err)
+	}
+	if err := os.WriteFile(summaryPath, data, 0o644); err != nil {
+		t.Fatalf("failed to write summary: %v", err)
+	}
+
+	pass, fail, skip, timed, err := collectCasesFromSummary(summaryPath)
+	if err != nil {
+		t.Fatalf("collectCasesFromSummary failed: %v", err)
+	}
+	if len(pass) != 0 || len(skip) != 0 {
+		t.Fatalf("unexpected pass/skip cases: pass=%#v skip=%#v", pass, skip)
+	}
+	if len(fail) != 1 || !strings.Contains(fail[0], "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus") {
+		t.Fatalf("unexpected fail cases: %#v", fail)
+	}
+	if len(timed) != 0 {
+		t.Fatalf("unexpected timed cases: %#v", timed)
+	}
+}
+
+func TestCollectNestedSummaryCasesAggregatesMultipleInnerRuns(t *testing.T) {
+	dir := t.TempDir()
+	childLog1 := filepath.Join(dir, "child1.log")
+	childLog2 := filepath.Join(dir, "child2.log")
+	if err := os.WriteFile(childLog1, []byte("--- PASS: TestA_SystemConfigSetup (1.23s)\n"), 0o644); err != nil {
+		t.Fatalf("failed to write child log1: %v", err)
+	}
+	if err := os.WriteFile(childLog2, []byte("--- SKIP: TestZ_LastManStanding (0.00s)\n"), 0o644); err != nil {
+		t.Fatalf("failed to write child log2: %v", err)
+	}
+
+	childSummary1 := filepath.Join(dir, "child1-summary.json")
+	childSummary2 := filepath.Join(dir, "child2-summary.json")
+	for _, item := range []struct {
+		path    string
+		status  string
+		logPath string
+		pass    int
+		skip    int
+	}{
+		{path: childSummary1, status: "PASS", logPath: childLog1, pass: 1},
+		{path: childSummary2, status: "PASS", logPath: childLog2, skip: 1},
+	} {
+		summary := runSummary{
+			Steps: []summaryStep{
+				{
+					Name:      "test_run_pattern",
+					Status:    item.status,
+					LogPath:   item.logPath,
+					PassCount: item.pass,
+					SkipCount: item.skip,
+				},
+			},
+		}
+		data, err := json.Marshal(summary)
+		if err != nil {
+			t.Fatalf("failed to marshal child summary: %v", err)
+		}
+		if err := os.WriteFile(item.path, data, 0o644); err != nil {
+			t.Fatalf("failed to write child summary: %v", err)
+		}
+	}
+
+	parentLog := filepath.Join(dir, "parent.log")
+	parentContent := strings.Join([]string{
+		"Summary: " + childSummary1,
+		"Summary: " + childSummary2,
+	}, "\n")
+	if err := os.WriteFile(parentLog, []byte(parentContent), 0o644); err != nil {
+		t.Fatalf("failed to write parent log: %v", err)
+	}
+
+	pass, fail, skip, timed, ok := collectNestedSummaryCases(parentLog)
+	if !ok {
+		t.Fatalf("expected nested summary aggregation to succeed")
+	}
+	if len(pass) != 1 || pass[0] != "TestA_SystemConfigSetup (1.23s)" {
+		t.Fatalf("unexpected pass cases: %#v", pass)
+	}
+	if len(fail) != 0 {
+		t.Fatalf("unexpected fail cases: %#v", fail)
+	}
+	if len(skip) != 1 || skip[0] != "TestZ_LastManStanding (0.00s)" {
+		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(timed) != 2 {
+		t.Fatalf("unexpected timed cases: %#v", timed)
 	}
 }
 

@@ -271,7 +271,12 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 		tx, err = ctx.Proposal.CreateProposal(opts, target, true, name)
 		if err == nil {
 			if errW := ctx.WaitMined(tx.Hash()); errW != nil {
+				errWLower := strings.ToLower(errW.Error())
 				if strings.Contains(errW.Error(), "timeout waiting for tx") {
+					waitBlocks(t, 1)
+					continue
+				}
+				if strings.Contains(errWLower, "proposal expired") || strings.Contains(errWLower, "must repropose") {
 					waitBlocks(t, 1)
 					continue
 				}
@@ -280,7 +285,17 @@ func passProposalFor(t *testing.T, target common.Address, name string) error {
 			mined = true
 			break
 		}
-		if strings.Contains(err.Error(), "Proposal creation too frequent") || strings.Contains(err.Error(), "nonce too low") {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(err.Error(), "Proposal creation too frequent") {
+			waitProposalCooldownFor(t, proposerAddr)
+			continue
+		}
+		if strings.Contains(errLower, "proposal expired") || strings.Contains(errLower, "must repropose") {
+			waitBlocks(t, 1)
+			continue
+		}
+		if strings.Contains(err.Error(), "nonce too low") {
+			ctx.RefreshNonce(proposerAddr)
 			waitBlocks(t, 1)
 			continue
 		}
@@ -358,7 +373,7 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 	}
 	ensureProposalPassed := func() error {
 		var lastProposalErr error
-		for attempt := 0; attempt < 3; attempt++ {
+		for attempt := 0; attempt < 8; attempt++ {
 			pass, errPass := ctx.Proposal.Pass(nil, addr)
 			if errPass == nil && pass {
 				return nil
@@ -368,9 +383,11 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 				return nil
 			}
 			lastProposalErr = errProp
-			if strings.Contains(errProp.Error(), "Proposal expired") ||
-				strings.Contains(errProp.Error(), "proposal did not pass") ||
-				strings.Contains(errProp.Error(), "condition not met") {
+			errPropLower := strings.ToLower(errProp.Error())
+			if strings.Contains(errPropLower, "proposal expired") ||
+				strings.Contains(errPropLower, "must repropose") ||
+				strings.Contains(errPropLower, "proposal did not pass") ||
+				strings.Contains(errPropLower, "condition not met") {
 				waitBlocks(t, 1)
 				continue
 			}
@@ -407,8 +424,9 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 				return key, addr, nil
 			}
 			lastErr = errW
+			errWLower := strings.ToLower(errW.Error())
 			// Register tx may revert transiently around epoch/set-update windows.
-			if strings.Contains(errW.Error(), "Proposal expired") {
+			if strings.Contains(errWLower, "proposal expired") || strings.Contains(errWLower, "must repropose") {
 				if errP := ensureProposalPassed(); errP != nil {
 					lastErr = errP
 				}
@@ -427,11 +445,22 @@ func createAndRegisterValidator(t *testing.T, name string) (*ecdsa.PrivateKey, c
 				waitForNextEpochBlock(t)
 				continue
 			}
+			if strings.Contains(errWLower, "reverted") {
+				if isRegistered() {
+					return key, addr, nil
+				}
+				if errP := ensureProposalPassed(); errP != nil {
+					lastErr = errP
+				}
+				waitBlocks(t, 1)
+				continue
+			}
 			return nil, addr, errW
 		}
 
 		lastErr = err
-		if strings.Contains(err.Error(), "Proposal expired") {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "proposal expired") || strings.Contains(errLower, "must repropose") {
 			if errP := ensureProposalPassed(); errP != nil {
 				lastErr = errP
 			}

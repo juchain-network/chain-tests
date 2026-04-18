@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 const posaMaxHeightLag = uint64(8)
@@ -145,10 +146,12 @@ func TestP_SyncNodeCatchUp(t *testing.T) {
 
 func TestP_RestartConvergence(t *testing.T) {
 	requireBaselinePOSATopology(t)
-	cmd := exec.Command("/bin/bash", "-lc", "cd ../../ && TEST_ENV_CONFIG=${TEST_ENV_CONFIG:-config/test_env.yaml} ./scripts/perf/restart_node.sh")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skipf("restart helper unavailable in current environment: %v output=%s", err, string(out))
+	if len(cfg.Validators) < 2 {
+		t.Skip("restart convergence requires at least two configured validators")
+	}
+	target := common.HexToAddress(cfg.Validators[1].Address)
+	if err := testkit.RestartValidatorNode(ctx, target, 90*time.Second); err != nil {
+		t.Fatalf("restart validator runtime failed: validator=%s err=%v", target.Hex(), err)
 	}
 	if err := ctx.WaitForBlockProgress(3, 120*time.Second); err != nil {
 		t.Fatalf("block progress did not recover after restart: %v", err)

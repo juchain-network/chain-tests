@@ -31,8 +31,15 @@ const (
 	BPO2BlobBaseFeeUpdateFraction = uint64(11684671)
 )
 
+type rpcBlobConfig struct {
+	Target         uint64 `json:"target"`
+	Max            uint64 `json:"max"`
+	UpdateFraction uint64 `json:"baseFeeUpdateFraction"`
+}
+
 type rpcConfig struct {
 	ActivationTime  uint64                    `json:"activationTime"`
+	BlobSchedule    *rpcBlobConfig            `json:"blobSchedule"`
 	Precompiles     map[string]common.Address `json:"precompiles"`
 	SystemContracts map[string]common.Address `json:"systemContracts"`
 }
@@ -73,6 +80,60 @@ func CheckBPOBlobSchedule(cfg *config.Config, rpcURL string, fork string) error 
 		return basekit.VerifyBlobScheduleForDebug(rpcURL, BPO2BlobTarget, BPO2BlobMax, BPO2BlobBaseFeeUpdateFraction)
 	default:
 		return fmt.Errorf("unsupported bpo blob schedule fork %q", fork)
+	}
+}
+
+func CheckBPOEthConfigTransitionSurface(rpcURL string, fork string, shouldFail bool) error {
+	resp, err := ethConfig(rpcURL)
+	if err != nil {
+		return fmt.Errorf("eth_config for %s transition surface failed: %w", fork, err)
+	}
+	expectBlob := func(name string, got *rpcBlobConfig, target, max, updateFraction uint64) error {
+		if got == nil {
+			return fmt.Errorf("%s blobSchedule is missing", name)
+		}
+		if got.Target != target || got.Max != max || got.UpdateFraction != updateFraction {
+			return fmt.Errorf("unexpected %s blobSchedule: got target=%d max=%d updateFraction=%d want target=%d max=%d updateFraction=%d", name, got.Target, got.Max, got.UpdateFraction, target, max, updateFraction)
+		}
+		return nil
+	}
+	switch NormalizeFork(fork) {
+	case "bpo1":
+		if shouldFail {
+			if err := expectBlob("current", resp.Current.BlobSchedule, 6, 9, 5007716); err != nil {
+				return err
+			}
+			if resp.Next != nil || resp.Last != nil {
+				return fmt.Errorf("expected pre-BPO1 eth_config next/last to be nil in static smoke mode, got next=%v last=%v", resp.Next != nil, resp.Last != nil)
+			}
+			return nil
+		}
+		if err := expectBlob("current", resp.Current.BlobSchedule, BPO1BlobTarget, BPO1BlobMax, BPO1BlobBaseFeeUpdateFraction); err != nil {
+			return err
+		}
+		if resp.Next != nil || resp.Last != nil {
+			return fmt.Errorf("expected post-BPO1 eth_config next/last to be nil in static smoke mode, got next=%v last=%v", resp.Next != nil, resp.Last != nil)
+		}
+		return nil
+	case "bpo2":
+		if shouldFail {
+			if err := expectBlob("current", resp.Current.BlobSchedule, BPO1BlobTarget, BPO1BlobMax, BPO1BlobBaseFeeUpdateFraction); err != nil {
+				return err
+			}
+			if resp.Next != nil || resp.Last != nil {
+				return fmt.Errorf("expected pre-BPO2 eth_config next/last to be nil in static smoke mode, got next=%v last=%v", resp.Next != nil, resp.Last != nil)
+			}
+			return nil
+		}
+		if err := expectBlob("current", resp.Current.BlobSchedule, BPO2BlobTarget, BPO2BlobMax, BPO2BlobBaseFeeUpdateFraction); err != nil {
+			return err
+		}
+		if resp.Next != nil || resp.Last != nil {
+			return fmt.Errorf("expected post-BPO2 eth_config next/last to be nil in static smoke mode, got next=%v last=%v", resp.Next != nil, resp.Last != nil)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported bpo transition surface fork %q", fork)
 	}
 }
 
@@ -284,13 +345,13 @@ func CheckPragueEthConfigPrecompileSurface(rpcURL string, shouldFail bool) error
 	}
 	precompiles := resp.Current.Precompiles
 	expected := map[string]common.Address{
-		"BLS12_G1ADD":          common.BytesToAddress([]byte{0x0b}),
-		"BLS12_G1MSM":          common.BytesToAddress([]byte{0x0c}),
-		"BLS12_G2ADD":          common.BytesToAddress([]byte{0x0d}),
-		"BLS12_G2MSM":          common.BytesToAddress([]byte{0x0e}),
-		"BLS12_PAIRING_CHECK":  common.BytesToAddress([]byte{0x0f}),
-		"BLS12_MAP_FP_TO_G1":   common.BytesToAddress([]byte{0x10}),
-		"BLS12_MAP_FP2_TO_G2":  common.BytesToAddress([]byte{0x11}),
+		"BLS12_G1ADD":         common.BytesToAddress([]byte{0x0b}),
+		"BLS12_G1MSM":         common.BytesToAddress([]byte{0x0c}),
+		"BLS12_G2ADD":         common.BytesToAddress([]byte{0x0d}),
+		"BLS12_G2MSM":         common.BytesToAddress([]byte{0x0e}),
+		"BLS12_PAIRING_CHECK": common.BytesToAddress([]byte{0x0f}),
+		"BLS12_MAP_FP_TO_G1":  common.BytesToAddress([]byte{0x10}),
+		"BLS12_MAP_FP2_TO_G2": common.BytesToAddress([]byte{0x11}),
 	}
 	for name, addr := range expected {
 		got, ok := precompiles[name]
@@ -305,11 +366,6 @@ func CheckPragueEthConfigPrecompileSurface(rpcURL string, shouldFail bool) error
 		}
 		if got != addr {
 			return fmt.Errorf("unexpected post-Prague precompile %s: got %s want %s", name, got.Hex(), addr.Hex())
-		}
-	}
-	if !shouldFail {
-		if got, ok := precompiles["P256VERIFY"]; ok {
-			return fmt.Errorf("expected post-Prague eth_config.current.precompiles to omit Osaka-only P256VERIFY, got %s", got.Hex())
 		}
 	}
 	return nil

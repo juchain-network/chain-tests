@@ -767,8 +767,10 @@ These rules matter more as the suite grows.
 | fixHeader | `fixheader_rpc_surface` | active | FixHeader-era header surface such as zero `parentBeaconBlockRoot`, plus post-fork baseFee validation, is observable when FixHeader is enabled |
 | posa | `posa_contract_surface` | active | Pre-PoSA system contract set absent; post-PoSA validators/proposal/punish/staking contracts are deployed at canonical addresses |
 | posa | `posa_proposal_wiring_surface` | active | Post-PoSA proposal contract is initialized and wired to the canonical validators / punish / staking contract addresses |
+| posa | `posa_proposal_params_surface` | active | Post-PoSA proposal contract exposes the harness-configured epoch and test-friendly governance parameter set |
 | Prague | `prague_rpc_surface` | active | Prague-era RPC / header surface such as `requestsHash` is observable when Prague is enabled |
-| Prague | `prague_eth_config_precompile_surface` | active | Prague BLS12-381 precompile set appears in `eth_config.current.precompiles`, while Osaka-only `P256VERIFY` remains absent |
+| Prague | `prague_eth_config_precompile_surface` | active | Prague BLS12-381 precompile set appears in `eth_config.current.precompiles` |
+| Prague | `prague_authorization_rpc_surface` | active | Post-Prague `eth_getTransactionByHash` returns type-4 SetCode transactions with an `authorizationList` payload |
 | Prague | `prague_setcode_tx` | active | Pre-Prague `SetCodeTx` rejection; post-Prague acceptance and delegation-code installation |
 | Prague | `prague_capability_matrix` | deferred | Reserved slot for additional Prague semantic probes not yet implemented |
 | Osaka | `osaka_engine_getpayload_transition` | active | Pre-Osaka `getPayloadV4` succeeds and `getPayloadV5` rejects; post-Osaka polarity flips |
@@ -779,7 +781,9 @@ These rules matter more as the suite grows.
 | Osaka | `osaka_tx_gas_cap` | active | Pre-Osaka oversized tx remains accepted; post-Osaka oversized tx is rejected by gas-cap gate |
 | Osaka | `osaka_capability_matrix` | deferred | Reserved slot for additional Osaka semantic probes not yet implemented |
 | bpo1 | `bpo1_blob_schedule` | active | BPO1 blob schedule becomes the current `eth_config` schedule at the BPO1 boundary |
+| bpo1 | `bpo1_eth_config_transition_surface` | active | Static smoke `eth_config` keeps `next/last` nil while `current.blobSchedule` switches from Osaka to BPO1 at the BPO1 boundary |
 | bpo2 | `bpo2_blob_schedule` | active | BPO2 blob schedule becomes the current `eth_config` schedule at the BPO2 boundary |
+| bpo2 | `bpo2_eth_config_transition_surface` | active | Static smoke `eth_config` keeps `next/last` nil while `current.blobSchedule` switches from BPO1 to BPO2 at the BPO2 boundary |
 
 Interpretation rules:
 - `active` means the current harness proves a real pre-/post-fork difference or fork-gated surface on the running chain.

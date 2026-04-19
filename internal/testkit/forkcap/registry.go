@@ -121,6 +121,13 @@ func DefaultRegistry() []Capability {
 			Tags:        []string{"prague", "rpc", "precompile"},
 		},
 		{
+			Name:        "prague_authorization_rpc_surface",
+			MinimumFork: "prague",
+			Status:      StatusActive,
+			Description: "Validate Prague authorization RPC surface: post-Prague SetCode transactions are returned by eth_getTransactionByHash with an authorizationList payload.",
+			Tags:        []string{"prague", "rpc", "authorization"},
+		},
+		{
 			Name:        "prague_setcode_tx",
 			MinimumFork: "prague",
 			Status:      StatusActive,
@@ -144,11 +151,25 @@ func DefaultRegistry() []Capability {
 			Tags:        []string{"bpo1", "blob", "rpc"},
 		},
 		{
+			Name:        "bpo1_eth_config_transition_surface",
+			MinimumFork: "bpo1",
+			Status:      StatusActive,
+			Description: "Validate BPO1 eth_config current/next/last transition semantics across the BPO1 activation boundary.",
+			Tags:        []string{"bpo1", "blob", "transition"},
+		},
+		{
 			Name:        "bpo2_blob_schedule",
 			MinimumFork: "bpo2",
 			Status:      StatusActive,
 			Description: "Validate BPO2 blob schedule activation through eth_config on the running chain.",
 			Tags:        []string{"bpo2", "blob", "rpc"},
+		},
+		{
+			Name:        "bpo2_eth_config_transition_surface",
+			MinimumFork: "bpo2",
+			Status:      StatusActive,
+			Description: "Validate BPO2 eth_config current/next/last transition semantics across the BPO2 activation boundary.",
+			Tags:        []string{"bpo2", "blob", "transition"},
 		},
 		{
 			Name:        "osaka_engine_blob_api_transition",

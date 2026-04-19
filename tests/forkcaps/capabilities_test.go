@@ -252,6 +252,20 @@ func TestK_ForkcapCapability_PragueEthConfigPrecompileSurface(t *testing.T) {
 	}
 }
 
+func TestK_ForkcapCapability_PragueAuthorizationRPCSurface(t *testing.T) {
+	expectation := requireForkcapCapability(t, "prague")
+	if ctx == nil || cfg == nil || len(cfg.RPCs) == 0 {
+		t.Fatal("forkcap context or config not initialized")
+	}
+	h, err := fc.NewHarness(ctx)
+	if err != nil {
+		t.Fatalf("create forkcap harness: %v", err)
+	}
+	if err := fc.CheckPragueAuthorizationRPCSurface(h, cfg.RPCs[0], expectation.ShouldFail); err != nil {
+		t.Fatalf("verify Prague authorization RPC surface: %v", err)
+	}
+}
+
 func TestK_ForkcapCapability_PragueSetCodeTx(t *testing.T) {
 	expectation := requireForkcapCapability(t, "prague")
 	if ctx == nil {
@@ -281,6 +295,17 @@ func TestK_ForkcapCapability_BPO1BlobSchedule(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("verify BPO1 blob schedule: %v", err)
+	}
+}
+
+func TestK_ForkcapCapability_BPO1EthConfigTransitionSurface(t *testing.T) {
+	requireForkcapSelection(t, "bpo1")
+	expectation := requireForkcapCapability(t, "bpo1")
+	if cfg == nil || len(cfg.RPCs) == 0 {
+		t.Fatal("forkcap config not initialized")
+	}
+	if err := fc.CheckBPOEthConfigTransitionSurface(cfg.RPCs[0], "bpo1", expectation.ShouldFail); err != nil {
+		t.Fatalf("verify BPO1 eth_config transition surface: %v", err)
 	}
 }
 

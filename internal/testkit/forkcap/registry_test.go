@@ -86,6 +86,7 @@ func TestDefaultSuiteOsakaIncludesAllPriorForkLayers(t *testing.T) {
 		"posa_proposal_params_surface",
 		"prague_rpc_surface",
 		"prague_eth_config_precompile_surface",
+		"prague_authorization_rpc_surface",
 		"prague_setcode_tx",
 		"prague_capability_matrix",
 		"osaka_engine_blob_api_transition",
@@ -98,6 +99,27 @@ func TestDefaultSuiteOsakaIncludesAllPriorForkLayers(t *testing.T) {
 	} {
 		if _, ok := seen[required]; !ok {
 			t.Fatalf("expected osaka suite to include %s", required)
+		}
+	}
+}
+
+func TestDefaultSuiteBPO2IncludesBPOTransitionLayers(t *testing.T) {
+	suite, err := DefaultSuite("bpo2")
+	if err != nil {
+		t.Fatalf("load bpo2 suite: %v", err)
+	}
+	seen := make(map[string]struct{}, len(suite.Capabilities))
+	for _, cap := range suite.Capabilities {
+		seen[cap.Name] = struct{}{}
+	}
+	for _, required := range []string{
+		"bpo1_blob_schedule",
+		"bpo1_eth_config_transition_surface",
+		"bpo2_blob_schedule",
+		"bpo2_eth_config_transition_surface",
+	} {
+		if _, ok := seen[required]; !ok {
+			t.Fatalf("expected bpo2 suite to include %s", required)
 		}
 	}
 }

@@ -425,7 +425,8 @@ If Osaka later exposes additional blob-engine or semantic execution probes, thos
 | posa | `posa_proposal_wiring_surface` | active | proposal contract initialized with canonical validators / punish / staking wiring |
 | posa | `posa_proposal_params_surface` | active | proposal contract exposes the harness-configured epoch and test-friendly governance parameters |
 | Prague | `prague_rpc_surface` | active | block / RPC surface wrapper |
-| Prague | `prague_eth_config_precompile_surface` | active | `eth_config.current.precompiles` exposes Prague BLS12-381 precompiles without Osaka-only `P256VERIFY` |
+| Prague | `prague_eth_config_precompile_surface` | active | `eth_config.current.precompiles` exposes Prague BLS12-381 precompiles |
+| Prague | `prague_authorization_rpc_surface` | active | `eth_getTransactionByHash` exposes Prague type-4 `authorizationList` payloads |
 | Prague | `prague_setcode_tx` | active | semantic transaction gate + on-chain delegation-code effect |
 | Prague | `prague_capability_matrix` | deferred | placeholder for later Prague semantic expansion |
 | Osaka | `osaka_engine_getpayload_transition` | active | authrpc/JWT engine gate |
@@ -436,7 +437,9 @@ If Osaka later exposes additional blob-engine or semantic execution probes, thos
 | Osaka | `osaka_tx_gas_cap` | active | transaction validation gate |
 | Osaka | `osaka_capability_matrix` | deferred | placeholder for later Osaka semantic expansion |
 | BPO1 | `bpo1_blob_schedule` | active | exact fork-transition check on `eth_config` blob schedule |
+| BPO1 | `bpo1_eth_config_transition_surface` | active | static-smoke `eth_config` keeps `next/last` nil while `current.blobSchedule` switches to BPO1 |
 | BPO2 | `bpo2_blob_schedule` | active | exact fork-transition check on `eth_config` blob schedule |
+| BPO2 | `bpo2_eth_config_transition_surface` | active | static-smoke `eth_config` keeps `next/last` nil while `current.blobSchedule` switches to BPO2 |
 
 This matrix is the current truth surface for forkcap.
 If a capability is not listed as `active`, the suite should not imply that it is already proven on the running chain.

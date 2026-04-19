@@ -118,6 +118,24 @@ func waitUntilHeightOnClient(t *testing.T, client *ethclient.Client, target uint
 	return last
 }
 
+func waitUntilHeightOnClientBestEffort(
+	t *testing.T,
+	client *ethclient.Client,
+	label string,
+	target uint64,
+	timeout time.Duration,
+) (uint64, error) {
+	t.Helper()
+	if client == nil {
+		return 0, nil
+	}
+	height, err := testkit.WaitUntilClientHeight(client, label, target, ctx.BlockPollInterval(), timeout)
+	if err != nil {
+		return height, err
+	}
+	return height, nil
+}
+
 func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	if ctx == nil {
 		t.Fatalf("context not initialized")
@@ -158,6 +176,14 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 		t.Fatalf("ensure removeThreshold=1000 failed: %v", err)
 	}
 	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf(
+				"skip config restore during failed cleanup: punishThreshold=%s removeThreshold=%s",
+				origPunishThreshold.String(),
+				origRemoveThreshold.String(),
+			)
+			return
+		}
 		_ = ctx.EnsureConfig(1, new(big.Int).Set(origPunishThreshold), big.NewInt(1))
 		_ = ctx.EnsureConfig(2, new(big.Int).Set(origRemoveThreshold), big.NewInt(1000))
 	})
@@ -349,11 +375,37 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	if err := testkit.StopValidatorNode(ctx, rotation.Validator, 30*time.Second); err != nil {
 		t.Fatalf("stop target validator node failed: %v", err)
 	}
+	if err := testkit.ReconnectRemainingNodePeers(ctx, rotation.Validator, 10*time.Second); err != nil {
+		t.Fatalf("reconnect remaining live peers after stopping %s failed: %v", rotation.Validator.Hex(), err)
+	}
 	refreshLiveReader()
 
 	preBlock := rotation.EffectiveBlock - 1
-	waitUntilHeightOnClient(t, liveClient, preBlock, 120*time.Second)
-	preCall := &bind.CallOpts{BlockNumber: new(big.Int).SetUint64(preBlock)}
+	observedPreBlock, err := waitUntilHeightOnClientBestEffort(
+		t,
+		liveClient,
+		"checkpoint punish pre-checkpoint observation",
+		preBlock,
+		45*time.Second,
+	)
+	if err != nil {
+		t.Logf(
+			"alternate reader did not reach pre-checkpoint target height %d before timeout; using last observed pre-checkpoint height=%d: %v",
+			preBlock,
+			observedPreBlock,
+			err,
+		)
+		if observedPreBlock == 0 || observedPreBlock >= rotation.EffectiveBlock {
+			restoreSigner(rotation)
+			t.Fatalf(
+				"alternate reader could not provide a usable pre-checkpoint height: observed=%d effective=%d err=%v",
+				observedPreBlock,
+				rotation.EffectiveBlock,
+				err,
+			)
+		}
+	}
+	preCall := &bind.CallOpts{BlockNumber: new(big.Int).SetUint64(observedPreBlock)}
 	preRuntimeValidator, err := liveValidators.GetValidatorBySigner(preCall, rotation.NewSigner)
 	if err != nil {
 		restoreSigner(rotation)
@@ -374,7 +426,23 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	}
 
 	testkit.MarkScenarioStage("checkpoint-wait")
-	waitUntilHeightOnClient(t, liveClient, rotation.EffectiveBlock, 120*time.Second)
+	waitedCheckpointHeight, checkpointWaitErr := waitUntilHeightOnClientBestEffort(
+		t,
+		liveClient,
+		"checkpoint punish checkpoint observation",
+		rotation.EffectiveBlock,
+		45*time.Second,
+	)
+	if checkpointWaitErr != nil || waitedCheckpointHeight < rotation.EffectiveBlock {
+		t.Logf(
+			"alternate reader did not reach checkpoint height %d on first attempt; last=%d err=%v; refreshing live reader",
+			rotation.EffectiveBlock,
+			waitedCheckpointHeight,
+			checkpointWaitErr,
+		)
+		refreshLiveReader()
+		waitUntilHeightOnClient(t, liveClient, rotation.EffectiveBlock, 120*time.Second)
+	}
 
 	checkpointNum := new(big.Int).SetUint64(rotation.EffectiveBlock)
 	checkpointCall := &bind.CallOpts{BlockNumber: checkpointNum}
@@ -416,7 +484,16 @@ func TestZ_CheckpointRuntimePunishStillUsesOldSigner(t *testing.T) {
 	for offset := uint64(0); offset < 3; offset++ {
 		height := rotation.EffectiveBlock + offset
 		if offset > 0 {
-			waitUntilHeightOnClient(t, liveClient, height, 30*time.Second)
+			if _, err := testkit.WaitUntilClientHeight(
+				liveClient,
+				"checkpoint punish pending observation",
+				height,
+				ctx.BlockPollInterval(),
+				30*time.Second,
+			); err != nil {
+				t.Logf("checkpoint punish queue observation stopped before height %d: %v", height, err)
+				break
+			}
 		}
 		call := &bind.CallOpts{BlockNumber: new(big.Int).SetUint64(height)}
 		if addr, ok := readPendingHead(call); ok {

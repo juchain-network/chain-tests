@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -560,6 +561,103 @@ func reconnectValidatorNodePeers(c *testctx.CIContext, restartedClient *ethclien
 	return fmt.Errorf("validator rpc %s still has zero peers after reconnect", restartedRPC)
 }
 
+type nativePeerTarget struct {
+	rpcURL string
+	enode  string
+}
+
+func ReconnectRemainingNodePeers(c *testctx.CIContext, stoppedValidator common.Address, timeout time.Duration) error {
+	if c == nil || c.Config == nil {
+		return fmt.Errorf("context not initialized")
+	}
+	if strings.TrimSpace(c.Config.SourcePath) == "" {
+		return fmt.Errorf("config source path is empty")
+	}
+
+	stoppedIdx, _, _, err := runtimeNodeForValidator(c, stoppedValidator)
+	if err != nil {
+		return err
+	}
+
+	repoRoot := filepath.Dir(filepath.Dir(c.Config.SourcePath))
+	nativeEnvFile := filepath.Join(repoRoot, "data", "native", ".env")
+	bootnodes := bootnodesByP2PPort(envValueFromFile(nativeEnvFile, "BOOTNODES"))
+	if len(bootnodes) == 0 {
+		return fmt.Errorf("BOOTNODES missing from native env")
+	}
+
+	targets := make([]nativePeerTarget, 0, len(c.Config.ValidatorRPCs)+1)
+	for idx, rpcURL := range c.Config.ValidatorRPCs {
+		if idx == stoppedIdx {
+			continue
+		}
+		p2pPort := strings.TrimSpace(envValueFromFile(nativeEnvFile, fmt.Sprintf("VALIDATOR%d_P2P_PORT", idx+1)))
+		enode := strings.TrimSpace(bootnodes[p2pPort])
+		if strings.TrimSpace(rpcURL) == "" || p2pPort == "" || enode == "" {
+			continue
+		}
+		targets = append(targets, nativePeerTarget{
+			rpcURL: strings.TrimSpace(rpcURL),
+			enode:  enode,
+		})
+	}
+	if syncRPC := strings.TrimSpace(c.Config.SyncRPC); syncRPC != "" {
+		syncPort := strings.TrimSpace(envValueFromFile(nativeEnvFile, "SYNCNODE_P2P_PORT"))
+		syncEnode := strings.TrimSpace(bootnodes[syncPort])
+		if syncPort != "" && syncEnode != "" {
+			targets = append(targets, nativePeerTarget{
+				rpcURL: syncRPC,
+				enode:  syncEnode,
+			})
+		}
+	}
+	if len(targets) < 2 {
+		return fmt.Errorf("need at least two live nodes to reconnect remaining peers, got %d", len(targets))
+	}
+
+	clients := make([]*ethclient.Client, 0, len(targets))
+	for _, target := range targets {
+		client, dialErr := ethclient.Dial(target.rpcURL)
+		if dialErr != nil {
+			return fmt.Errorf("dial live rpc %s failed during remaining peer reconnect: %w", target.rpcURL, dialErr)
+		}
+		clients = append(clients, client)
+		defer client.Close()
+	}
+
+	for i, client := range clients {
+		for j, peer := range targets {
+			if i == j {
+				continue
+			}
+			if err := addPeerRPC(client, peer.enode); err != nil {
+				return fmt.Errorf("add live peer %s on %s failed: %w", peer.enode, targets[i].rpcURL, err)
+			}
+		}
+	}
+
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		allReady := true
+		for _, client := range clients {
+			var peerCount hexutil.Uint
+			if err := client.Client().CallContext(context.Background(), &peerCount, "net_peerCount"); err != nil || uint64(peerCount) == 0 {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("remaining live nodes still report zero peers after reconnect")
+}
+
 func ActivateRotatedSignerOnSingleNode(c *testctx.CIContext, rotation *SignerRotation, timeout time.Duration) error {
 	if rotation == nil {
 		return fmt.Errorf("rotation is nil")
@@ -786,27 +884,72 @@ func StopValidatorNode(c *testctx.CIContext, validator common.Address, timeout t
 		return fmt.Errorf("pm2 stop failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
 	}
 
-	rpcURL := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
-	if rpcURL == "" {
-		return nil
-	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	rpcURL := strings.TrimSpace(c.ValidatorRPCByValidator(validator))
 	deadline := time.Now().Add(timeout)
+	lastPID := -1
+	lastRPCDown := rpcURL == ""
 	for time.Now().Before(deadline) {
-		client, dialErr := ethclient.Dial(rpcURL)
-		if dialErr != nil {
+		pid, pidErr := pm2ProcessPID(repoRoot, processName, defaultPM2Namespace(c))
+		if pidErr == nil {
+			lastPID = pid
+		}
+
+		rpcDown := true
+		if rpcURL != "" {
+			rpcDown = false
+			client, dialErr := ethclient.Dial(rpcURL)
+			if dialErr != nil {
+				rpcDown = true
+			} else {
+				_, blockErr := client.BlockNumber(context.Background())
+				client.Close()
+				if blockErr != nil {
+					rpcDown = true
+				}
+			}
+		}
+		lastRPCDown = rpcDown
+		if lastPID == 0 && rpcDown {
 			return nil
 		}
-		_, blockErr := client.BlockNumber(context.Background())
-		client.Close()
-		if blockErr != nil {
-			return nil
-		}
+
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("validator rpc %s still responding after pm2 stop", rpcURL)
+	return fmt.Errorf(
+		"validator did not fully stop after pm2 stop: process=%s pid=%d rpc=%s rpc_down=%v",
+		processName,
+		lastPID,
+		rpcURL,
+		lastRPCDown,
+	)
+}
+
+func pm2ProcessPID(repoRoot, processName, namespace string) (int, error) {
+	cmd := exec.Command("pm2", "pid", processName)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PM2_NAMESPACE=%s", namespace))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return -1, fmt.Errorf("pm2 pid failed for %s: %w output=%s", processName, err, strings.TrimSpace(string(out)))
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return 0, nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" {
+		return 0, nil
+	}
+	pid, parseErr := strconv.Atoi(last)
+	if parseErr != nil {
+		return -1, fmt.Errorf("parse pm2 pid for %s failed: output=%q", processName, trimmed)
+	}
+	return pid, nil
 }
 
 func envValueFromFile(path, key string) string {

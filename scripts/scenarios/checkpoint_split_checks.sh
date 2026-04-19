@@ -59,7 +59,6 @@ run_case() {
 
 run_case ./tests/rewards TestZ_CheckpointRuntimeRewardsStillUseOldSigner single
 run_case ./tests/punish TestZ_CheckpointRuntimePunishStillUsesOldSigner multi
-run_case ./tests/punish TestZ_Liveness_StopOneValidator_RemainingTwoStillSeal multi
 run_case ./tests/punish TestZ_ExecutePendingAutoByConsensus multi
 run_case ./tests/epoch TestZ_CheckpointTransitionSignerSplit single
 

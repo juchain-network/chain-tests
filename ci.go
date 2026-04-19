@@ -25,15 +25,16 @@ import (
 )
 
 type stepResult struct {
-	Name      string
-	Command   string
-	LogPath   string
-	Status    string
-	Duration  time.Duration
-	PassTests []string
-	FailTests []string
-	SkipTests []string
-	Timed     []timedCase
+	Name          string
+	Command       string
+	LogPath       string
+	Status        string
+	Duration      time.Duration
+	PassTests     []string
+	FailTests     []string
+	SkipTests     []string
+	DeferredTests []string
+	Timed         []timedCase
 }
 
 type timedCase struct {
@@ -64,32 +65,34 @@ type reportStats struct {
 }
 
 type summaryStep struct {
-	Name      string        `json:"name"`
-	Status    string        `json:"status"`
-	Duration  time.Duration `json:"duration"`
-	PassCount int           `json:"pass_count"`
-	FailCount int           `json:"fail_count"`
-	SkipCount int           `json:"skip_count"`
-	LogPath   string        `json:"log_path"`
+	Name          string        `json:"name"`
+	Status        string        `json:"status"`
+	Duration      time.Duration `json:"duration"`
+	PassCount     int           `json:"pass_count"`
+	FailCount     int           `json:"fail_count"`
+	SkipCount     int           `json:"skip_count"`
+	DeferredCount int           `json:"deferred_count,omitempty"`
+	LogPath       string        `json:"log_path"`
 }
 
 type runSummary struct {
-	GeneratedAt     string        `json:"generated_at"`
-	Mode            string        `json:"mode"`
-	Groups          []string      `json:"groups,omitempty"`
-	Tests           []string      `json:"tests,omitempty"`
-	RunPattern      string        `json:"run_pattern,omitempty"`
-	ConfigPath      string        `json:"config_path"`
-	ReportPath      string        `json:"report_path"`
-	SlowCaseAlerts  int           `json:"slow_case_alerts"`
-	GroupAlerts     int           `json:"group_alerts"`
-	TotalPassTests  int           `json:"total_pass_tests"`
-	TotalFailTests  int           `json:"total_fail_tests"`
-	TotalSkipTests  int           `json:"total_skip_tests"`
-	TotalStepCount  int           `json:"total_step_count"`
-	FailedStepCount int           `json:"failed_step_count"`
-	Status          string        `json:"status"`
-	Steps           []summaryStep `json:"steps"`
+	GeneratedAt        string        `json:"generated_at"`
+	Mode               string        `json:"mode"`
+	Groups             []string      `json:"groups,omitempty"`
+	Tests              []string      `json:"tests,omitempty"`
+	RunPattern         string        `json:"run_pattern,omitempty"`
+	ConfigPath         string        `json:"config_path"`
+	ReportPath         string        `json:"report_path"`
+	SlowCaseAlerts     int           `json:"slow_case_alerts"`
+	GroupAlerts        int           `json:"group_alerts"`
+	TotalPassTests     int           `json:"total_pass_tests"`
+	TotalFailTests     int           `json:"total_fail_tests"`
+	TotalSkipTests     int           `json:"total_skip_tests"`
+	TotalDeferredTests int           `json:"total_deferred_tests,omitempty"`
+	TotalStepCount     int           `json:"total_step_count"`
+	FailedStepCount    int           `json:"failed_step_count"`
+	Status             string        `json:"status"`
+	Steps              []summaryStep `json:"steps"`
 }
 
 type runManifest struct {
@@ -618,19 +621,20 @@ func runSingleTest(runDir, testName, packagePattern, timeout, configPath string,
 		}
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
 	fail = attributeImplicitFailures(status, fail, []string{testName}, "", name)
 
 	res := stepResult{
-		Name:      name,
-		Command:   "go test -run ^" + testName + "$",
-		LogPath:   logPath,
-		Status:    status,
-		Duration:  time.Since(start),
-		PassTests: pass,
-		FailTests: fail,
-		SkipTests: skip,
-		Timed:     attachStepName(name, timed),
+		Name:          name,
+		Command:       "go test -run ^" + testName + "$",
+		LogPath:       logPath,
+		Status:        status,
+		Duration:      time.Since(start),
+		PassTests:     pass,
+		FailTests:     fail,
+		SkipTests:     skip,
+		DeferredTests: deferred,
+		Timed:         attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -673,19 +677,20 @@ func runPatternTest(runDir, pattern, packagePattern, timeout, configPath string,
 		}
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
 	fail = attributeImplicitFailures(status, fail, nil, pattern, name)
 
 	res := stepResult{
-		Name:      name,
-		Command:   "go test -run " + pattern,
-		LogPath:   logPath,
-		Status:    status,
-		Duration:  time.Since(start),
-		PassTests: pass,
-		FailTests: fail,
-		SkipTests: skip,
-		Timed:     attachStepName(name, timed),
+		Name:          name,
+		Command:       "go test -run " + pattern,
+		LogPath:       logPath,
+		Status:        status,
+		Duration:      time.Since(start),
+		PassTests:     pass,
+		FailTests:     fail,
+		SkipTests:     skip,
+		DeferredTests: deferred,
+		Timed:         attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -708,22 +713,23 @@ func runStep(runDir, name, cmd string, args []string, env []string, workdir stri
 		status = "FAIL"
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
-	if nestedPass, nestedFail, nestedSkip, nestedTimed, ok := collectNestedSummaryCases(logPath); ok {
-		pass, fail, skip, timed = nestedPass, nestedFail, nestedSkip, nestedTimed
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
+	if nestedPass, nestedFail, nestedSkip, nestedDeferred, nestedTimed, ok := collectNestedSummaryCases(logPath); ok {
+		pass, fail, skip, deferred, timed = nestedPass, nestedFail, nestedSkip, nestedDeferred, nestedTimed
 	}
 	fail = attributeImplicitFailures(status, fail, nil, "", name)
 
 	res := stepResult{
-		Name:      name,
-		Command:   strings.Join(append([]string{cmd}, args...), " "),
-		LogPath:   logPath,
-		Status:    status,
-		Duration:  time.Since(start),
-		PassTests: pass,
-		FailTests: fail,
-		SkipTests: skip,
-		Timed:     attachStepName(name, timed),
+		Name:          name,
+		Command:       strings.Join(append([]string{cmd}, args...), " "),
+		LogPath:       logPath,
+		Status:        status,
+		Duration:      time.Since(start),
+		PassTests:     pass,
+		FailTests:     fail,
+		SkipTests:     skip,
+		DeferredTests: deferred,
+		Timed:         attachStepName(name, timed),
 	}
 	printResult(res)
 	return res
@@ -751,21 +757,30 @@ func runLoggedCommand(logFile *os.File, cmd string, args []string, env []string,
 	return nil
 }
 
-func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
+func parseTestOutput(path string) ([]string, []string, []string, []string, []timedCase) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	defer file.Close()
 
 	var pass []string
 	var fail []string
 	var skip []string
+	var deferred []string
 	var timed []timedCase
+	currentTest := ""
+	deferredCandidates := make(map[string]bool)
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if value, ok := extractRunTestName(line); ok {
+			currentTest = value
+		}
+		if currentTest != "" && strings.Contains(line, "Deferred:") {
+			deferredCandidates[currentTest] = true
+		}
 		if value, ok := extractTestOutputValue(line, "PASS"); ok {
 			pass = append(pass, value)
 			if tc, ok := parseTimedCase(value, "PASS"); ok {
@@ -777,9 +792,16 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 				timed = append(timed, tc)
 			}
 		} else if value, ok := extractTestOutputValue(line, "SKIP"); ok {
-			skip = append(skip, value)
 			if tc, ok := parseTimedCase(value, "SKIP"); ok {
+				if deferredCandidates[tc.Name] {
+					tc.Status = "DEFERRED"
+					deferred = append(deferred, value)
+				} else {
+					skip = append(skip, value)
+				}
 				timed = append(timed, tc)
+			} else {
+				skip = append(skip, value)
 			}
 		} else if value, ok := extractNestedTestOutputValue(line, "PASS"); ok {
 			pass = append(pass, value)
@@ -792,13 +814,20 @@ func parseTestOutput(path string) ([]string, []string, []string, []timedCase) {
 				timed = append(timed, tc)
 			}
 		} else if value, ok := extractNestedTestOutputValue(line, "SKIP"); ok {
-			skip = append(skip, value)
 			if tc, ok := parseTimedCase(value, "SKIP"); ok {
+				if deferredCandidates[tc.Name] {
+					tc.Status = "DEFERRED"
+					deferred = append(deferred, value)
+				} else {
+					skip = append(skip, value)
+				}
 				timed = append(timed, tc)
+			} else {
+				skip = append(skip, value)
 			}
 		}
 	}
-	return pass, fail, skip, timed
+	return pass, fail, skip, deferred, timed
 }
 
 func attributeImplicitFailures(status string, fail []string, tests []string, runPattern, fallback string) []string {
@@ -824,27 +853,29 @@ func attributeImplicitFailures(status string, fail []string, tests []string, run
 	return fail
 }
 
-func collectNestedSummaryCases(logPath string) ([]string, []string, []string, []timedCase, bool) {
+func collectNestedSummaryCases(logPath string) ([]string, []string, []string, []string, []timedCase, bool) {
 	summaryPaths := extractSummaryPaths(logPath)
 	if len(summaryPaths) == 0 {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil, nil, false
 	}
 
 	var pass []string
 	var fail []string
 	var skip []string
+	var deferred []string
 	var timed []timedCase
 	for _, summaryPath := range summaryPaths {
-		nestedPass, nestedFail, nestedSkip, nestedTimed, err := collectCasesFromSummary(summaryPath)
+		nestedPass, nestedFail, nestedSkip, nestedDeferred, nestedTimed, err := collectCasesFromSummary(summaryPath)
 		if err != nil {
 			continue
 		}
 		pass = append(pass, nestedPass...)
 		fail = append(fail, nestedFail...)
 		skip = append(skip, nestedSkip...)
+		deferred = append(deferred, nestedDeferred...)
 		timed = append(timed, nestedTimed...)
 	}
-	return pass, fail, skip, timed, true
+	return pass, fail, skip, deferred, timed, true
 }
 
 func extractSummaryPaths(logPath string) []string {
@@ -875,32 +906,35 @@ func extractSummaryPaths(logPath string) []string {
 	return out
 }
 
-func collectCasesFromSummary(summaryPath string) ([]string, []string, []string, []timedCase, error) {
+func collectCasesFromSummary(summaryPath string) ([]string, []string, []string, []string, []timedCase, error) {
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	var summary runSummary
 	if err := json.Unmarshal(data, &summary); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	var pass []string
 	var fail []string
 	var skip []string
+	var deferred []string
 	var timed []timedCase
 	for _, step := range summary.Steps {
-		stepPass, stepFail, stepSkip, stepTimed := parseTestOutput(step.LogPath)
+		stepPass, stepFail, stepSkip, stepDeferred, stepTimed := parseTestOutput(step.LogPath)
 		stepFail = attributeImplicitFailures(step.Status, stepFail, summary.Tests, summary.RunPattern, step.Name)
 		stepPass = padCaseList(stepPass, step.PassCount, "pass", summary, step)
 		stepFail = padCaseList(stepFail, step.FailCount, "fail", summary, step)
 		stepSkip = padCaseList(stepSkip, step.SkipCount, "skip", summary, step)
+		stepDeferred = padCaseList(stepDeferred, step.DeferredCount, "deferred", summary, step)
 		pass = append(pass, stepPass...)
 		fail = append(fail, stepFail...)
 		skip = append(skip, stepSkip...)
+		deferred = append(deferred, stepDeferred...)
 		timed = append(timed, attachStepName(step.Name, stepTimed)...)
 	}
-	return pass, fail, skip, timed, nil
+	return pass, fail, skip, deferred, timed, nil
 }
 
 func padCaseList(items []string, want int, status string, summary runSummary, step summaryStep) []string {
@@ -959,6 +993,18 @@ func extractNestedTestOutputValue(line, status string) (string, bool) {
 		return "", false
 	}
 	value := strings.TrimSpace(strings.TrimPrefix(trimmed, marker))
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+func extractRunTestName(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "=== RUN   ") {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(line, "=== RUN   "))
 	if value == "" {
 		return "", false
 	}
@@ -1093,10 +1139,11 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 	sb.WriteString(fmt.Sprintf("- Config: %s\n", configPath))
 	sb.WriteString(fmt.Sprintf("- GOCACHE: %s\n", gocache))
 	sb.WriteString(fmt.Sprintf("- Debug: %t\n", debug))
-	sb.WriteString(fmt.Sprintf("- Totals: pass=%d fail=%d skip=%d\n\n",
+	sb.WriteString(fmt.Sprintf("- Totals: pass=%d fail=%d skip=%d deferred=%d\n\n",
 		countTotalCases(results, "PASS"),
 		countTotalCases(results, "FAIL"),
 		countTotalCases(results, "SKIP"),
+		countTotalCases(results, "DEFERRED"),
 	))
 
 	groupDurations := collectGroupDurations(results, opts.GroupThresholds, opts.DefaultGroupThreshold)
@@ -1127,18 +1174,23 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("| Step | Status | Duration | Skips | Log |\n")
-	sb.WriteString("| --- | --- | --- | --- | --- |\n")
+	sb.WriteString("| Step | Status | Duration | Skips | Deferred | Log |\n")
+	sb.WriteString("| --- | --- | --- | --- | --- | --- |\n")
 	for _, res := range results {
 		skips := "-"
 		if len(res.SkipTests) > 0 {
 			skips = fmt.Sprintf("%d", len(res.SkipTests))
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
+		deferred := "-"
+		if len(res.DeferredTests) > 0 {
+			deferred = fmt.Sprintf("%d", len(res.DeferredTests))
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n",
 			res.Name,
 			displayStatus(res.Status),
 			res.Duration.Round(time.Second),
 			skips,
+			deferred,
 			res.LogPath,
 		))
 	}
@@ -1199,6 +1251,9 @@ func writeReport(path, mode, groups, tests, runPattern, configPath, gocache stri
 		if len(res.SkipTests) > 0 {
 			sb.WriteString(fmt.Sprintf("- Skipped Tests: %s\n", strings.Join(res.SkipTests, ", ")))
 		}
+		if len(res.DeferredTests) > 0 {
+			sb.WriteString(fmt.Sprintf("- Deferred Tests: %s\n", strings.Join(res.DeferredTests, ", ")))
+		}
 		if len(res.PassTests) > 0 {
 			sb.WriteString(fmt.Sprintf("- Passed Tests: %d\n", len(res.PassTests)))
 		}
@@ -1216,6 +1271,7 @@ func printResult(res stepResult) {
 	printCaseList("PASS", res.PassTests)
 	printCaseList("FAIL", res.FailTests)
 	printCaseList("SKIP", res.SkipTests)
+	printCaseList("DEFERRED", res.DeferredTests)
 }
 
 func printCaseList(label string, items []string) {
@@ -1237,6 +1293,8 @@ func displayStatus(status string) string {
 		return "🔴 FAIL"
 	case "SKIP":
 		return "🟡 SKIP"
+	case "DEFERRED":
+		return "🟠 DEFERRED"
 	default:
 		return strings.TrimSpace(status)
 	}
@@ -1256,6 +1314,8 @@ func countTotalCases(results []stepResult, status string) int {
 			total += len(res.FailTests)
 		case "SKIP":
 			total += len(res.SkipTests)
+		case "DEFERRED":
+			total += len(res.DeferredTests)
 		}
 	}
 	return total
@@ -1291,17 +1351,19 @@ func buildRunSummary(results []stepResult, stats reportStats, mode, groups, test
 	steps := make([]summaryStep, 0, len(results))
 	for _, res := range results {
 		steps = append(steps, summaryStep{
-			Name:      res.Name,
-			Status:    res.Status,
-			Duration:  res.Duration.Round(time.Millisecond),
-			PassCount: len(res.PassTests),
-			FailCount: len(res.FailTests),
-			SkipCount: len(res.SkipTests),
-			LogPath:   res.LogPath,
+			Name:          res.Name,
+			Status:        res.Status,
+			Duration:      res.Duration.Round(time.Millisecond),
+			PassCount:     len(res.PassTests),
+			FailCount:     len(res.FailTests),
+			SkipCount:     len(res.SkipTests),
+			DeferredCount: len(res.DeferredTests),
+			LogPath:       res.LogPath,
 		})
 		summary.TotalPassTests += len(res.PassTests)
 		summary.TotalFailTests += len(res.FailTests)
 		summary.TotalSkipTests += len(res.SkipTests)
+		summary.TotalDeferredTests += len(res.DeferredTests)
 		if res.Status != "PASS" {
 			summary.FailedStepCount++
 		}
@@ -1332,6 +1394,9 @@ func buildRunManifest(rootDir string, results []stepResult, mode, configPath, re
 			caseSet[name] = struct{}{}
 		}
 		for _, name := range res.SkipTests {
+			caseSet[name] = struct{}{}
+		}
+		for _, name := range res.DeferredTests {
 			caseSet[name] = struct{}{}
 		}
 	}

@@ -27,9 +27,10 @@ func TestParseTimedCase(t *testing.T) {
 
 func TestDisplayStatus(t *testing.T) {
 	cases := map[string]string{
-		"PASS": "🟢 PASS",
-		"FAIL": "🔴 FAIL",
-		"SKIP": "🟡 SKIP",
+		"PASS":     "🟢 PASS",
+		"FAIL":     "🔴 FAIL",
+		"SKIP":     "🟡 SKIP",
+		"DEFERRED": "🟠 DEFERRED",
 	}
 	for raw, want := range cases {
 		if got := displayStatus(raw); got != want {
@@ -53,7 +54,7 @@ func TestParseTestOutput(t *testing.T) {
 		t.Fatalf("failed to write test log: %v", err)
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
 	if len(pass) != 1 || !strings.Contains(pass[0], "TestA_SystemConfigSetup") {
 		t.Fatalf("unexpected pass cases: %#v", pass)
 	}
@@ -62,6 +63,9 @@ func TestParseTestOutput(t *testing.T) {
 	}
 	if len(skip) != 1 || !strings.Contains(skip[0], "TestC_Skipped") {
 		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(deferred) != 0 {
+		t.Fatalf("unexpected deferred cases: %#v", deferred)
 	}
 	if len(timed) != 3 {
 		t.Fatalf("unexpected timed case count: %d", len(timed))
@@ -83,7 +87,7 @@ func TestParseTestOutputHandlesIndentedAndProgressPrefixedLines(t *testing.T) {
 		t.Fatalf("failed to write prefixed test log: %v", err)
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
 	if len(pass) != 2 {
 		t.Fatalf("unexpected pass case count: %#v", pass)
 	}
@@ -92,6 +96,9 @@ func TestParseTestOutputHandlesIndentedAndProgressPrefixedLines(t *testing.T) {
 	}
 	if len(skip) != 1 {
 		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(deferred) != 0 {
+		t.Fatalf("unexpected deferred cases: %#v", deferred)
 	}
 	if pass[0] != "TestF2_QuickReEntry (22.96s)" {
 		t.Fatalf("unexpected first pass case: %q", pass[0])
@@ -119,7 +126,7 @@ func TestParseTestOutputHandlesNestedCIRenderedStatusLines(t *testing.T) {
 		t.Fatalf("failed to write nested ci log: %v", err)
 	}
 
-	pass, fail, skip, timed := parseTestOutput(logPath)
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
 	if len(pass) != 1 || pass[0] != "TestF1_ExitFlow (28.80s)" {
 		t.Fatalf("unexpected pass cases: %#v", pass)
 	}
@@ -129,8 +136,43 @@ func TestParseTestOutputHandlesNestedCIRenderedStatusLines(t *testing.T) {
 	if len(skip) != 1 || skip[0] != "TestG_DoubleSign/P-23_MultiValidatorDoubleSign (98.16s)" {
 		t.Fatalf("unexpected skip cases: %#v", skip)
 	}
+	if len(deferred) != 0 {
+		t.Fatalf("unexpected deferred cases: %#v", deferred)
+	}
 	if len(timed) != 3 {
 		t.Fatalf("unexpected timed case count: %d", len(timed))
+	}
+}
+
+func TestParseTestOutputSeparatesDeferredFromSkip(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "go_test_deferred.log")
+	content := strings.Join([]string{
+		"=== RUN   TestK_ForkcapCapability_BlobTxDeferred",
+		"    blob_placeholder_test.go:16: Deferred: blob transactions are temporarily disabled at the txpool layer on this chain.",
+		"--- SKIP: TestK_ForkcapCapability_BlobTxDeferred (0.00s)",
+		"=== RUN   TestOther_Skipped",
+		"--- SKIP: TestOther_Skipped (0.01s)",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write deferred test log: %v", err)
+	}
+
+	pass, fail, skip, deferred, timed := parseTestOutput(logPath)
+	if len(pass) != 0 || len(fail) != 0 {
+		t.Fatalf("unexpected pass/fail cases: pass=%#v fail=%#v", pass, fail)
+	}
+	if len(skip) != 1 || skip[0] != "TestOther_Skipped (0.01s)" {
+		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(deferred) != 1 || deferred[0] != "TestK_ForkcapCapability_BlobTxDeferred (0.00s)" {
+		t.Fatalf("unexpected deferred cases: %#v", deferred)
+	}
+	if len(timed) != 2 {
+		t.Fatalf("unexpected timed case count: %d", len(timed))
+	}
+	if timed[0].Status != "DEFERRED" {
+		t.Fatalf("expected first timed case status DEFERRED, got %s", timed[0].Status)
 	}
 }
 
@@ -173,12 +215,12 @@ func TestCollectCasesFromSummaryUsesFallbackCounts(t *testing.T) {
 		t.Fatalf("failed to write summary: %v", err)
 	}
 
-	pass, fail, skip, timed, err := collectCasesFromSummary(summaryPath)
+	pass, fail, skip, deferred, timed, err := collectCasesFromSummary(summaryPath)
 	if err != nil {
 		t.Fatalf("collectCasesFromSummary failed: %v", err)
 	}
-	if len(pass) != 0 || len(skip) != 0 {
-		t.Fatalf("unexpected pass/skip cases: pass=%#v skip=%#v", pass, skip)
+	if len(pass) != 0 || len(skip) != 0 || len(deferred) != 0 {
+		t.Fatalf("unexpected pass/skip/deferred cases: pass=%#v skip=%#v deferred=%#v", pass, skip, deferred)
 	}
 	if len(fail) != 1 || !strings.Contains(fail[0], "TestG_PunishPaths/P-24_ExecutePendingAutoByConsensus") {
 		t.Fatalf("unexpected fail cases: %#v", fail)
@@ -240,7 +282,7 @@ func TestCollectNestedSummaryCasesAggregatesMultipleInnerRuns(t *testing.T) {
 		t.Fatalf("failed to write parent log: %v", err)
 	}
 
-	pass, fail, skip, timed, ok := collectNestedSummaryCases(parentLog)
+	pass, fail, skip, deferred, timed, ok := collectNestedSummaryCases(parentLog)
 	if !ok {
 		t.Fatalf("expected nested summary aggregation to succeed")
 	}
@@ -252,6 +294,9 @@ func TestCollectNestedSummaryCasesAggregatesMultipleInnerRuns(t *testing.T) {
 	}
 	if len(skip) != 1 || skip[0] != "TestZ_LastManStanding (0.00s)" {
 		t.Fatalf("unexpected skip cases: %#v", skip)
+	}
+	if len(deferred) != 0 {
+		t.Fatalf("unexpected deferred cases: %#v", deferred)
 	}
 	if len(timed) != 2 {
 		t.Fatalf("unexpected timed cases: %#v", timed)

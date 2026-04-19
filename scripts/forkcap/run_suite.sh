@@ -80,11 +80,12 @@ run_phase() {
   TEST_ENV_CONFIG="$phase_config_file" make --no-print-directory run
 
   echo "🧪 forkcap tests fork=$fork phase=$phase pattern=$CASE_PATTERN"
+  mkdir -p "$phase_report_root"
   FORKCAP_FORK="$fork" \
   FORKCAP_PHASE="$phase" \
   REPORT_DIR="$phase_report_root" \
   TEST_ENV_CONFIG="$phase_config_file" \
-  "${CI_TOOL_CMD[@]}" -mode tests -pkgs ./tests/forkcaps -run "$CASE_PATTERN" -skip-setup
+  "${CI_TOOL_CMD[@]}" -mode tests -pkgs ./tests/forkcaps -run "$CASE_PATTERN" -skip-setup -report-dir "$phase_report_root"
 
   TEST_ENV_CONFIG="$phase_config_file" make --no-print-directory stop
 }

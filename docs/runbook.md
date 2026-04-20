@@ -286,13 +286,24 @@ When to use `test-forkcap` instead of other surfaces:
 
 ## 7. Performance and soak
 - TPS profile:
-  - `make test-perf MODE=tiers PERF_SCOPE=single`
-  - use `PERF_SCOPE=single` for primary-node throughput checks
-  - use `PERF_SCOPE=multi` when you also want multi-node height-lag gating
-  - in `PERF_SCOPE=multi`, perf now waits for node convergence before tier measurement; tune with `PERF_MULTI_WARMUP_TIMEOUT` and `PERF_MULTI_WARMUP_STABLE_SAMPLES` if needed
+  - `make test-perf MODE=tiers PERF_TOPOLOGY=single PERF_SCOPE=single`
+  - `make test-perf MODE=tiers PERF_TOPOLOGY=multi PERF_SCOPE=multi`
+  - keep `PERF_TPS_TIERS` for fixed stair-step probes such as `40,50,60`
+- Max TPS exploration:
+  - `make test-perf MODE=max PERF_TOPOLOGY=single PERF_SCOPE=single`
+  - `make test-perf MODE=max PERF_TOPOLOGY=multi PERF_SCOPE=multi`
+  - max mode climbs from `PERF_MAX_BASE_TPS` (default `1000`) by `PERF_MAX_STEP` (default `100`) and runs each step for `PERF_MAX_STEP_DURATION` (default `90s`) until the first unstable step or `PERF_MAX_TARGET_TPS` (default `5000`)
+- Sender scaling:
+  - perf uses a single ingress RPC node for write traffic in both single-node and multi-node topologies
+  - high TPS runs shard transactions across multiple funded sender accounts; override with `PERF_SENDER_ACCOUNTS`, or leave `0` for auto-sizing
+- Multi-node health:
+  - use `PERF_SCOPE=multi` when you want multi-node height-lag gating and convergence warmup
+  - in `PERF_SCOPE=multi`, perf now waits for node convergence before measurement and fails tiers that leave backlog, exceed lag, or stall block growth
+- Runtime lifecycle:
+  - `test-perf` now rebuilds the requested perf topology before running (`PERF_TOPOLOGY=single|multi`, default `single`)
   - by default `make test-perf` stops the runtime on exit; set `PERF_AUTO_STOP=0` if you want to keep the environment running
 - 24h soak:
-  - `make test-perf MODE=soak PERF_SCOPE=single`
+  - `make test-perf MODE=soak PERF_TOPOLOGY=single PERF_SCOPE=single`
 
 Expected artifacts:
 - `summary.md`

@@ -6,16 +6,34 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$ROOT_DIR/scripts/network/lib.sh"
 
+normalize_duration_like() {
+  local raw="$1"
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    printf '%ss' "$raw"
+  else
+    printf '%s' "$raw"
+  fi
+}
+
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
+PERF_MODE="${PERF_MODE:-tiers}"
 TIERS_RAW="${PERF_TPS_TIERS:-$(cfg_get "$CONFIG_FILE" "perf.tps_tiers" "10,30,60")}"
 TIERS="$(echo "$TIERS_RAW" | tr -d '[] ' | tr ';' ',' )"
 DURATION="${PERF_TIER_DURATION:-90s}"
-SAMPLE_INTERVAL="${PERF_SAMPLE_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.sample_interval_seconds" "2")s}"
+SAMPLE_INTERVAL_RAW="${PERF_SAMPLE_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.sample_interval_seconds" "2")}" 
+SAMPLE_INTERVAL="$(normalize_duration_like "$SAMPLE_INTERVAL_RAW")"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEST_CONFIG="${PERF_TEST_CONFIG:-$DATA_DIR/test_config.yaml}"
 OUT_DIR="${PERF_REPORT_DIR:-$ROOT_DIR/reports/perf_$(date +%Y%m%d_%H%M%S)}"
 PERF_SCOPE="${PERF_SCOPE:-single}"
+PERF_TOPOLOGY="${PERF_TOPOLOGY:-single}"
+PERF_INIT_MODE="${PERF_INIT_MODE:-posa}"
 PERF_AUTO_STOP="${PERF_AUTO_STOP:-1}"
+PERF_SENDER_ACCOUNTS="${PERF_SENDER_ACCOUNTS:-0}"
+PERF_MAX_BASE_TPS="${PERF_MAX_BASE_TPS:-1000}"
+PERF_MAX_STEP="${PERF_MAX_STEP:-100}"
+PERF_MAX_STEP_DURATION="${PERF_MAX_STEP_DURATION:-90s}"
+PERF_MAX_TARGET_TPS="${PERF_MAX_TARGET_TPS:-5000}"
 
 MIN_SUCCESS_RATE="$(cfg_get "$CONFIG_FILE" "perf.thresholds.success_rate_min" "0.99")"
 MAX_STALL="$(cfg_get "$CONFIG_FILE" "perf.thresholds.stall_window_seconds_max" "15")"
@@ -26,7 +44,12 @@ MULTI_WARMUP_STABLE_SAMPLES="${PERF_MULTI_WARMUP_STABLE_SAMPLES:-3}"
 
 mkdir -p "$OUT_DIR"
 
-echo "Running TPS tiers: tiers=$TIERS duration=$DURATION sample_interval=$SAMPLE_INTERVAL scope=$PERF_SCOPE"
+if [[ "$PERF_MODE" == "max" ]]; then
+  DURATION="$PERF_MAX_STEP_DURATION"
+  echo "Running max TPS exploration: base=$PERF_MAX_BASE_TPS step=$PERF_MAX_STEP target=$PERF_MAX_TARGET_TPS duration=$DURATION topology=$PERF_TOPOLOGY scope=$PERF_SCOPE"
+else
+  echo "Running TPS tiers: tiers=$TIERS duration=$DURATION sample_interval=$SAMPLE_INTERVAL topology=$PERF_TOPOLOGY scope=$PERF_SCOPE"
+fi
 echo "Output dir: $OUT_DIR"
 
 perf_cleanup() {
@@ -52,44 +75,38 @@ rpc_ready() {
   [[ "$resp" == *'"result":"0x'* ]]
 }
 
-ensure_perf_runtime_ready() {
+prepare_perf_runtime() {
   local rpc_url
-  local session_file
-  local env_file
   rpc_url="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
-  session_file="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
-  env_file="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 
-  if [[ ! -f "$TEST_CONFIG" || ! -f "$session_file" ]]; then
-    echo "Perf precheck: generated config/runtime session missing, generating network config..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" TEST_NETWORK_EPOCH="${EPOCH:-}" bash "$ROOT_DIR/scripts/gen_network_config.sh" "$CONFIG_FILE"
-  fi
-
-  if [[ ! -f "$env_file" ]]; then
-    echo "Perf precheck: native runtime artifacts missing, initializing backend..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" init "$CONFIG_FILE"
-  fi
-
+  echo "Perf setup: rebuilding runtime topology=$PERF_TOPOLOGY init_mode=$PERF_INIT_MODE"
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory clean >/dev/null
+  TEST_ENV_CONFIG="$CONFIG_FILE" TOPOLOGY="$PERF_TOPOLOGY" INIT_MODE="$PERF_INIT_MODE" EPOCH="${EPOCH:-}" make --no-print-directory init >/dev/null
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory run >/dev/null
   if ! rpc_ready "$rpc_url"; then
-    echo "Perf precheck: RPC not ready at $rpc_url, starting network..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" up "$CONFIG_FILE"
+    echo "Perf setup: RPC not ready after run at $rpc_url" >&2
+    return 1
   fi
-
-  TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" ready "$CONFIG_FILE"
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory ready >/dev/null
 }
 
-ensure_perf_runtime_ready
+prepare_perf_runtime
 
 cd "$ROOT_DIR"
-go run ./scripts/perf/perf_runner.go \
-  -mode tiers \
+go run ./scripts/perf \
+  -mode "$PERF_MODE" \
   -scope "$PERF_SCOPE" \
+  -topology "$PERF_TOPOLOGY" \
   -config "$TEST_CONFIG" \
   -tiers "$TIERS" \
   -duration "$DURATION" \
   -sample-interval "$SAMPLE_INTERVAL" \
   -data-dir "$DATA_DIR" \
   -out-dir "$OUT_DIR" \
+  -sender-accounts "$PERF_SENDER_ACCOUNTS" \
+  -max-base-tps "$PERF_MAX_BASE_TPS" \
+  -max-step "$PERF_MAX_STEP" \
+  -max-target-tps "$PERF_MAX_TARGET_TPS" \
   -min-success-rate "$MIN_SUCCESS_RATE" \
   -max-stall-seconds "$MAX_STALL" \
   -max-height-lag "$MAX_LAG" \

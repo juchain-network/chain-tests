@@ -6,16 +6,29 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=scripts/network/lib.sh
 source "$ROOT_DIR/scripts/network/lib.sh"
 
+normalize_duration_like() {
+  local raw="$1"
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    printf '%ss' "$raw"
+  else
+    printf '%s' "$raw"
+  fi
+}
+
 CONFIG_FILE="$(resolve_config_file "${TEST_ENV_CONFIG:-}")"
 SOAK_DURATION="${PERF_SOAK_DURATION:-$(cfg_get "$CONFIG_FILE" "perf.soak.duration" "24h")}"
 SOAK_TPS="${PERF_SOAK_TPS:-$(cfg_get "$CONFIG_FILE" "perf.soak.tps" "10")}"
-SAMPLE_INTERVAL="${PERF_SAMPLE_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.sample_interval_seconds" "2")s}"
+SAMPLE_INTERVAL_RAW="${PERF_SAMPLE_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.sample_interval_seconds" "2")}" 
+SAMPLE_INTERVAL="$(normalize_duration_like "$SAMPLE_INTERVAL_RAW")"
 RESTART_INTERVAL_RAW="${PERF_SOAK_RESTART_INTERVAL:-$(cfg_get "$CONFIG_FILE" "perf.soak.restart_interval" "1h")}"
 DATA_DIR="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "network.data_dir" "./data")")"
 TEST_CONFIG="${PERF_TEST_CONFIG:-$DATA_DIR/test_config.yaml}"
 OUT_DIR="${PERF_REPORT_DIR:-$ROOT_DIR/reports/perf_$(date +%Y%m%d_%H%M%S)_soak}"
 PERF_SCOPE="${PERF_SCOPE:-single}"
+PERF_TOPOLOGY="${PERF_TOPOLOGY:-single}"
+PERF_INIT_MODE="${PERF_INIT_MODE:-posa}"
 PERF_AUTO_STOP="${PERF_AUTO_STOP:-1}"
+PERF_SENDER_ACCOUNTS="${PERF_SENDER_ACCOUNTS:-0}"
 
 MIN_SUCCESS_RATE="$(cfg_get "$CONFIG_FILE" "perf.thresholds.success_rate_min" "0.99")"
 MAX_STALL="$(cfg_get "$CONFIG_FILE" "perf.thresholds.stall_window_seconds_max" "15")"
@@ -44,7 +57,7 @@ RESTART_SECONDS="$(parse_to_seconds "$RESTART_INTERVAL_RAW")"
 mkdir -p "$OUT_DIR"
 
 cd "$ROOT_DIR"
-echo "Running soak: duration=$SOAK_DURATION tps=$SOAK_TPS sample_interval=$SAMPLE_INTERVAL restart_interval=$RESTART_INTERVAL_RAW scope=$PERF_SCOPE"
+echo "Running soak: duration=$SOAK_DURATION tps=$SOAK_TPS sample_interval=$SAMPLE_INTERVAL restart_interval=$RESTART_INTERVAL_RAW topology=$PERF_TOPOLOGY scope=$PERF_SCOPE"
 echo "Output dir: $OUT_DIR"
 
 cleanup_perf_runtime() {
@@ -73,33 +86,22 @@ rpc_ready() {
   [[ "$resp" == *'"result":"0x'* ]]
 }
 
-ensure_perf_runtime_ready() {
+prepare_perf_runtime() {
   local rpc_url
-  local session_file
-  local env_file
   rpc_url="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
-  session_file="$(resolve_runtime_session_file "${RUNTIME_SESSION_FILE:-}")"
-  env_file="$(to_abs_path "$(cfg_get "$CONFIG_FILE" "native.env_file" "./data/native/.env")")"
 
-  if [[ ! -f "$TEST_CONFIG" || ! -f "$session_file" ]]; then
-    echo "Perf precheck: generated config/runtime session missing, generating network config..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" TEST_NETWORK_EPOCH="${EPOCH:-}" bash "$ROOT_DIR/scripts/gen_network_config.sh" "$CONFIG_FILE"
-  fi
-
-  if [[ ! -f "$env_file" ]]; then
-    echo "Perf precheck: native runtime artifacts missing, initializing backend..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" init "$CONFIG_FILE"
-  fi
-
+  echo "Perf setup: rebuilding runtime topology=$PERF_TOPOLOGY init_mode=$PERF_INIT_MODE"
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory clean >/dev/null
+  TEST_ENV_CONFIG="$CONFIG_FILE" TOPOLOGY="$PERF_TOPOLOGY" INIT_MODE="$PERF_INIT_MODE" EPOCH="${EPOCH:-}" make --no-print-directory init >/dev/null
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory run >/dev/null
   if ! rpc_ready "$rpc_url"; then
-    echo "Perf precheck: RPC not ready at $rpc_url, starting network..."
-    TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" up "$CONFIG_FILE"
+    echo "Perf setup: RPC not ready after run at $rpc_url" >&2
+    return 1
   fi
-
-  TEST_ENV_CONFIG="$CONFIG_FILE" "$ROOT_DIR/scripts/network/dispatch.sh" ready "$CONFIG_FILE"
+  TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory ready >/dev/null
 }
 
-ensure_perf_runtime_ready
+prepare_perf_runtime
 
 if [[ "$RESTART_SECONDS" -gt 0 ]]; then
   (
@@ -115,15 +117,17 @@ if [[ "$RESTART_SECONDS" -gt 0 ]]; then
   RESTART_PID=$!
 fi
 
-go run ./scripts/perf/perf_runner.go \
+go run ./scripts/perf \
   -mode soak \
   -scope "$PERF_SCOPE" \
+  -topology "$PERF_TOPOLOGY" \
   -config "$TEST_CONFIG" \
   -tiers "$SOAK_TPS" \
   -duration "$SOAK_DURATION" \
   -sample-interval "$SAMPLE_INTERVAL" \
   -data-dir "$DATA_DIR" \
   -out-dir "$OUT_DIR" \
+  -sender-accounts "$PERF_SENDER_ACCOUNTS" \
   -min-success-rate "$MIN_SUCCESS_RATE" \
   -max-stall-seconds "$MAX_STALL" \
   -max-height-lag "$MAX_LAG" \

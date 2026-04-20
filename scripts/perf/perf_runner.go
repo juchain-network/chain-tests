@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 
@@ -28,7 +26,9 @@ type sample struct {
 	TierTPS          int
 	Sent             int64
 	Accepted         int64
+	Confirmed        int64
 	Failed           int64
+	BackpressureDrop int64
 	PrimaryHeight    uint64
 	MaxHeight        uint64
 	MinHeight        uint64
@@ -45,8 +45,13 @@ type tierSummary struct {
 	DurationSeconds     int64   `json:"duration_seconds"`
 	Sent                int64   `json:"sent"`
 	Accepted            int64   `json:"accepted"`
+	Confirmed           int64   `json:"confirmed"`
 	Failed              int64   `json:"failed"`
-	SuccessRate         float64 `json:"success_rate"`
+	BackpressureDrop    int64   `json:"backpressure_drop,omitempty"`
+	AcceptedRate        float64 `json:"accepted_rate"`
+	ConfirmedRate       float64 `json:"confirmed_rate"`
+	AcceptedTPS         float64 `json:"accepted_tps"`
+	ConfirmedTPS        float64 `json:"confirmed_tps"`
 	StartHeight         uint64  `json:"start_height"`
 	EndHeight           uint64  `json:"end_height"`
 	HeightGrowth        uint64  `json:"height_growth"`
@@ -57,19 +62,33 @@ type tierSummary struct {
 	Notes               string  `json:"notes,omitempty"`
 }
 
+type maxSearchResult struct {
+	BaseTPS          int    `json:"base_tps"`
+	StepTPS          int    `json:"step_tps"`
+	TargetTPS        int    `json:"target_tps"`
+	StepDurationSecs int64  `json:"step_duration_seconds"`
+	LastStableTPS    int    `json:"last_stable_tps,omitempty"`
+	FirstUnstableTPS int    `json:"first_unstable_tps,omitempty"`
+	StopReason       string `json:"stop_reason,omitempty"`
+}
+
 type verdict struct {
-	GeneratedAt    string         `json:"generated_at"`
-	Mode           string         `json:"mode"`
-	Scope          string         `json:"scope"`
-	Config         string         `json:"config"`
-	DataDir        string         `json:"data_dir"`
-	Warmup         *warmupResult  `json:"warmup,omitempty"`
-	Thresholds     map[string]any `json:"thresholds"`
-	Tiers          []tierSummary  `json:"tiers"`
-	FailedReasons  []string       `json:"failed_reasons,omitempty"`
-	TopSlowWindows []slowWindow   `json:"top_slow_windows,omitempty"`
-	ResourcePeaks  resourcePeaks  `json:"resource_peaks"`
-	Status         string         `json:"status"`
+	GeneratedAt    string           `json:"generated_at"`
+	Mode           string           `json:"mode"`
+	Scope          string           `json:"scope"`
+	Topology       string           `json:"topology,omitempty"`
+	IngressRPC     string           `json:"ingress_rpc,omitempty"`
+	Config         string           `json:"config"`
+	DataDir        string           `json:"data_dir"`
+	SenderAccounts int              `json:"sender_accounts,omitempty"`
+	Warmup         *warmupResult    `json:"warmup,omitempty"`
+	Thresholds     map[string]any   `json:"thresholds"`
+	MaxSearch      *maxSearchResult `json:"max_search,omitempty"`
+	Tiers          []tierSummary    `json:"tiers"`
+	FailedReasons  []string         `json:"failed_reasons,omitempty"`
+	TopSlowWindows []slowWindow     `json:"top_slow_windows,omitempty"`
+	ResourcePeaks  resourcePeaks    `json:"resource_peaks"`
+	Status         string           `json:"status"`
 }
 
 type warmupResult struct {
@@ -202,7 +221,7 @@ func writeMetricsCSV(path string, samples []sample) error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 	_ = w.Write([]string{
-		"timestamp", "tier_tps", "sent", "accepted", "failed", "primary_height", "max_height", "min_height", "height_lag", "rpc_latency_ms", "cpu_percent", "memory_mb", "disk_mb", "consecutive_stall",
+		"timestamp", "tier_tps", "sent", "accepted", "confirmed", "failed", "backpressure_drop", "primary_height", "max_height", "min_height", "height_lag", "rpc_latency_ms", "cpu_percent", "memory_mb", "disk_mb", "consecutive_stall",
 	})
 	for _, s := range samples {
 		_ = w.Write([]string{
@@ -210,7 +229,9 @@ func writeMetricsCSV(path string, samples []sample) error {
 			strconv.Itoa(s.TierTPS),
 			strconv.FormatInt(s.Sent, 10),
 			strconv.FormatInt(s.Accepted, 10),
+			strconv.FormatInt(s.Confirmed, 10),
 			strconv.FormatInt(s.Failed, 10),
+			strconv.FormatInt(s.BackpressureDrop, 10),
 			strconv.FormatUint(s.PrimaryHeight, 10),
 			strconv.FormatUint(s.MaxHeight, 10),
 			strconv.FormatUint(s.MinHeight, 10),
@@ -230,7 +251,14 @@ func writeSummaryMD(path string, v verdict) error {
 	b.WriteString("# Performance Summary\n\n")
 	b.WriteString(fmt.Sprintf("- Generated: %s\n", v.GeneratedAt))
 	b.WriteString(fmt.Sprintf("- Mode: %s\n", v.Mode))
+	b.WriteString(fmt.Sprintf("- Topology: %s\n", v.Topology))
 	b.WriteString(fmt.Sprintf("- Scope: %s\n", v.Scope))
+	if strings.TrimSpace(v.IngressRPC) != "" {
+		b.WriteString(fmt.Sprintf("- Ingress RPC: %s\n", v.IngressRPC))
+	}
+	if v.SenderAccounts > 0 {
+		b.WriteString(fmt.Sprintf("- Sender accounts: %d\n", v.SenderAccounts))
+	}
 	b.WriteString(fmt.Sprintf("- Config: %s\n", v.Config))
 	b.WriteString(fmt.Sprintf("- DataDir: %s\n", v.DataDir))
 	b.WriteString(fmt.Sprintf("- Status: %s\n\n", v.Status))
@@ -259,17 +287,32 @@ func writeSummaryMD(path string, v verdict) error {
 		b.WriteString("\n")
 	}
 
+	if v.MaxSearch != nil {
+		b.WriteString("## Max TPS Search\n\n")
+		b.WriteString("| BaseTPS | StepTPS | TargetTPS | StepDuration(s) | LastStable | FirstUnstable | StopReason |\n")
+		b.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+		b.WriteString(fmt.Sprintf("| %d | %d | %d | %d | %d | %d | %s |\n\n",
+			v.MaxSearch.BaseTPS,
+			v.MaxSearch.StepTPS,
+			v.MaxSearch.TargetTPS,
+			v.MaxSearch.StepDurationSecs,
+			v.MaxSearch.LastStableTPS,
+			v.MaxSearch.FirstUnstableTPS,
+			v.MaxSearch.StopReason,
+		))
+	}
+
 	b.WriteString("## Resource Peaks\n\n")
 	b.WriteString("| CPU(%) | Memory(MB) | Disk(MB) |\n")
 	b.WriteString("| --- | --- | --- |\n")
 	b.WriteString(fmt.Sprintf("| %.3f | %.3f | %.3f |\n\n", v.ResourcePeaks.CPUPercent, v.ResourcePeaks.MemoryMB, v.ResourcePeaks.DiskMB))
 
 	b.WriteString("## Tier Summary\n\n")
-	b.WriteString("| TPS | Duration(s) | Sent | Accepted | Failed | SuccessRate | HeightGrowth | MaxLag | p95 RPC(ms) | MaxStall | Status |\n")
-	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("| TPS | Duration(s) | Sent | Accepted | Confirmed | Failed | AcceptedRate | ConfirmedRate | AcceptedTPS | ConfirmedTPS | HeightGrowth | MaxLag | p95 RPC(ms) | MaxStall | Status |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, t := range v.Tiers {
-		b.WriteString(fmt.Sprintf("| %d | %d | %d | %d | %d | %.4f | %d | %d | %.2f | %d | %s |\n",
-			t.TPS, t.DurationSeconds, t.Sent, t.Accepted, t.Failed, t.SuccessRate, t.HeightGrowth, t.MaxHeightLag, t.P95RPCLatencyMS, t.MaxConsecutiveStall, t.Status,
+		b.WriteString(fmt.Sprintf("| %d | %d | %d | %d | %d | %d | %.4f | %.4f | %.2f | %.2f | %d | %d | %.2f | %d | %s |\n",
+			t.TPS, t.DurationSeconds, t.Sent, t.Accepted, t.Confirmed, t.Failed, t.AcceptedRate, t.ConfirmedRate, t.AcceptedTPS, t.ConfirmedTPS, t.HeightGrowth, t.MaxHeightLag, t.P95RPCLatencyMS, t.MaxConsecutiveStall, t.Status,
 		))
 	}
 	b.WriteString("\n## Top Slow Windows\n\n")
@@ -449,21 +492,215 @@ func waitForMultiScopeWarmup(clients []*ethclient.Client, sampleInterval time.Du
 	}
 }
 
+func writeVerdictArtifacts(outDir string, v verdict, samples []sample, sampleInterval time.Duration) error {
+	metricsCSV := filepath.Join(outDir, "metrics.csv")
+	if err := writeMetricsCSV(metricsCSV, samples); err != nil {
+		return fmt.Errorf("write metrics csv failed: %w", err)
+	}
+
+	verdictPath := filepath.Join(outDir, "verdict.json")
+	data, _ := json.MarshalIndent(v, "", "  ")
+	if err := os.WriteFile(verdictPath, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write verdict failed: %w", err)
+	}
+
+	summaryPath := filepath.Join(outDir, "summary.md")
+	if err := writeSummaryMD(summaryPath, v); err != nil {
+		return fmt.Errorf("write summary failed: %w", err)
+	}
+
+	fmt.Printf("summary: %s\n", summaryPath)
+	fmt.Printf("metrics: %s\n", metricsCSV)
+	fmt.Printf("verdict: %s\n", verdictPath)
+	return nil
+}
+
+func plannedMaxTPS(mode string, tiers []int, target int) int {
+	maxTPS := target
+	for _, tps := range tiers {
+		if tps > maxTPS {
+			maxTPS = tps
+		}
+	}
+	if strings.EqualFold(mode, "soak") && len(tiers) > 0 && tiers[0] > maxTPS {
+		maxTPS = tiers[0]
+	}
+	return maxTPS
+}
+
+func runTier(tps int, duration time.Duration, sampleInterval time.Duration, lagClients []*ethclient.Client, dataDir string, generator *loadGenerator, minSuccessRate float64, maxStallSeconds int, maxHeightLag uint64, maxP95LatencyMS float64, allSamples *[]sample) tierSummary {
+	start := time.Now()
+	end := start.Add(duration)
+	sampleTicker := time.NewTicker(sampleInterval)
+	defer sampleTicker.Stop()
+
+	var latencies []float64
+	var maxLag uint64
+	var startHeight, endHeight uint64
+	var lastPrimary uint64
+	consecutiveStall := 0
+	maxConsecutiveStall := 0
+
+	maxH, minH, primaryH, err := queryHeights(lagClients)
+	if err == nil {
+		startHeight = primaryH
+		lastPrimary = primaryH
+		if maxH >= minH {
+			maxLag = maxH - minH
+		}
+	}
+
+	generator.Start()
+	for time.Now().Before(end) {
+		<-sampleTicker.C
+		probeStart := time.Now()
+		maxHeight, minHeight, primaryHeight, errHeights := queryHeights(lagClients)
+		latMS := float64(time.Since(probeStart).Milliseconds())
+		latencies = append(latencies, latMS)
+		if errHeights != nil {
+			maxHeight, minHeight, primaryHeight = 0, 0, 0
+		}
+		if primaryHeight > 0 {
+			if primaryHeight == lastPrimary {
+				consecutiveStall++
+			} else {
+				consecutiveStall = 0
+				lastPrimary = primaryHeight
+			}
+			if consecutiveStall > maxConsecutiveStall {
+				maxConsecutiveStall = consecutiveStall
+			}
+		}
+		lag := uint64(0)
+		if maxHeight >= minHeight {
+			lag = maxHeight - minHeight
+			if lag > maxLag {
+				maxLag = lag
+			}
+		}
+		snap := generator.Snapshot()
+		cpu, memMB, diskMB := sampleResources(dataDir)
+		*allSamples = append(*allSamples, sample{
+			Timestamp:        time.Now().UTC(),
+			TierTPS:          tps,
+			Sent:             snap.Sent,
+			Accepted:         snap.Accepted,
+			Confirmed:        snap.Confirmed,
+			Failed:           snap.Failed,
+			BackpressureDrop: snap.BackpressureDrop,
+			PrimaryHeight:    primaryHeight,
+			MaxHeight:        maxHeight,
+			MinHeight:        minHeight,
+			HeightLag:        lag,
+			RPCLatencyMS:     latMS,
+			CPUPercent:       cpu,
+			MemoryMB:         memMB,
+			DiskMB:           diskMB,
+			ConsecutiveStall: consecutiveStall,
+		})
+	}
+	generator.Stop()
+	drain := generator.DrainConfirmations(defaultDrainTimeout)
+
+	maxH2, minH2, primaryEnd, err2 := queryHeights(lagClients)
+	if err2 == nil {
+		endHeight = primaryEnd
+		if maxH2 >= minH2 {
+			lag := maxH2 - minH2
+			if lag > maxLag {
+				maxLag = lag
+			}
+		}
+	}
+
+	acceptedRate := 0.0
+	confirmedRate := 0.0
+	if drain.Sent > 0 {
+		acceptedRate = float64(drain.Accepted) / float64(drain.Sent)
+		confirmedRate = float64(drain.Confirmed) / float64(drain.Sent)
+	}
+	p95 := percentile95(latencies)
+	status := "PASS"
+	noteParts := []string{}
+	if acceptedRate < minSuccessRate {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("accepted_rate %.4f < %.4f", acceptedRate, minSuccessRate))
+	}
+	if confirmedRate < minSuccessRate {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("confirmed_rate %.4f < %.4f", confirmedRate, minSuccessRate))
+	}
+	if drain.PendingBacklog > 0 {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("pending_backlog %d remained after drain", drain.PendingBacklog))
+	}
+	if maxLag > maxHeightLag {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("max_height_lag %d > %d", maxLag, maxHeightLag))
+	}
+	if p95 > maxP95LatencyMS {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("p95_latency %.2f > %.2f", p95, maxP95LatencyMS))
+	}
+	stallWindowSeconds := maxConsecutiveStall * int(math.Max(sampleInterval.Seconds(), 1))
+	if stallWindowSeconds > maxStallSeconds {
+		status = "FAIL"
+		noteParts = append(noteParts, fmt.Sprintf("stall_window %ds > %ds", stallWindowSeconds, maxStallSeconds))
+	}
+	if drain.BackpressureDrop > 0 {
+		noteParts = append(noteParts, fmt.Sprintf("sender_backpressure_drop=%d", drain.BackpressureDrop))
+	}
+
+	acceptedTPS := 0.0
+	confirmedTPS := 0.0
+	if duration > 0 {
+		acceptedTPS = float64(drain.Accepted) / duration.Seconds()
+		confirmedTPS = float64(drain.Confirmed) / duration.Seconds()
+	}
+
+	return tierSummary{
+		TPS:                 tps,
+		DurationSeconds:     int64(duration.Seconds()),
+		Sent:                drain.Sent,
+		Accepted:            drain.Accepted,
+		Confirmed:           drain.Confirmed,
+		Failed:              drain.Failed,
+		BackpressureDrop:    drain.BackpressureDrop,
+		AcceptedRate:        acceptedRate,
+		ConfirmedRate:       confirmedRate,
+		AcceptedTPS:         acceptedTPS,
+		ConfirmedTPS:        confirmedTPS,
+		StartHeight:         startHeight,
+		EndHeight:           endHeight,
+		HeightGrowth:        endHeight - startHeight,
+		MaxHeightLag:        maxLag,
+		P95RPCLatencyMS:     p95,
+		MaxConsecutiveStall: maxConsecutiveStall,
+		Status:              status,
+		Notes:               strings.Join(noteParts, "; "),
+	}
+}
+
 func main() {
 	configPath := flag.String("config", "data/test_config.yaml", "Path to generated test config")
 	outDir := flag.String("out-dir", "reports/perf", "Output directory")
-	mode := flag.String("mode", "tiers", "tiers|soak")
+	mode := flag.String("mode", "tiers", "tiers|max|soak")
 	scope := flag.String("scope", "single", "Lag validation scope: single|multi")
+	topology := flag.String("topology", "single", "Network topology under test: single|multi")
 	tiersRaw := flag.String("tiers", "10,30,60", "Comma-separated TPS tiers")
 	durationRaw := flag.String("duration", "90s", "Duration per tier")
 	sampleIntervalRaw := flag.String("sample-interval", "2s", "Metrics sample interval")
 	dataDir := flag.String("data-dir", "data", "Chain data directory for disk usage sampling")
-	minSuccessRate := flag.Float64("min-success-rate", 0.99, "Minimum accepted tx success rate")
+	minSuccessRate := flag.Float64("min-success-rate", 0.99, "Minimum accepted/confirmed tx success rate")
 	maxStallSeconds := flag.Int("max-stall-seconds", 15, "Maximum consecutive no-growth sample window")
 	maxHeightLag := flag.Uint64("max-height-lag", 8, "Maximum allowed node height lag")
 	maxP95LatencyMS := flag.Float64("max-p95-latency-ms", 500, "Maximum allowed p95 RPC latency")
 	multiWarmupTimeoutRaw := flag.String("multi-warmup-timeout", "60s", "Maximum warmup wait before multi-scope lag checks start")
 	multiWarmupStableSamples := flag.Int("multi-warmup-stable-samples", 3, "Consecutive in-threshold samples required before multi-scope measurement starts")
+	senderAccountsFlag := flag.Int("sender-accounts", 0, "Number of funded sender accounts; 0 means auto-size by target TPS")
+	maxBaseTPS := flag.Int("max-base-tps", 1000, "MODE=max starting TPS")
+	maxStepTPS := flag.Int("max-step", 100, "MODE=max TPS increment per step")
+	maxTargetTPS := flag.Int("max-target-tps", 5000, "MODE=max upper bound; stop once reached stably")
 	flag.Parse()
 
 	cfg, err := intcfg.LoadConfig(*configPath)
@@ -485,11 +722,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	tiers, err := parseTPSList(*tiersRaw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tiers parse failed: %v\n", err)
+	modeName := strings.ToLower(strings.TrimSpace(*mode))
+	switch modeName {
+	case "tiers", "max", "soak":
+	default:
+		fmt.Fprintf(os.Stderr, "invalid mode %q: expected tiers|max|soak\n", *mode)
 		os.Exit(1)
 	}
+
+	var tiers []int
+	switch modeName {
+	case "max":
+		tiers, err = buildMaxTPSSteps(*maxBaseTPS, *maxStepTPS, *maxTargetTPS)
+	case "soak", "tiers":
+		tiers, err = parseTPSList(*tiersRaw)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tier setup failed: %v\n", err)
+		os.Exit(1)
+	}
+
 	duration, err := time.ParseDuration(*durationRaw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "duration parse failed: %v\n", err)
@@ -541,16 +793,26 @@ func main() {
 	case "", "single":
 		scopeName = "single"
 	case "multi":
-		scopeName = "multi"
 	default:
 		fmt.Fprintf(os.Stderr, "invalid scope %q: expected single|multi\n", *scope)
 		os.Exit(1)
 	}
+	topologyName := strings.ToLower(strings.TrimSpace(*topology))
+	switch topologyName {
+	case "", "single":
+		topologyName = "single"
+	case "multi":
+	default:
+		fmt.Fprintf(os.Stderr, "invalid topology %q: expected single|multi\n", *topology)
+		os.Exit(1)
+	}
+	if topologyName == "multi" && scopeName == "single" {
+		scopeName = "multi"
+	}
 
 	lagClients := append([]*ethclient.Client{}, clients[:1]...)
+	var extraLagClients []*ethclient.Client
 	if scopeName == "multi" {
-		// Include explicit node RPCs for multi-node lag checks when provided.
-		lagClients = append([]*ethclient.Client{}, clients...)
 		if len(cfg.NodeRPCs) > 0 {
 			lagClients = lagClients[:0]
 			seen := make(map[string]struct{})
@@ -569,14 +831,17 @@ func main() {
 					os.Exit(1)
 				}
 				lagClients = append(lagClients, c)
+				extraLagClients = append(extraLagClients, c)
 			}
-			defer func() {
-				for _, c := range lagClients {
-					c.Close()
-				}
-			}()
+		} else {
+			lagClients = append([]*ethclient.Client{}, clients...)
 		}
 	}
+	defer func() {
+		for _, c := range extraLagClients {
+			c.Close()
+		}
+	}()
 
 	chainID, err := clients[0].ChainID(context.Background())
 	if err != nil {
@@ -584,230 +849,96 @@ func main() {
 		os.Exit(1)
 	}
 
-	from := crypto.PubkeyToAddress(key.PublicKey)
-	nonce, err := clients[0].PendingNonceAt(context.Background(), from)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pending nonce query failed: %v\n", err)
-		os.Exit(1)
-	}
-
 	allSamples := make([]sample, 0, 4096)
 	summaries := make([]tierSummary, 0, len(tiers))
 	var warmup *warmupResult
+	var maxSearch *maxSearchResult
 
 	if scopeName == "multi" {
 		result := waitForMultiScopeWarmup(lagClients, sampleInterval, *maxHeightLag, multiWarmupTimeout, *multiWarmupStableSamples)
 		warmup = &result
 	}
 
+	thresholds := map[string]any{
+		"success_rate_min":             *minSuccessRate,
+		"stall_window_seconds_max":     *maxStallSeconds,
+		"max_height_lag":               *maxHeightLag,
+		"rpc_latency_p95_ms_max":       *maxP95LatencyMS,
+		"multi_warmup_timeout_seconds": int64(multiWarmupTimeout.Seconds()),
+		"multi_warmup_stable_samples":  *multiWarmupStableSamples,
+	}
+
 	failedReasons := make([]string, 0, len(tiers)+1)
 	if warmup != nil && warmup.Status != "PASS" {
 		failedReasons = append(failedReasons, fmt.Sprintf("warmup: %s", warmup.Notes))
 		v := verdict{
-			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			Mode:        *mode,
-			Scope:       scopeName,
-			Config:      *configPath,
-			DataDir:     *dataDir,
-			Warmup:      warmup,
-			Thresholds: map[string]any{
-				"success_rate_min":             *minSuccessRate,
-				"stall_window_seconds_max":     *maxStallSeconds,
-				"max_height_lag":               *maxHeightLag,
-				"rpc_latency_p95_ms_max":       *maxP95LatencyMS,
-				"multi_warmup_timeout_seconds": int64(multiWarmupTimeout.Seconds()),
-				"multi_warmup_stable_samples":  *multiWarmupStableSamples,
-			},
+			GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+			Mode:           modeName,
+			Scope:          scopeName,
+			Topology:       topologyName,
+			IngressRPC:     cfg.RPCs[0],
+			Config:         *configPath,
+			DataDir:        *dataDir,
+			Warmup:         warmup,
+			Thresholds:     thresholds,
 			Tiers:          summaries,
 			FailedReasons:  failedReasons,
 			TopSlowWindows: collectTopSlowWindows(allSamples, sampleInterval, 10),
 			ResourcePeaks:  collectResourcePeaks(allSamples),
 			Status:         "FAIL",
 		}
-
-		metricsCSV := filepath.Join(*outDir, "metrics.csv")
-		if err := writeMetricsCSV(metricsCSV, allSamples); err != nil {
-			fmt.Fprintf(os.Stderr, "write metrics csv failed: %v\n", err)
+		if err := writeVerdictArtifacts(*outDir, v, allSamples, sampleInterval); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
+		os.Exit(1)
+	}
 
-		verdictPath := filepath.Join(*outDir, "verdict.json")
-		data, _ := json.MarshalIndent(v, "", "  ")
-		if err := os.WriteFile(verdictPath, append(data, '\n'), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "write verdict failed: %v\n", err)
-			os.Exit(1)
-		}
+	accountCount := *senderAccountsFlag
+	if accountCount <= 0 {
+		accountCount = recommendedSenderAccountCount(plannedMaxTPS(modeName, tiers, *maxTargetTPS))
+	}
+	thresholds["sender_accounts"] = accountCount
 
-		summaryPath := filepath.Join(*outDir, "summary.md")
-		if err := writeSummaryMD(summaryPath, v); err != nil {
-			fmt.Fprintf(os.Stderr, "write summary failed: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("summary: %s\n", summaryPath)
-		fmt.Printf("metrics: %s\n", metricsCSV)
-		fmt.Printf("verdict: %s\n", verdictPath)
+	senderAccounts, err := prepareSenderAccounts(clients[0], key, chainID, accountCount)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "prepare sender accounts failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	for _, tps := range tiers {
-		interval := time.Second
-		if tps > 0 {
-			interval = time.Duration(float64(time.Second) / float64(tps))
-			if interval <= 0 {
-				interval = time.Millisecond
+		if err := syncSenderAccountNonces(clients[0], senderAccounts); err != nil {
+			fmt.Fprintf(os.Stderr, "sync sender nonces failed: %v\n", err)
+			os.Exit(1)
+		}
+		summary := runTier(tps, duration, sampleInterval, lagClients, *dataDir, newLoadGenerator(clients[0], chainID, senderAccounts, tps), *minSuccessRate, *maxStallSeconds, *maxHeightLag, *maxP95LatencyMS, &allSamples)
+		summaries = append(summaries, summary)
+		if modeName == "max" && maxSearch == nil {
+			maxSearch = &maxSearchResult{
+				BaseTPS:          *maxBaseTPS,
+				StepTPS:          *maxStepTPS,
+				TargetTPS:        *maxTargetTPS,
+				StepDurationSecs: int64(duration.Seconds()),
 			}
 		}
-
-		start := time.Now()
-		end := start.Add(duration)
-		txTicker := time.NewTicker(interval)
-		sampleTicker := time.NewTicker(sampleInterval)
-		defer txTicker.Stop()
-		defer sampleTicker.Stop()
-
-		var sent, accepted, failed int64
-		var latencies []float64
-		var maxLag uint64
-		var startHeight, endHeight uint64
-		var lastPrimary uint64
-		consecutiveStall := 0
-		maxConsecutiveStall := 0
-
-		maxH, minH, primaryH, err := queryHeights(lagClients)
-		if err == nil {
-			startHeight = primaryH
-			lastPrimary = primaryH
-			if maxH >= minH {
-				maxLag = maxH - minH
-			}
-		}
-
-		for time.Now().Before(end) {
-			select {
-			case <-txTicker.C:
-				sent++
-				gasPrice, gerr := clients[0].SuggestGasPrice(context.Background())
-				if gerr != nil || gasPrice == nil || gasPrice.Sign() <= 0 {
-					gasPrice = big.NewInt(1_000_000_000)
-				}
-				tx := types.NewTransaction(nonce, from, big.NewInt(0), 21_000, gasPrice, nil)
-				signed, serr := types.SignTx(tx, types.NewEIP155Signer(chainID), key)
-				if serr != nil {
-					failed++
-					continue
-				}
-				startSend := time.Now()
-				errSend := clients[0].SendTransaction(context.Background(), signed)
-				latencies = append(latencies, float64(time.Since(startSend).Milliseconds()))
-				if errSend != nil {
-					failed++
-					msg := strings.ToLower(errSend.Error())
-					if strings.Contains(msg, "nonce too low") || strings.Contains(msg, "replacement transaction underpriced") || strings.Contains(msg, "already known") {
-						if refreshed, rerr := clients[0].PendingNonceAt(context.Background(), from); rerr == nil {
-							nonce = refreshed
-						}
-					}
-					continue
-				}
-				accepted++
-				nonce++
-			case <-sampleTicker.C:
-				probeStart := time.Now()
-				maxHeight, minHeight, primaryHeight, errHeights := queryHeights(lagClients)
-				latMS := float64(time.Since(probeStart).Milliseconds())
-				if errHeights != nil {
-					maxHeight, minHeight, primaryHeight = 0, 0, 0
-				}
-				if primaryHeight > 0 {
-					if primaryHeight == lastPrimary {
-						consecutiveStall++
-					} else {
-						consecutiveStall = 0
-						lastPrimary = primaryHeight
-					}
-					if consecutiveStall > maxConsecutiveStall {
-						maxConsecutiveStall = consecutiveStall
-					}
-				}
-				lag := uint64(0)
-				if maxHeight >= minHeight {
-					lag = maxHeight - minHeight
-					if lag > maxLag {
-						maxLag = lag
-					}
-				}
-				cpu, memMB, diskMB := sampleResources(*dataDir)
-				allSamples = append(allSamples, sample{
-					Timestamp:        time.Now().UTC(),
-					TierTPS:          tps,
-					Sent:             sent,
-					Accepted:         accepted,
-					Failed:           failed,
-					PrimaryHeight:    primaryHeight,
-					MaxHeight:        maxHeight,
-					MinHeight:        minHeight,
-					HeightLag:        lag,
-					RPCLatencyMS:     latMS,
-					CPUPercent:       cpu,
-					MemoryMB:         memMB,
-					DiskMB:           diskMB,
-					ConsecutiveStall: consecutiveStall,
-				})
-			}
-		}
-
-		maxH2, minH2, primaryEnd, err2 := queryHeights(lagClients)
-		if err2 == nil {
-			endHeight = primaryEnd
-			if maxH2 >= minH2 {
-				lag := maxH2 - minH2
-				if lag > maxLag {
-					maxLag = lag
+		if summary.Status == "PASS" {
+			if maxSearch != nil {
+				maxSearch.LastStableTPS = summary.TPS
+				if summary.TPS >= *maxTargetTPS {
+					maxSearch.StopReason = "target_reached"
+					break
 				}
 			}
+			continue
 		}
-
-		successRate := 0.0
-		if sent > 0 {
-			successRate = float64(accepted) / float64(sent)
+		if maxSearch != nil {
+			maxSearch.FirstUnstableTPS = summary.TPS
+			maxSearch.StopReason = "first_unstable_tps"
+			break
 		}
-		p95 := percentile95(latencies)
-		status := "PASS"
-		noteParts := []string{}
-		if successRate < *minSuccessRate {
-			status = "FAIL"
-			noteParts = append(noteParts, fmt.Sprintf("success_rate %.4f < %.4f", successRate, *minSuccessRate))
-		}
-		if maxLag > *maxHeightLag {
-			status = "FAIL"
-			noteParts = append(noteParts, fmt.Sprintf("max_height_lag %d > %d", maxLag, *maxHeightLag))
-		}
-		if p95 > *maxP95LatencyMS {
-			status = "FAIL"
-			noteParts = append(noteParts, fmt.Sprintf("p95_latency %.2f > %.2f", p95, *maxP95LatencyMS))
-		}
-		if maxConsecutiveStall*int(sampleInterval.Seconds()) > *maxStallSeconds {
-			status = "FAIL"
-			noteParts = append(noteParts, fmt.Sprintf("stall_window %ds > %ds", maxConsecutiveStall*int(sampleInterval.Seconds()), *maxStallSeconds))
-		}
-
-		summaries = append(summaries, tierSummary{
-			TPS:                 tps,
-			DurationSeconds:     int64(duration.Seconds()),
-			Sent:                sent,
-			Accepted:            accepted,
-			Failed:              failed,
-			SuccessRate:         successRate,
-			StartHeight:         startHeight,
-			EndHeight:           endHeight,
-			HeightGrowth:        endHeight - startHeight,
-			MaxHeightLag:        maxLag,
-			P95RPCLatencyMS:     p95,
-			MaxConsecutiveStall: maxConsecutiveStall,
-			Status:              status,
-			Notes:               strings.Join(noteParts, "; "),
-		})
+	}
+	if maxSearch != nil && maxSearch.StopReason == "" {
+		maxSearch.StopReason = "exhausted_search_range"
 	}
 
 	failedReasons = append(failedReasons, collectFailedReasons(summaries)...)
@@ -817,20 +948,17 @@ func main() {
 	}
 
 	v := verdict{
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Mode:        *mode,
-		Scope:       scopeName,
-		Config:      *configPath,
-		DataDir:     *dataDir,
-		Warmup:      warmup,
-		Thresholds: map[string]any{
-			"success_rate_min":             *minSuccessRate,
-			"stall_window_seconds_max":     *maxStallSeconds,
-			"max_height_lag":               *maxHeightLag,
-			"rpc_latency_p95_ms_max":       *maxP95LatencyMS,
-			"multi_warmup_timeout_seconds": int64(multiWarmupTimeout.Seconds()),
-			"multi_warmup_stable_samples":  *multiWarmupStableSamples,
-		},
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		Mode:           modeName,
+		Scope:          scopeName,
+		Topology:       topologyName,
+		IngressRPC:     cfg.RPCs[0],
+		Config:         *configPath,
+		DataDir:        *dataDir,
+		SenderAccounts: accountCount,
+		Warmup:         warmup,
+		Thresholds:     thresholds,
+		MaxSearch:      maxSearch,
 		Tiers:          summaries,
 		FailedReasons:  failedReasons,
 		TopSlowWindows: collectTopSlowWindows(allSamples, sampleInterval, 10),
@@ -838,28 +966,10 @@ func main() {
 		Status:         overallStatus,
 	}
 
-	metricsCSV := filepath.Join(*outDir, "metrics.csv")
-	if err := writeMetricsCSV(metricsCSV, allSamples); err != nil {
-		fmt.Fprintf(os.Stderr, "write metrics csv failed: %v\n", err)
+	if err := writeVerdictArtifacts(*outDir, v, allSamples, sampleInterval); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-
-	verdictPath := filepath.Join(*outDir, "verdict.json")
-	data, _ := json.MarshalIndent(v, "", "  ")
-	if err := os.WriteFile(verdictPath, append(data, '\n'), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "write verdict failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	summaryPath := filepath.Join(*outDir, "summary.md")
-	if err := writeSummaryMD(summaryPath, v); err != nil {
-		fmt.Fprintf(os.Stderr, "write summary failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("summary: %s\n", summaryPath)
-	fmt.Printf("metrics: %s\n", metricsCSV)
-	fmt.Printf("verdict: %s\n", verdictPath)
 	if overallStatus != "PASS" {
 		os.Exit(1)
 	}

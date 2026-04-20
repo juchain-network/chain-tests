@@ -63,8 +63,15 @@ PERF_TPS_TIERS ?= 10,30,60
 PERF_TIER_DURATION ?= 90s
 PERF_SAMPLE_INTERVAL ?= 2s
 PERF_SCOPE ?= single
+PERF_TOPOLOGY ?= single
+PERF_INIT_MODE ?= posa
 PERF_MULTI_WARMUP_TIMEOUT ?= 60s
 PERF_MULTI_WARMUP_STABLE_SAMPLES ?= 3
+PERF_SENDER_ACCOUNTS ?= 0
+PERF_MAX_BASE_TPS ?= 1000
+PERF_MAX_STEP ?= 100
+PERF_MAX_STEP_DURATION ?= 90s
+PERF_MAX_TARGET_TPS ?= 5000
 PERF_AUTO_STOP ?= 1
 PERF_SOAK_DURATION ?= 24h
 PERF_SOAK_TPS ?= 10
@@ -149,7 +156,7 @@ help:
 	@echo "  test-forkcap    - Fork capability runs with automatic pre/post fork orchestration: FORK=shanghai|cancun|fixheader|posa|prague|osaka|bpo1|bpo2|all CASE=<go test pattern optional>"
 	@echo "  test-scenario   - Scenario runs: SCENARIO=all|posa|interop|bootstrap|upgrade|checkpoint|negative|rotation-punish|rotation-live|add-validator-live|add-validator-punish|liveness-repro CHECK=sync|state-root|all"
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
-	@echo "  test-perf       - Perf/soak runs: MODE=tiers|soak PERF_SCOPE=single|multi (default: single)"
+	@echo "  test-perf       - Perf/soak runs: MODE=tiers|max|soak PERF_TOPOLOGY=single|multi (default: single)"
 	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
 	@echo ""
 	@echo "CI Commands:"
@@ -198,6 +205,11 @@ help:
 	@echo "  SMOKE_SINGLE_TEST_TIMEOUT=$(SMOKE_SINGLE_TEST_TIMEOUT) # single-smoke go test timeout"
 	@echo "  PERF_TPS_TIERS=$(PERF_TPS_TIERS) PERF_TIER_DURATION=$(PERF_TIER_DURATION)"
 	@echo "  PERF_SCOPE=$(PERF_SCOPE)         # test-perf lag validation scope: single|multi"
+	@echo "  PERF_TOPOLOGY=$(PERF_TOPOLOGY)   # test-perf runtime topology: single|multi"
+	@echo "  PERF_INIT_MODE=$(PERF_INIT_MODE) # test-perf init mode: default posa"
+	@echo "  PERF_SENDER_ACCOUNTS=$(PERF_SENDER_ACCOUNTS) # 0=auto-size sender shards"
+	@echo "  PERF_MAX_BASE_TPS=$(PERF_MAX_BASE_TPS) PERF_MAX_STEP=$(PERF_MAX_STEP)"
+	@echo "  PERF_MAX_STEP_DURATION=$(PERF_MAX_STEP_DURATION) PERF_MAX_TARGET_TPS=$(PERF_MAX_TARGET_TPS)"
 	@echo "  PERF_MULTI_WARMUP_TIMEOUT=$(PERF_MULTI_WARMUP_TIMEOUT) # multi perf pre-measure convergence wait"
 	@echo "  PERF_MULTI_WARMUP_STABLE_SAMPLES=$(PERF_MULTI_WARMUP_STABLE_SAMPLES) # consecutive in-threshold samples before measuring multi perf"
 	@echo "  PERF_AUTO_STOP=$(PERF_AUTO_STOP) # 1=stop network after test-perf exits"
@@ -653,16 +665,24 @@ test-perf:
 	@set -e; \
 	mode="$(MODE)"; \
 	if [ -z "$$mode" ]; then \
-		echo "Set MODE=<tiers|soak>"; \
+		echo "Set MODE=<tiers|max|soak>"; \
 		exit 1; \
 	fi; \
 	case "$$mode" in \
-		tiers) \
+		tiers|max) \
 			TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+			PERF_MODE="$$mode" \
 			PERF_TPS_TIERS="$(PERF_TPS_TIERS)" \
 			PERF_TIER_DURATION="$(PERF_TIER_DURATION)" \
 			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
 			PERF_SCOPE="$(PERF_SCOPE)" \
+			PERF_TOPOLOGY="$(PERF_TOPOLOGY)" \
+			PERF_INIT_MODE="$(PERF_INIT_MODE)" \
+			PERF_SENDER_ACCOUNTS="$(PERF_SENDER_ACCOUNTS)" \
+			PERF_MAX_BASE_TPS="$(PERF_MAX_BASE_TPS)" \
+			PERF_MAX_STEP="$(PERF_MAX_STEP)" \
+			PERF_MAX_STEP_DURATION="$(PERF_MAX_STEP_DURATION)" \
+			PERF_MAX_TARGET_TPS="$(PERF_MAX_TARGET_TPS)" \
 			PERF_MULTI_WARMUP_TIMEOUT="$(PERF_MULTI_WARMUP_TIMEOUT)" \
 			PERF_MULTI_WARMUP_STABLE_SAMPLES="$(PERF_MULTI_WARMUP_STABLE_SAMPLES)" \
 			PERF_AUTO_STOP="$(PERF_AUTO_STOP)" \
@@ -675,13 +695,16 @@ test-perf:
 			PERF_SAMPLE_INTERVAL="$(PERF_SAMPLE_INTERVAL)" \
 			PERF_SOAK_RESTART_INTERVAL="$(PERF_SOAK_RESTART_INTERVAL)" \
 			PERF_SCOPE="$(PERF_SCOPE)" \
+			PERF_TOPOLOGY="$(PERF_TOPOLOGY)" \
+			PERF_INIT_MODE="$(PERF_INIT_MODE)" \
+			PERF_SENDER_ACCOUNTS="$(PERF_SENDER_ACCOUNTS)" \
 			PERF_MULTI_WARMUP_TIMEOUT="$(PERF_MULTI_WARMUP_TIMEOUT)" \
 			PERF_MULTI_WARMUP_STABLE_SAMPLES="$(PERF_MULTI_WARMUP_STABLE_SAMPLES)" \
 			PERF_AUTO_STOP="$(PERF_AUTO_STOP)" \
 			bash ./scripts/perf/run_soak.sh; \
 			;; \
 		*) \
-			echo "MODE must be tiers|soak for test-perf"; \
+			echo "MODE must be tiers|max|soak for test-perf"; \
 			exit 1; \
 			;; \
 	esac

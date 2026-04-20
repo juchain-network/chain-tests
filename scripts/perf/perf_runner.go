@@ -534,6 +534,8 @@ func runTier(tps int, duration time.Duration, sampleInterval time.Duration, lagC
 	sampleTicker := time.NewTicker(sampleInterval)
 	defer sampleTicker.Stop()
 
+	fmt.Printf("▶ starting tier=%d duration=%s sample_interval=%s\n", tps, duration, sampleInterval)
+
 	var latencies []float64
 	var maxLag uint64
 	var startHeight, endHeight uint64
@@ -598,6 +600,18 @@ func runTier(tps int, duration time.Duration, sampleInterval time.Duration, lagC
 			DiskMB:           diskMB,
 			ConsecutiveStall: consecutiveStall,
 		})
+		elapsed := time.Since(start).Round(time.Second)
+		fmt.Printf("  progress tier=%d elapsed=%s/%s sent=%d accepted=%d confirmed=%d failed=%d lag=%d primary_height=%d\n",
+			tps,
+			elapsed,
+			duration,
+			snap.Sent,
+			snap.Accepted,
+			snap.Confirmed,
+			snap.Failed,
+			lag,
+			primaryHeight,
+		)
 	}
 	generator.Stop()
 	drain := generator.DrainConfirmations(defaultDrainTimeout)
@@ -658,7 +672,7 @@ func runTier(tps int, duration time.Duration, sampleInterval time.Duration, lagC
 		confirmedTPS = float64(drain.Confirmed) / duration.Seconds()
 	}
 
-	return tierSummary{
+	result := tierSummary{
 		TPS:                 tps,
 		DurationSeconds:     int64(duration.Seconds()),
 		Sent:                drain.Sent,
@@ -679,6 +693,18 @@ func runTier(tps int, duration time.Duration, sampleInterval time.Duration, lagC
 		Status:              status,
 		Notes:               strings.Join(noteParts, "; "),
 	}
+	fmt.Printf("✔ finished tier=%d status=%s accepted=%d confirmed=%d failed=%d accepted_tps=%.2f confirmed_tps=%.2f max_lag=%d notes=%s\n",
+		result.TPS,
+		result.Status,
+		result.Accepted,
+		result.Confirmed,
+		result.Failed,
+		result.AcceptedTPS,
+		result.ConfirmedTPS,
+		result.MaxHeightLag,
+		strings.TrimSpace(result.Notes),
+	)
+	return result
 }
 
 func main() {

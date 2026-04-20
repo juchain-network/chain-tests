@@ -80,6 +80,11 @@ prepare_perf_runtime() {
   rpc_url="$(cfg_get "$CONFIG_FILE" "network.external_rpc" "http://localhost:18545")"
 
   echo "Perf setup: rebuilding runtime topology=$PERF_TOPOLOGY init_mode=$PERF_INIT_MODE"
+  if [[ "$PERF_TOPOLOGY" == "single" ]]; then
+    echo "Perf setup: topology=single uses native_single background process; pm2 status will stay empty"
+  else
+    echo "Perf setup: topology=multi uses pm2-managed native runtime"
+  fi
   TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory clean >/dev/null
   TEST_ENV_CONFIG="$CONFIG_FILE" TOPOLOGY="$PERF_TOPOLOGY" INIT_MODE="$PERF_INIT_MODE" EPOCH="${EPOCH:-}" make --no-print-directory init >/dev/null
   TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory run >/dev/null
@@ -88,6 +93,9 @@ prepare_perf_runtime() {
     return 1
   fi
   TEST_ENV_CONFIG="$CONFIG_FILE" make --no-print-directory ready >/dev/null
+  if [[ "$PERF_TOPOLOGY" == "single" && -f "$DATA_DIR/native-single/node.pid" ]]; then
+    echo "Perf setup: native_single pid=$(cat "$DATA_DIR/native-single/node.pid") log=$DATA_DIR/native-single/node.log"
+  fi
 }
 
 prepare_perf_runtime

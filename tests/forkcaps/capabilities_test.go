@@ -327,6 +327,17 @@ func TestK_ForkcapCapability_BPO2BlobSchedule(t *testing.T) {
 	}
 }
 
+func TestK_ForkcapCapability_BPO2EthConfigTransitionSurface(t *testing.T) {
+	requireForkcapSelection(t, "bpo2")
+	expectation := requireForkcapCapability(t, "bpo2")
+	if cfg == nil || len(cfg.RPCs) == 0 {
+		t.Fatal("forkcap config not initialized")
+	}
+	if err := fc.CheckBPOEthConfigTransitionSurface(cfg.RPCs[0], "bpo2", expectation.ShouldFail); err != nil {
+		t.Fatalf("verify BPO2 eth_config transition surface: %v", err)
+	}
+}
+
 func TestK_ForkcapCapability_OsakaEngineBlobAPITransition(t *testing.T) {
 	expectation := requireForkcapCapability(t, "osaka")
 	if cfg == nil {

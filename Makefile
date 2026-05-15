@@ -4,7 +4,7 @@ SHELL := /bin/bash
         coverage-start coverage-merge coverage-stop coverage-status \
         precheck runtime-precheck \
         net-up net-down net-reset net-ready sync-contract-clients test \
-        test-group test-smoke test-fork test-forkcap test-scenario test-regression test-perf test-coverage-max \
+        test-group test-smoke test-fork test-forkcap test-scenario test-regression test-perf test-coverage-max test-rpc \
         ci ci-tool ci-budget-suggest ci-budget-suggest-json ci-budget-suggest-save ci-budget-drift-check ci-budget-selftest ci-budget-enforced
 
 PWD := $(shell pwd)
@@ -158,6 +158,7 @@ help:
 	@echo "  test-regression - Regression bundles: SCOPE=core|full (default: core)"
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|max|soak PERF_TOPOLOGY=single|multi (default: single)"
 	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
+	@echo "  test-rpc        - Run dedicated RPC behavior validation suite"
 	@echo ""
 	@echo "CI Commands:"
 	@echo "  ci              - PROFILE=pr|nightly|release|weekly-soak or MODE=groups|tests [BUDGET=1]"
@@ -708,6 +709,23 @@ test-perf:
 			exit 1; \
 			;; \
 	esac
+
+test-rpc:
+	@set -e; \
+	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
+		CHAIN_COVERAGE="$(CHAIN_COVERAGE)" \
+		CHAIN_COVERAGE_SESSION="$(CHAIN_COVERAGE_SESSION)" \
+		CHAIN_COVERAGE_SCOPE="$(CHAIN_COVERAGE_SCOPE)" \
+		CHAIN_COVERAGE_OUT_DIR="$(CHAIN_COVERAGE_OUT_DIR)" \
+		CHAIN_COVERAGE_KEEP_RAW="$(CHAIN_COVERAGE_KEEP_RAW)" \
+		TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \
+		RUNTIME_SESSION_FILE="$(RUNTIME_SESSION_FILE)" \
+		bash ./scripts/coverage/run_command_with_coverage.sh -- $(MAKE) --no-print-directory $@; \
+		exit $$?; \
+	fi; \
+	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
+	echo "⏱ test-rpc epoch=$$epoch"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rpc -run "."
 
 test-coverage-max:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \

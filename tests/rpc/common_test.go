@@ -35,6 +35,11 @@ type RPCTopology struct {
 func TestMain(m *testing.M) {
 	flag.Parse()
 
+	if nodes := buildReadonlyRPCNodesFromEnv(); len(nodes) > 0 {
+		rpcNodes = nodes
+		os.Exit(m.Run())
+	}
+
 	loaded, err := config.LoadConfig(*rpcConfigPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load config failed: %v\n", err)
@@ -48,6 +53,28 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+func buildReadonlyRPCNodesFromEnv() []RPCNode {
+	url := normalizeReadonlyRPCURL(strings.TrimSpace(os.Getenv("RPC_URL")))
+	if url == "" {
+		return nil
+	}
+	return []RPCNode{{
+		Name: "readonly1",
+		Role: "readonly",
+		URL:  url,
+	}}
+}
+
+func normalizeReadonlyRPCURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	raw = strings.ReplaceAll(raw, "http://localhost:", "http://127.0.0.1:")
+	raw = strings.ReplaceAll(raw, "https://localhost:", "https://127.0.0.1:")
+	return raw
 }
 
 func buildRPCNodes(cfg *config.Config) []RPCNode {

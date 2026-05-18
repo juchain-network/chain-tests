@@ -69,6 +69,16 @@ type coinbaseObservation struct {
 	Mode    string
 }
 
+func isMethodUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "method not found") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "not available")
+}
+
 func defaultConvergenceSettings(semantic string) convergenceSettings {
 	return convergenceSettings{
 		Timeout:              10 * time.Second,
@@ -316,7 +326,7 @@ func canonicalRoleValues(observations []convergenceObservation) string {
 	perRole := make(map[string]string)
 	roles := make([]string, 0)
 	for _, obs := range observations {
-		if obs.Err != nil || obs.Canonical == "" {
+		if obs.Canonical == "" {
 			return ""
 		}
 		roleKey := classifyRole(obs.Node.Role)
@@ -333,6 +343,21 @@ func canonicalRoleValues(observations []convergenceObservation) string {
 	for _, role := range roles {
 		parts = append(parts, fmt.Sprintf("%s=%s", role, perRole[role]))
 	}
+	return strings.Join(parts, " | ")
+}
+
+func canonicalNodeValues(observations []convergenceObservation) string {
+	if len(observations) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(observations))
+	for _, obs := range observations {
+		if obs.Canonical == "" {
+			return ""
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", obs.Node.Name, obs.Canonical))
+	}
+	sort.Strings(parts)
 	return strings.Join(parts, " | ")
 }
 
@@ -566,9 +591,15 @@ func ethCoinbaseExpectation() roleAwareExpectation {
 	return roleAwareExpectation{
 		Method:     "eth_coinbase",
 		Settings:   defaultConvergenceSettings("role-aware coinbase expectations"),
-		Comparator: canonicalRoleValues,
+		Comparator: canonicalNodeValues,
 		ExpectationsByRole: map[string]func(convergenceObservation) string{
 			"validator": func(obs convergenceObservation) string {
+				if obs.Err != nil {
+					if isMethodUnavailableError(obs.Err) {
+						return ""
+					}
+					return fmt.Sprintf("unexpected validator eth_coinbase error %q", obs.Err.Error())
+				}
 				value, ok := obs.Value.(coinbaseObservation)
 				if !ok {
 					return fmt.Sprintf("expected coinbase observation, got %T", obs.Value)
@@ -585,7 +616,7 @@ func ethCoinbaseExpectation() roleAwareExpectation {
 			"sync": func(obs convergenceObservation) string {
 				if obs.Err != nil {
 					message := strings.ToLower(obs.Err.Error())
-					if strings.Contains(message, "etherbase must be explicitly specified") {
+					if strings.Contains(message, "etherbase must be explicitly specified") || isMethodUnavailableError(obs.Err) {
 						return ""
 					}
 					return fmt.Sprintf("unexpected sync eth_coinbase error %q", obs.Err.Error())

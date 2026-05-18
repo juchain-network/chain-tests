@@ -98,8 +98,8 @@ func TestRPC_EthCoinbase(t *testing.T) {
 			var coinbase string
 			err := client.CallContext(context.Background(), &coinbase, "eth_coinbase")
 			if err != nil {
-				if strings.Contains(err.Error(), "etherbase must be explicitly specified") {
-					// Expected on non-validator nodes that don't have a coinbase configured
+				if strings.Contains(err.Error(), "etherbase must be explicitly specified") || isMethodUnavailableError(err) {
+					// Expected on runtimes/nodes that do not expose eth_coinbase.
 					return
 				}
 				t.Fatalf("RPC Call failed: %v", err)

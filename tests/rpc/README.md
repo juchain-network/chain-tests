@@ -38,12 +38,80 @@ First delivery focuses on supported **public node RPC** behavior that is stable 
 
 RPC behavior validation is explicitly isolated from the generic test groups to keep it discoverable.
 
-Run the suite using:
+Canonical entrypoints:
 ```bash
 make test-rpc
+make test-rpc-readonly RPC_URL=http://localhost:18545
 ```
 
-This target is defined in the top-level `Makefile` and wraps the standard CI runner to execute all tests in `tests/rpc`.
+This target is defined in the top-level `Makefile` and wraps the shared CI runner to execute the RPC suite in `tests/rpc` against the local initialized network. The readonly target accepts `RPC_URL` for remote-friendly pure read-only validation.
+
+By default `make test-rpc` runs the **full local suite**.
+`make test-rpc-readonly` runs the **readonly subset** only.
+
+Useful focused reruns:
+```bash
+make test-rpc RUN='TestRPC_NegativeMethods'
+make test-rpc RUN='TestRPC_(NegativeMethods|ConditionalSurface)'
+make test-rpc RUN='TestRPC_CrossNodeConsistency'
+
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+```
+
+Useful report redirection:
+```bash
+make test-rpc REPORT_DIR=reports/rpc_debug
+make test-rpc RUN='TestRPC_CrossNodeConsistency' REPORT_DIR=reports/rpc_consistency
+make test-rpc-readonly RPC_URL=http://localhost:18545 REPORT_DIR=reports/rpc_readonly_debug
+```
+
+What to expect from command output:
+- the local target prints the resolved epoch and active run pattern
+- the readonly target prints the supplied RPC URL and active run pattern
+- successful runs print the shared CI runner artifact paths:
+  - `Report: .../report.md`
+  - `Summary: .../summary.json`
+  - `Manifest: .../manifest.json`
+- failure output should already identify the failing method, node, role, or sub-area through the RPC test helpers; after that, use the printed report paths and runtime logs for drill-down
+
+## First-Delivery Diagnostics Contract
+
+When `make test-rpc` fails, the intended maintainer workflow is:
+
+1. Re-run the narrow failing area with `RUN='TestRPC_...'`
+2. Preserve artifacts with `REPORT_DIR=reports/...`
+3. Inspect the shared CI artifacts (`report.md`, `summary.json`, `manifest.json`)
+4. Check runtime health with:
+   - `make status`
+   - `NODE=<node> make logs`
+
+When `make test-rpc-readonly` fails, the intended maintainer workflow is:
+
+1. Re-run the narrow failing area with `RUN='TestRPC_Readonly_...'`
+2. Preserve artifacts with `REPORT_DIR=reports/...`
+3. Confirm the provided RPC URL is reachable and exposes the expected read-only methods
+
+Representative repro commands:
+```bash
+make test-rpc RUN='TestRPC_NegativeMethods' REPORT_DIR=reports/rpc_negative_debug
+make test-rpc RUN='TestRPC_ConditionalSurface' REPORT_DIR=reports/rpc_conditional_debug
+make test-rpc RUN='TestRPC_CrossNodeConsistency' REPORT_DIR=reports/rpc_consistency_debug
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods' REPORT_DIR=reports/rpc_readonly_debug
+```
+
+## Scope Notes
+
+First delivery intentionally stays thin and evidence-driven:
+- local integration RPC: public happy-path identity, lookup, `eth_call`, cross-node, negative, and conditional behavior
+- readonly RPC: public read-only identity / liveness / `eth_syncing` / `net_*` methods
+- representative malformed/unsupported behavior
+- representative protected/forbidden behavior
+- representative conditional-surface behavior
+
+Not claimed yet:
+- exhaustive malformed request matrices
+- broad `debug_*`, `trace_*`, `admin_*`, or `txpool_*` namespace coverage
+- universal parity claims for non-contractual or runtime-private namespaces
 
 ## Node-Role & Runtime Assumptions
 

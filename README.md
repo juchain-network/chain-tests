@@ -285,7 +285,65 @@ make ci MODE=groups BUDGET=1
 make ci MODE=tests BUDGET=1 RUN='TestI_PublicQueryCoverage' PKGS=./tests/rewards
 ```
 
-### 5.3 Fork capability surface (`test-forkcap`)
+### 5.3 Local RPC integration surface (`test-rpc`)
+
+`test-rpc` is the dedicated maintainer-facing entrypoint for validating node JSON-RPC behavior on the **local initialized network**.
+It is intentionally **separate from `test-group`** so RPC compatibility stays discoverable as a first-class capability instead of being buried inside a business domain bucket.
+
+Default behavior:
+- `make test-rpc` runs the **full local RPC suite** in `./tests/rpc`
+- it expects the repository's initialized local topology
+- it reuses the shared CI runner, so successful runs emit the standard report artifacts:
+  - `report.md`
+  - `summary.json`
+  - `manifest.json`
+
+Examples:
+
+```bash
+# full local RPC suite
+make test-rpc
+
+# narrow rerun using go test -run semantics
+make test-rpc RUN='TestRPC_NegativeMethods'
+make test-rpc RUN='TestRPC_(NegativeMethods|ConditionalSurface)'
+
+# write report artifacts to a fixed location for later inspection
+make test-rpc REPORT_DIR=reports/rpc_debug
+
+# combine both
+make test-rpc RUN='TestRPC_CrossNodeConsistency' REPORT_DIR=reports/rpc_consistency
+```
+
+Notes:
+- `RUN` is passed through to the shared CI runner as a `go test -run` pattern for `./tests/rpc`
+- `REPORT_DIR=...` reuses the repository's normal report output convention; if omitted, the shared runner writes to `reports/ci_<timestamp>/`
+- on failure, start with the printed `Report / Summary / Manifest` paths, then inspect runtime state with `make status` and `NODE=<node> make logs`
+- first delivery intentionally focuses on stable public JSON-RPC behavior plus local read/write and cross-node validation; broad `debug_*`, `trace_*`, `admin_*`, and `txpool_*` namespace coverage remains deferred
+
+### 5.4 Remote RPC read-only surface (`test-rpc-readonly`)
+
+`test-rpc-readonly` is the remote-friendly entrypoint for **pure read-only** RPC validation.
+It accepts `RPC_URL` and does not require the local runtime to be initialized.
+
+Default behavior:
+- `make test-rpc-readonly` runs the readonly subset in `./tests/rpc`
+- it uses `RPC_URL` for discovery
+- it is intended for remote RPC endpoints, smoke checks, and environment verification
+
+Examples:
+
+```bash
+make test-rpc-readonly RPC_URL=http://localhost:18545
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+```
+
+Notes:
+- only read-only methods are included in this surface
+- remote-only coverage should not depend on local fixture generation, mined transactions, or write-path validation
+- `eth_coinbase` is intentionally excluded from the readonly entrypoint because it is role-/permission-dependent and not a pure remote read-only contract
+
+### 5.5 Fork capability surface (`test-forkcap`)
 
 `test-forkcap` is the dedicated fork capability runner for real-chain fork-gated EVM / protocol behavior.
 It currently runs on a temporary **single-node geth** baseline and automatically executes both `pre` and `post` phases for the selected fork.

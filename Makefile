@@ -159,6 +159,7 @@ help:
 	@echo "  test-perf       - Perf/soak runs: MODE=tiers|max|soak PERF_TOPOLOGY=single|multi (default: single)"
 	@echo "  test-coverage-max - Max unattended coverage runner (continues on failures, unified report)"
 	@echo "  test-rpc        - Run dedicated RPC behavior validation suite"
+	@echo "  test-rpc-readonly - Run remote-friendly RPC read-only validation subset"
 	@echo ""
 	@echo "CI Commands:"
 	@echo "  ci              - PROFILE=pr|nightly|release|weekly-soak or MODE=groups|tests [BUDGET=1]"
@@ -710,6 +711,31 @@ test-perf:
 			;; \
 	esac
 
+test-rpc-readonly:
+	@set -e; \
+	rpc_url="$${RPC_URL:-}"; \
+	if [ -z "$$rpc_url" ]; then \
+		echo "Set RPC_URL for readonly RPC validation"; \
+		exit 1; \
+	fi; \
+	run_pattern="$(if $(RUN),$(RUN),^TestRPC_Readonly_)"; \
+	report_dir="$(REPORT_DIR)"; \
+	if [ -z "$$report_dir" ]; then \
+		report_dir="reports/rpc_readonly_$$(date +%Y%m%d_%H%M%S)"; \
+	fi; \
+	mkdir -p "$$report_dir"; \
+	echo "🧪 RPC readonly suite"; \
+	echo "   pkgs=./tests/rpc run=$$run_pattern"; \
+	echo "   rpc_url=$$rpc_url"; \
+	echo "   report-dir=$$report_dir"; \
+	RPC_URL="$$rpc_url" go test ./tests/rpc -v -run "$$run_pattern" -count=1 -parallel=1 -p 1 || { \
+		status=$$?; \
+		echo ""; \
+		echo "RPC readonly suite failed."; \
+		echo "- Re-run a narrow case with: make test-rpc-readonly RUN='TestRPC_Readonly_...' RPC_URL='<url>'"; \
+		exit $$status; \
+	}
+
 test-rpc:
 	@set -e; \
 	if [ -z "$$CHAIN_COVERAGE_ACTIVE" ] && { [ "$(CHAIN_COVERAGE)" = "1" ] || [ -f reports/.coverage_state/session.env ]; }; then \
@@ -724,8 +750,24 @@ test-rpc:
 		exit $$?; \
 	fi; \
 	epoch="$$(TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" EPOCH="$(EPOCH)" bash $(EPOCH_RESOLVER) groups smoke)"; \
-	echo "⏱ test-rpc epoch=$$epoch"; \
-	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rpc -run "."
+	run_pattern="$(if $(RUN),$(RUN),.)"; \
+	echo "🧪 RPC behavior suite"; \
+	echo "   pkgs=./tests/rpc run=$$run_pattern epoch=$$epoch"; \
+	if [ -n "$(REPORT_DIR)" ]; then \
+		echo "   report-dir=$(REPORT_DIR)"; \
+	else \
+		echo "   report-dir=auto (reports/ci_<timestamp>/)"; \
+	fi; \
+	echo "   rerun hint: make test-rpc RUN='TestRPC_...' REPORT_DIR=reports/rpc_debug"; \
+	EPOCH="$$epoch" $(CI_TOOL) -mode tests $(CI_COMMON_FLAGS) -pkgs ./tests/rpc -run "$$run_pattern" || { \
+		status=$$?; \
+		echo ""; \
+		echo "RPC suite failed."; \
+		echo "- Re-run a narrow case with: make test-rpc RUN='TestRPC_...' REPORT_DIR=reports/rpc_debug"; \
+		echo "- Inspect ci.go report paths above: Report / Summary / Manifest"; \
+		echo "- Inspect runtime state with: make status && NODE=<node> make logs"; \
+		exit $$status; \
+	}
 
 test-coverage-max:
 	@TEST_ENV_CONFIG="$(TEST_ENV_CONFIG)" \

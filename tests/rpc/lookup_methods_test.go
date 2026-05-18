@@ -2,15 +2,18 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 
 	cicontext "juchain.org/chain/tools/ci/internal/context"
+	"juchain.org/chain/tools/ci/internal/testkit"
 )
 
 func TestRPC_LookupMethods(t *testing.T) {
@@ -72,6 +75,8 @@ func TestRPC_LookupMethods(t *testing.T) {
 		node := node
 		t.Run(node.Name, func(t *testing.T) {
 			t.Parallel()
+
+			waitForLookupFixtureOnNode(t, node, txHashHex, blockHash, blockNumber)
 
 			// Query eth_getTransactionByHash
 			t.Run("eth_getTransactionByHash", func(t *testing.T) {
@@ -194,8 +199,8 @@ func TestRPC_LookupMethods(t *testing.T) {
 				var coinbase string
 				err := client.CallContext(context.Background(), &coinbase, "eth_coinbase")
 				if err != nil {
-					if strings.Contains(err.Error(), "etherbase must be explicitly specified") {
-						// Expected on non-validator nodes that don't have a coinbase configured
+					if strings.Contains(err.Error(), "etherbase must be explicitly specified") || isMethodUnavailableError(err) {
+						// Expected on runtimes/nodes that do not expose eth_coinbase.
 						return
 					}
 					t.Fatalf("RPC Call failed: %v", err)
@@ -205,6 +210,57 @@ func TestRPC_LookupMethods(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func waitForLookupFixtureOnNode(t *testing.T, node RPCNode, txHashHex, blockHash, blockNumber string) {
+	t.Helper()
+	client := dialRPC(t, node)
+	defer client.Close()
+
+	err := testkit.WaitUntil(testkit.WaitUntilOptions{
+		MaxAttempts: 40,
+		Interval:    300 * time.Millisecond,
+	}, func() (bool, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var txObj map[string]interface{}
+		if err := client.CallContext(ctx, &txObj, "eth_getTransactionByHash", txHashHex); err != nil {
+			return false, fmt.Errorf("eth_getTransactionByHash on %s: %w", node.Name, err)
+		}
+		if txObj == nil || txObj["blockHash"] != blockHash || txObj["blockNumber"] != blockNumber {
+			return false, nil
+		}
+
+		var receiptObj map[string]interface{}
+		if err := client.CallContext(ctx, &receiptObj, "eth_getTransactionReceipt", txHashHex); err != nil {
+			return false, fmt.Errorf("eth_getTransactionReceipt on %s: %w", node.Name, err)
+		}
+		if receiptObj == nil || receiptObj["blockHash"] != blockHash || receiptObj["blockNumber"] != blockNumber {
+			return false, nil
+		}
+
+		var blockByHash map[string]interface{}
+		if err := client.CallContext(ctx, &blockByHash, "eth_getBlockByHash", blockHash, false); err != nil {
+			return false, fmt.Errorf("eth_getBlockByHash on %s: %w", node.Name, err)
+		}
+		if blockByHash == nil || blockByHash["hash"] != blockHash || blockByHash["number"] != blockNumber {
+			return false, nil
+		}
+
+		var blockByNumber map[string]interface{}
+		if err := client.CallContext(ctx, &blockByNumber, "eth_getBlockByNumber", blockNumber, false); err != nil {
+			return false, fmt.Errorf("eth_getBlockByNumber on %s: %w", node.Name, err)
+		}
+		if blockByNumber == nil || blockByNumber["hash"] != blockHash || blockByNumber["number"] != blockNumber {
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("lookup fixture did not propagate to %s (%s): %v", node.Name, node.URL, err)
 	}
 }
 

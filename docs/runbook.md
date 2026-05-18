@@ -205,7 +205,82 @@ Notes:
 - `make test-regression SCOPE=core` uses the default local environment and may intentionally skip topology/epoch/upgrade-specific `TestZ_*` cases.
 - Use the scenario commands above to cover long-epoch, single-validator checkpoint, and upgrade-only paths.
 
-### 6.1 Fork capability runbook (`test-forkcap`)
+### 6.1 Local RPC integration (`test-rpc`)
+`make test-rpc` is the dedicated operator-facing JSON-RPC validation surface for the **local initialized network**.
+It is intentionally separate from `test-group` so maintainers can treat RPC behavior as its own compatibility check.
+
+Default usage:
+```bash
+make test-rpc
+```
+
+Focused reruns:
+```bash
+make test-rpc RUN='TestRPC_NegativeMethods'
+make test-rpc RUN='TestRPC_(NegativeMethods|ConditionalSurface)'
+make test-rpc RUN='TestRPC_CrossNodeConsistency'
+```
+
+Artifact control:
+```bash
+make test-rpc REPORT_DIR=reports/rpc_debug
+make test-rpc RUN='TestRPC_CrossNodeConsistency' REPORT_DIR=reports/rpc_consistency
+```
+
+What the command does:
+- resolves the repository's RPC/smoke epoch profile
+- runs `./tests/rpc` through the shared CI runner
+- writes the usual CI artifacts:
+  - `report.md`
+  - `summary.json`
+  - `manifest.json`
+
+How to triage failures:
+1. re-run the narrow failing area with `RUN='TestRPC_...'`
+2. keep artifacts with `REPORT_DIR=reports/...`
+3. inspect the printed `Report:`, `Summary:`, and `Manifest:` paths
+4. inspect runtime state and logs:
+   - `make status`
+   - `NODE=<node> make logs`
+
+First-delivery scope reminder:
+- the local RPC suite includes baseline public methods, lookup/read-write fixtures, cross-node consistency, representative negative behavior, and role-aware conditional behavior
+- broad `debug_*`, `trace_*`, `admin_*`, and `txpool_*` coverage is still deferred
+
+### 6.2 Remote RPC read-only (`test-rpc-readonly`)
+`make test-rpc-readonly` is the remote-friendly pure read-only RPC surface.
+It accepts `RPC_URL` and does not require the local runtime to be initialized.
+
+Default usage:
+```bash
+make test-rpc-readonly RPC_URL=http://localhost:18545
+```
+
+Focused reruns:
+```bash
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+```
+
+Artifact control:
+```bash
+make test-rpc-readonly RPC_URL=http://localhost:18545 REPORT_DIR=reports/rpc_readonly_debug
+```
+
+What the command does:
+- runs the readonly subset in `./tests/rpc`
+- uses `RPC_URL` for discovery
+- avoids local fixture generation and write-path validation
+
+How to triage failures:
+1. re-run the narrow failing area with `RUN='TestRPC_Readonly_...'`
+2. confirm the provided RPC URL is reachable and exposes the expected read-only methods
+3. if needed, preserve artifacts with `REPORT_DIR=reports/...`
+
+First-delivery scope reminder:
+- only pure read-only methods are included here
+- `eth_coinbase` is intentionally excluded because it is role-/permission-dependent and not a remote pure-read contract
+
+### 6.3 Fork capability runbook (`test-forkcap`)
 `make test-forkcap` is the dedicated real-chain fork capability surface.
 It is separate from business-group regression and is meant to prove fork-gated EVM / protocol behavior directly.
 

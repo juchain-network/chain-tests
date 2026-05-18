@@ -259,6 +259,7 @@ make test-rpc-readonly RPC_URL=http://localhost:18545
 Focused reruns:
 ```bash
 make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_EthNamespaceOptional'
 ```
 
 Artifact control:
@@ -270,14 +271,20 @@ What the command does:
 - runs the readonly subset in `./tests/rpc`
 - uses `RPC_URL` for discovery
 - avoids local fixture generation and write-path validation
+- covers:
+  - a baseline readonly surface that must pass on supported public RPC endpoints
+  - an optional capability-dependent surface that skips explicitly when a method is not exposed by the target runtime
 
 How to triage failures:
 1. re-run the narrow failing area with `RUN='TestRPC_Readonly_...'`
 2. confirm the provided RPC URL is reachable and exposes the expected read-only methods
-3. if needed, preserve artifacts with `REPORT_DIR=reports/...`
+3. inspect whether a failure came from the baseline surface or the optional capability-dependent surface
+4. if needed, preserve artifacts with `REPORT_DIR=reports/...`
 
 First-delivery scope reminder:
 - only pure read-only methods are included here
+- the baseline readonly surface now includes representative `eth_*` query coverage such as `eth_gasPrice`, block lookups, tx-count lookups, `eth_getBalance`, `eth_getCode`, and `eth_call`
+- the optional readonly surface covers capability-dependent methods such as `eth_protocolVersion`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`, `eth_estimateGas`, `eth_getStorageAt`, and `eth_accounts`
 - `eth_coinbase` is intentionally excluded because it is role-/permission-dependent and not a remote pure-read contract
 
 ### 6.3 Fork capability runbook (`test-forkcap`)

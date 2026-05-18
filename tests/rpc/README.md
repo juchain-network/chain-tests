@@ -4,7 +4,7 @@ This directory (`tests/rpc`) contains a dedicated functional test capability for
 
 ## Scope and Inventory
 
-First delivery focuses on supported **public node RPC** behavior that is stable and locally observable. 
+First delivery focuses on supported **public node RPC** behavior that is stable and locally observable.
 
 ### First-Scope Method Inventory
 
@@ -21,12 +21,25 @@ First delivery focuses on supported **public node RPC** behavior that is stable 
    - `eth_getBlockByHash`: Fetch block details by hash
    - `eth_getTransactionByHash`: Fetch tx by hash
    - `eth_getTransactionReceipt`: Fetch tx receipt
+   - `eth_getBlockTransactionCountByNumber`: Fetch tx count by block number
+   - `eth_getBlockTransactionCountByHash`: Fetch tx count by block hash
 
 3. **Read-only Execution & Query Methods**
+   - `eth_gasPrice`: Current gas price hint
+   - `eth_getBalance`: Account balance query
+   - `eth_getCode`: Runtime bytecode query
    - `eth_call`: Execute contract call without state change
 
 4. **Role & Runtime-Dependent Methods**
    - `eth_coinbase`: Validator/miner fee recipient address
+
+5. **Readonly Optional Capability Surface**
+   - `eth_protocolVersion`
+   - `eth_maxPriorityFeePerGas`
+   - `eth_feeHistory`
+   - `eth_estimateGas`
+   - `eth_getStorageAt`
+   - `eth_accounts`
 
 ### Out of Scope (for First Delivery)
 - Broad `debug_*` / `trace_*` namespaces
@@ -47,7 +60,7 @@ make test-rpc-readonly RPC_URL=http://localhost:18545
 This target is defined in the top-level `Makefile` and wraps the shared CI runner to execute the RPC suite in `tests/rpc` against the local initialized network. The readonly target accepts `RPC_URL` for remote-friendly pure read-only validation.
 
 By default `make test-rpc` runs the **full local suite**.
-`make test-rpc-readonly` runs the **readonly subset** only.
+`make test-rpc-readonly` runs the **readonly subset** only, split into a stable baseline surface and an optional capability-dependent surface.
 
 Useful focused reruns:
 ```bash
@@ -56,6 +69,7 @@ make test-rpc RUN='TestRPC_(NegativeMethods|ConditionalSurface)'
 make test-rpc RUN='TestRPC_CrossNodeConsistency'
 
 make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_EthNamespaceOptional'
 ```
 
 Useful report redirection:
@@ -90,6 +104,7 @@ When `make test-rpc-readonly` fails, the intended maintainer workflow is:
 1. Re-run the narrow failing area with `RUN='TestRPC_Readonly_...'`
 2. Preserve artifacts with `REPORT_DIR=reports/...`
 3. Confirm the provided RPC URL is reachable and exposes the expected read-only methods
+4. Distinguish between baseline failures and optional capability-surface skips/failures before treating the endpoint as non-compliant
 
 Representative repro commands:
 ```bash
@@ -97,13 +112,15 @@ make test-rpc RUN='TestRPC_NegativeMethods' REPORT_DIR=reports/rpc_negative_debu
 make test-rpc RUN='TestRPC_ConditionalSurface' REPORT_DIR=reports/rpc_conditional_debug
 make test-rpc RUN='TestRPC_CrossNodeConsistency' REPORT_DIR=reports/rpc_consistency_debug
 make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods' REPORT_DIR=reports/rpc_readonly_debug
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_EthNamespaceOptional' REPORT_DIR=reports/rpc_readonly_optional_debug
 ```
 
 ## Scope Notes
 
 First delivery intentionally stays thin and evidence-driven:
 - local integration RPC: public happy-path identity, lookup, `eth_call`, cross-node, negative, and conditional behavior
-- readonly RPC: public read-only identity / liveness / `eth_syncing` / `net_*` methods
+- readonly RPC baseline: public read-only identity / liveness plus representative `eth_*` query coverage (`eth_gasPrice`, block lookups, tx-count lookups, `eth_getBalance`, `eth_getCode`, `eth_call`)
+- readonly RPC optional surface: capability-dependent `eth_*` methods that skip explicitly when unsupported (`eth_protocolVersion`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`, `eth_estimateGas`, `eth_getStorageAt`, `eth_accounts`)
 - representative malformed/unsupported behavior
 - representative protected/forbidden behavior
 - representative conditional-surface behavior

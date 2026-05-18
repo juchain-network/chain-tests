@@ -330,18 +330,45 @@ Default behavior:
 - `make test-rpc-readonly` runs the readonly subset in `./tests/rpc`
 - it uses `RPC_URL` for discovery
 - it is intended for remote RPC endpoints, smoke checks, and environment verification
+- it is split into:
+  - a **baseline** readonly surface that must pass on supported public RPC endpoints
+  - an **optional** readonly surface that skips explicitly when a method is not exposed or not supported by the target runtime
 
 Examples:
 
 ```bash
 make test-rpc-readonly RPC_URL=http://localhost:18545
 make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_BaselinePublicMethods'
+make test-rpc-readonly RPC_URL=http://localhost:18545 RUN='TestRPC_Readonly_EthNamespaceOptional'
 ```
+
+Current readonly baseline includes representative public `eth_*` query coverage such as:
+- `eth_chainId`
+- `eth_blockNumber`
+- `eth_syncing`
+- `eth_gasPrice`
+- `eth_getBlockByNumber`
+- `eth_getBlockByHash`
+- `eth_getBlockTransactionCountByNumber`
+- `eth_getBlockTransactionCountByHash`
+- `eth_getBalance`
+- `eth_getCode`
+- `eth_call`
+- conditional latest-block transaction lookups when the current head block contains transactions
+
+Current optional readonly coverage includes capability-dependent methods such as:
+- `eth_protocolVersion`
+- `eth_maxPriorityFeePerGas`
+- `eth_feeHistory`
+- `eth_estimateGas`
+- `eth_getStorageAt`
+- `eth_accounts`
 
 Notes:
 - only read-only methods are included in this surface
 - remote-only coverage should not depend on local fixture generation, mined transactions, or write-path validation
 - `eth_coinbase` is intentionally excluded from the readonly entrypoint because it is role-/permission-dependent and not a pure remote read-only contract
+- optional-method skips are expected on runtimes that do not expose a given method; those skips are not treated as readonly-suite failures
 
 ### 5.5 Fork capability surface (`test-forkcap`)
 
